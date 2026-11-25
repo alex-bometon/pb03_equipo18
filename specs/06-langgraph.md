@@ -4,26 +4,32 @@
 
 Definir la arquitectura del sistema multiagente de ReciclaTÍA, sus mecanismos de orquestación, gestión de estado, continuidad conversacional, ejecución de especialistas y supervisión humana.
 
-El sistema deberá coordinar las capacidades del RAG y las herramientas disponibles, seleccionando únicamente las operaciones necesarias para resolver cada consulta.
+El sistema coordinará las capacidades del RAG y las herramientas disponibles, seleccionando únicamente las operaciones necesarias para resolver cada consulta.
 
-La incorporación de la capa MLOps deberá preservar las funcionalidades existentes del asistente, salvo aquellas modificaciones expresamente establecidas en las especificaciones.
+La incorporación de MLOps deberá preservar las funcionalidades desarrolladas durante el PB02 y satisfacer los requisitos académicos del Project Break 03.
+
+Se conservará el HITL obligatorio del agente existente.
+
+No se reescribirá la arquitectura del grafo para incorporar FastAPI.
 
 ## 2. Principios arquitectónicos
 
 - Independencia del núcleo RAG.
 - Separación entre orquestación y ejecución de herramientas.
-- Enrutamiento controlado.
+- Enrutamiento controlado mediante Python.
 - Gestión del estado por conversación.
 - Aislamiento entre conversaciones.
 - Validación determinista de las decisiones del modelo.
 - Control de los presupuestos de ejecución.
 - Reutilización de evidencias y resultados.
-- Supervisión humana cuando corresponda.
-- Resolución directa de consultas que no requieran aprobación.
+- HITL obligatorio en las ejecuciones satisfactorias del agente.
+- Diferenciación entre respuestas previas al agente y resultados de LangGraph.
 - Separación entre estado operativo e historial persistente.
 - Independencia respecto a las interfaces del producto.
+- Utilización exclusiva de herramientas y fuentes autorizadas.
+- Diferenciación entre resultados semánticos y fallos técnicos.
 
-LangGraph no será responsable de autenticar consumidores, aplicar cuotas comerciales ni persistir directamente los mensajes en PostgreSQL.
+LangGraph no será responsable de autenticar consumidores, aplicar cuotas comerciales ni persistir directamente mensajes en PostgreSQL.
 
 ## 3. Arquitectura del grafo
 
@@ -34,18 +40,21 @@ Se conservarán los cinco nodos existentes:
 | Nodo | Responsabilidad |
 |---|---|
 | supervisor | Seleccionar la siguiente operación y controlar el progreso |
-| residuos | Obtener evidencia documental sobre residuos |
+| residuos | Obtener evidencia documental sobre residuos e interpretar información visual |
 | puntos | Obtener información geográfica, documental y temporal |
-| sintetizar | Integrar evidencias y construir la respuesta |
-| aplicar | Registrar la aprobación o el rechazo de un plan |
+| sintetizar | Integrar evidencias y construir una respuesta y un plan |
+| aplicar | Registrar la aprobación o el rechazo del plan |
 
-No se ejecutarán sistemáticamente todos los nodos para resolver cada consulta.
+No se ejecutarán sistemáticamente ambos especialistas.
 
-### 3.2. Flujo de ejecución
+La selección dependerá de las necesidades de la consulta.
+
+### 3.2. Topología
 
 ```mermaid
 flowchart TD
-    START([Inicio]) --> S[supervisor]
+    START([START]) --> S[supervisor]
+
     S -->|residuos| R[residuos]
     S -->|puntos| P[puntos]
     S -->|sintetizar| Y[sintetizar]
@@ -54,87 +63,87 @@ flowchart TD
     P --> S
     Y --> S
 
-    S -->|Respuesta directa valida| D[Resolver turno sin HITL]
-    S -->|Plan valido| H{{Interrupcion HITL}}
-    S -->|Fallo tecnico| E[Error controlado]
+    S -->|FINISH| H{{Interrupción HITL}}
+    H -->|Decisión validada| A[aplicar]
 
-    H -->|Decision autorizada| A[aplicar]
-
-    A -->|Aprobacion| F[Finalizar conversacion]
-    A -->|Rechazo| N[Resolver turno y conservar contexto]
-
-    D --> END([Fin de invocacion])
-    F --> END
-    N --> END
-    E --> END
+    A --> END([END])
 ```
 
-El diagrama representa las transiciones funcionales del sistema.
+HITL representa una interrupción estática del grafo y no un nodo adicional.
 
-La resolución directa, la finalización y el tratamiento de errores no representan necesariamente nodos adicionales.
+Se conservarán las aristas existentes.
 
-El enrutamiento deberá garantizar que únicamente los planes que requieran aprobación alcancen la interrupción previa al nodo aplicar.
+La decisión FINISH continuará conduciendo al nodo aplicar.
+
+No se incorporarán rutas de finalización directa que permitan resolver satisfactoriamente un turno de LangGraph sin atravesar el HITL.
 
 ### 3.3. Construcción
 
-El módulo src/graph.py será responsable de:
+src/graph.py continuará siendo responsable de:
 
 - Construir StateGraph mediante EstadoGrafo.
-- Registrar los nodos.
+- Registrar los cinco nodos.
 - Definir las aristas.
 - Configurar el enrutamiento condicional.
-- Establecer los puntos de entrada y salida.
-- Configurar el checkpointer.
+- Establecer el punto de entrada.
+- Establecer el punto de salida.
+- Configurar MemorySaver.
 - Establecer la interrupción HITL.
 - Proporcionar la configuración de cada conversación.
 
-Se conservará MemorySaver como mecanismo de almacenamiento de checkpoints.
-
-La interrupción se mantendrá antes del nodo aplicar:
+La interrupción se mantendrá:
 
 ```python
 interrupt_before=["aplicar"]
 ```
 
-Las respuestas directas deberán disponer de una salida válida que no requiera atravesar esta interrupción.
+Las excepciones técnicas podrán impedir la finalización normal de una ejecución.
+
+No se añadirá una ruta de éxito alternativa para ocultar dichos fallos.
 
 ### 3.4. Instancia compartida
 
-La función get_app() proporcionará una instancia compilada compartida del grafo durante la vida del proceso.
+get_app() proporcionará una instancia compilada compartida durante la vida del proceso.
 
-La función build_graph() permitirá construir instancias independientes, especialmente para pruebas aisladas.
+Se conservará el mecanismo existente de caché de la instancia.
 
-No se creará una nueva instancia del grafo para cada petición HTTP.
+build_graph() permitirá construir instancias independientes con sus propios checkpointers, especialmente para pruebas aisladas.
+
+No se creará un grafo nuevo por cada petición HTTP.
 
 ## 4. Separación de responsabilidades
 
 | Módulo | Responsabilidad |
 |---|---|
-| src/state.py | Contratos, creación, transformación y preparación del estado |
+| src/state.py | Contratos, creación, preparación y transformación del estado |
 | src/agent_routing.py | Interpretación de intenciones, enrutamiento y fallback |
-| src/agent_prompts.py | Instrucciones de los especialistas |
-| src/agent_tool_loop.py | Ejecución de herramientas y aplicación de presupuestos |
+| src/agent_prompts.py | Instrucciones del supervisor y especialistas |
+| src/agent_tool_loop.py | Ejecución de herramientas y presupuestos |
 | src/nodes.py | Implementación de los nodos |
 | src/agent_schedule.py | Interpretación temporal |
 | src/agent_resultado.py | Integración determinista de resultados |
 | src/graph.py | Construcción, compilación y configuración del grafo |
-| src/agent.py | Orquestación pública de consultas y aprobaciones |
-| config.py | Configuración centralizada del asistente |
+| src/agent.py | API interna de consultas y aprobaciones |
+| src/cli_agent.py | Interacción independiente mediante terminal |
+| config.py | Configuración centralizada del núcleo |
+| api/service.py | Coordinación entre FastAPI y el asistente |
 
-La capa de servicios del backend coordinará el acceso al núcleo del asistente desde la API.
+FastAPI no implementará directamente los nodos ni duplicará la lógica de recuperación documental.
 
-FastAPI no implementará directamente los nodos, especialistas ni mecanismos de recuperación documental.
+Streamlit no accederá directamente a LangGraph.
 
-Streamlit no accederá directamente al estado de LangGraph.
+La CLI conservará su funcionamiento independiente mediante la API interna del agente.
 
 ## 5. Contratos públicos del orquestador
 
 ### 5.1. Procesamiento de turnos
 
-El contrato existente del PB02 es:
+Se conservará la función procesar_turno(), ampliando su contrato mediante un parámetro opcional para reutilizar identificaciones multimodales.
+
+La firma definitiva será:
 
 ```python
-procesar_turno(
+def procesar_turno(
     estado: EstadoProducto,
     mensaje: str,
     thread_id: str,
@@ -142,67 +151,133 @@ procesar_turno(
     max_steps: int | None = None,
     ubicacion: Ubicacion | None = None,
     ruta_imagen: str | None = None,
-) -> EstadoProducto
+    identificacion_imagen: IdentificacionImagen | None = None,
+) -> EstadoProducto:
+    ...
 ```
 
-La adaptación deberá permitir:
+| Parámetro | Responsabilidad |
+|---|---|
+| estado | Estado base interno de la conversación |
+| mensaje | Consulta original |
+| thread_id | Identificador de conversación |
+| max_steps | Límite opcional de rondas |
+| ubicacion | Coordenadas proporcionadas por el consumidor |
+| ruta_imagen | Ruta local autorizada para ejecución independiente |
+| identificacion_imagen | Identificación visual previamente validada |
 
-- Resolver turnos sin HITL.
-- Devolver planes pendientes de aprobación.
-- Incorporar identificaciones multimodales previamente validadas.
-- Mantener la continuidad conversacional.
-- Diferenciar los errores técnicos de los resultados semánticos válidos.
+ruta_imagen e identificacion_imagen serán mutuamente excluyentes.
 
-La firma definitiva deberá concretarse conjuntamente con el contrato interno de identificación multimodal.
+Cuando exista identificacion_imagen, deberá ser válida y tener estado=allowed.
 
-Se conservará la compatibilidad con los mecanismos de ejecución independiente cuando resulte posible.
+La función no realizará autenticación HTTP ni aplicará cuotas comerciales.
 
-### 5.2. Resolución de aprobaciones
+La función tampoco persistirá mensajes en PostgreSQL.
 
-El contrato existente del PB02 es:
+### 5.2. Resultado de procesar_turno
+
+La función ejecutará el agente hasta alcanzar:
+
+- Una interrupción HITL válida.
+- Un fallo técnico.
+
+Una ejecución satisfactoria deberá devolver:
+
+- Una respuesta no vacía.
+- Un plan válido.
+- Una interrupción HITL real.
+- Un approval_id válido.
+- error=None.
+
+No se considerará satisfactoria una ejecución que termine sin alcanzar la interrupción requerida.
+
+La aprobación automática no se incorporará como responsabilidad interna de procesar_turno().
+
+Su coordinación corresponderá a la capa de servicios o a los mecanismos de demostración.
+
+### 5.3. Resolución de aprobaciones
+
+Se sustituirá el contrato anterior de aprobar_plan(), que recibía EstadoProducto como argumento.
+
+La firma definitiva será:
 
 ```python
-aprobar_plan(
+def aprobar_plan(
     thread_id: str,
     aprobado: bool,
-    estado: EstadoProducto,
-) -> EstadoProducto
+    *,
+    approval_id: str,
+) -> EstadoProducto:
+    ...
 ```
 
-La adaptación deberá incorporar la comprobación de la aprobación pendiente mediante approval_id.
+| Parámetro | Responsabilidad |
+|---|---|
+| thread_id | Conversación que contiene la aprobación |
+| aprobado | Decisión booleana de aprobación o rechazo |
+| approval_id | Identificador del plan pendiente concreto |
 
-El backend obtendrá el estado operativo desde el checkpoint correspondiente.
+La función obtendrá el estado operativo desde el checkpoint real.
 
-Los clientes HTTP no proporcionarán directamente EstadoProducto ni EstadoGrafo.
+No dependerá de una copia de EstadoProducto proporcionada por la interfaz.
 
-La comprobación de una aprobación deberá utilizar el estado almacenado y no únicamente la información visible en el cliente.
+El plan mostrado anteriormente por el cliente no constituirá la referencia autorizada para resolver la aprobación.
 
-### 5.3. Identificación de conversaciones
+La coincidencia entre approval_id y el identificador almacenado será obligatoria.
+
+### 5.4. Identificación de conversaciones
 
 Se conservará:
 
 ```python
-nuevo_thread_id() -> str
+def nuevo_thread_id() -> str:
+    ...
 ```
 
-La función generará identificadores UUID.
+La implementación continuará generando identificadores UUID mediante uuid4().
 
-Las condiciones de creación, propiedad y autorización de conversaciones mediante HTTP se definen en [12-contratos-http.md](12-contratos-http.md).
+En el flujo HTTP únicamente se generará un nuevo thread_id cuando corresponda iniciar una conversación de LangGraph.
 
-### 5.4. Funciones auxiliares
+Los clientes no podrán elegir el identificador de una conversación nueva.
+
+Las reglas de creación y propiedad se establecen en [12-contratos-http.md](12-contratos-http.md).
+
+### 5.5. Funciones auxiliares
 
 Se conservarán las responsabilidades de:
 
 | Función | Responsabilidad |
 |---|---|
 | crear_estado_grafo() | Construir el estado interno inicial |
-| crear_estado_producto() | Construir el estado público interno de una conversación |
-| preparar_nuevo_turno() | Preparar el estado correspondiente a una nueva consulta |
-| estado_desde_grafo() | Transformar el checkpoint en EstadoProducto |
+| crear_estado_producto() | Construir el estado interno de orquestación |
+| preparar_nuevo_turno() | Preparar una nueva consulta |
+| registrar_turno() | Registrar un turno resuelto en el historial interno |
+| estado_desde_grafo() | Transformar los valores del checkpoint |
 | config_hilo() | Configurar la ejecución de una conversación |
-| hay_hitl_pendiente() | Comprobar la existencia de una interrupción real |
+| hay_hitl_pendiente() | Comprobar la interrupción real |
+| _estado_actual() | Obtener EstadoProducto a partir del checkpoint |
 
-Estas funciones deberán adaptarse a las nuevas posibilidades del ciclo conversacional.
+Las funciones de creación y preparación incorporarán los nuevos campos correspondientes.
+
+_estado_actual() deberá poder utilizarse durante aprobar_plan() sin depender de un estado proporcionado por el cliente.
+
+### 5.6. Contratos HTTP
+
+EstadoProducto no constituirá el contrato HTTP público.
+
+FastAPI transformará los resultados mediante AskOut.
+
+Los clientes HTTP no podrán enviar:
+
+- EstadoProducto.
+- EstadoGrafo.
+- Checkpoints.
+- Evidencias arbitrarias.
+- Identificaciones visuales supuestamente validadas.
+- Planes completos para su aprobación.
+- Contadores internos del agente.
+
+El backend construirá las entradas internas autorizadas.
 
 ## 6. Identificación y aislamiento
 
@@ -210,116 +285,188 @@ Estas funciones deberán adaptarse a las nuevas posibilidades del ciclo conversa
 
 Cada conversación dispondrá de un thread_id único.
 
-La configuración de LangGraph asociará cada ejecución a dicho identificador.
+LangGraph asociará sus checkpoints a este identificador.
+
+En el servicio HTTP se utilizará el mismo identificador en PostgreSQL.
 
 ### 6.2. Configuración del hilo
 
-La configuración incorporará:
+config_hilo() incorporará:
 
-- El identificador de conversación.
-- El límite de recursión correspondiente.
+- configurable.thread_id.
+- recursion_limit.
 
-No se utilizarán identificadores predeterminados compartidos por diferentes consumidores.
+No se utilizarán identificadores predeterminados compartidos entre consumidores.
 
 ### 6.3. Aislamiento
 
-Un thread_id no podrá heredar automáticamente:
+Un hilo no podrá heredar automáticamente de otro:
 
-- Mensajes de otras conversaciones.
+- Mensajes.
+- Contexto.
 - Resultados de herramientas.
 - Evidencias.
+- Fuentes.
 - Planes.
 - Coordenadas.
 - Identificaciones multimodales.
 - Decisiones HITL.
 - Contadores de ejecución.
 
+Las estructuras mutables deberán ser independientes.
+
 ### 6.4. Autorización
 
-El identificador de conversación no constituye una credencial.
+thread_id no constituye una credencial.
 
-La capa de servicios verificará la propiedad y autorización de la conversación antes de permitir el acceso al estado operativo.
+La capa de servicios comprobará la existencia y propiedad de la conversación antes de permitir operaciones sobre su checkpoint.
 
-Las reglas correspondientes se definen en [14-autenticacion-autorizacion.md](14-autenticacion-autorizacion.md).
+Los permisos se establecen en [14-autenticacion-autorizacion.md](14-autenticacion-autorizacion.md).
+
+LangGraph no deberá utilizarse directamente como mecanismo de autorización HTTP.
 
 ## 7. Contratos de estado
 
-### 7.1. EstadoGrafo
+### 7.1. Ubicacion
+
+Se conservará el contrato interno:
+
+```python
+class Ubicacion(TypedDict):
+    latitud: float
+    longitud: float
+```
+
+Las coordenadas deberán proceder de una entrada autorizada.
+
+El modelo no podrá inventarlas ni modificar su origen.
+
+### 7.2. IdentificacionImagen
+
+Se incorporará en src/state.py:
+
+```python
+class IdentificacionImagen(TypedDict):
+    estado: Literal[
+        "allowed",
+        "out_of_domain",
+        "policy_violation",
+        "uncertain",
+    ]
+    descripcion: str
+```
+
+Este contrato será compartido por:
+
+- src/tools/describir_imagen.py.
+- src/agent.py.
+- src/agent_tool_loop.py.
+- La capa de servicios HTTP.
+
+La validación en tiempo de ejecución se realizará conforme a [05-tools.md](05-tools.md).
+
+La existencia de un TypedDict no sustituye dicha validación.
+
+### 7.3. EstadoGrafo
 
 EstadoGrafo representa el estado interno utilizado por LangGraph.
 
-Contendrá la información necesaria para coordinar los nodos, conservar evidencias, aplicar límites y resolver las consultas.
+Se conservarán los campos actuales y se incorporarán:
 
-### 7.2. EstadoProducto
+| Campo | Tipo | Valor inicial |
+|---|---|---|
+| identificacion_imagen | IdentificacionImagen o None | None |
+| approval_id | str o None | None |
 
-EstadoProducto representa el estado utilizado por los mecanismos internos de orquestación y ejecución independiente del asistente.
+Los campos estarán disponibles para las funciones que necesiten utilizarlos.
 
-No constituye el contrato HTTP público.
+No se introducirán campos destinados a duplicar los contadores comerciales o las decisiones de autorización HTTP.
 
-FastAPI transformará EstadoProducto en los modelos de respuesta correspondientes.
+### 7.4. EstadoProducto
 
-No se serializará directamente la totalidad del estado interno del agente.
+EstadoProducto continuará extendiendo EstadoGrafo.
 
-### 7.3. Pedido y contexto
+Conservará adicionalmente:
 
-Se conservarán los campos relacionados con:
+- thread_id.
+- traza.
 
-- pedido.
-- pedido_original.
-- contexto_revision.
-- ubicacion.
-- Información multimodal autorizada.
+Este contrato será utilizado por el orquestador, la CLI y la capa interna de servicios.
 
-El campo ruta_imagen deberá adaptarse para evitar que el flujo HTTP dependa de referencias a archivos temporales después de su eliminación.
+No se serializará directamente como respuesta pública de FastAPI.
 
-### 7.4. Selección de especialistas
-
-Se conservarán:
-
-- necesita_residuos.
-- necesita_puntos.
-- residuos_completado.
-- puntos_completado.
-- siguiente.
-- iteracion.
-
-Estos campos permitirán determinar las especialidades necesarias y controlar el progreso del turno.
-
-### 7.5. Evidencias
-
-Se conservarán:
-
-- notas_residuos.
-- notas_puntos.
-- evidencias.
-- fuentes.
-- abstencion.
-- motivo.
-- limitaciones.
-- estado_evidencia.
-
-La información recuperada deberá permanecer asociada al turno correspondiente.
-
-### 7.6. Respuesta y control conversacional
-
-Se conservarán:
-
-- respuesta.
-- plan.
-- plan_aprobado.
-- pendiente_hitl.
-- done.
-- error.
-
-Se incorporará:
+### 7.5. Petición y contexto
 
 | Campo | Tipo | Responsabilidad |
 |---|---|---|
-| approval_id | str o None | Identificador UUID del plan pendiente de aprobación |
+| pedido | str | Consulta utilizada por el agente |
+| pedido_original | str | Consulta original del consumidor |
+| contexto_revision | str | Contexto conservado para reformulaciones |
+| ubicacion | Ubicacion o None | Coordenadas autorizadas |
+| ruta_imagen | str o None | Imagen local para ejecución independiente |
+| identificacion_imagen | IdentificacionImagen o None | Identificación visual previamente obtenida |
 
-approval_id únicamente tendrá valor mientras exista una aprobación pendiente válida.
+pedido_original no deberá sustituirse por una reformulación interna.
 
-### 7.7. Límites
+El flujo HTTP utilizará identificacion_imagen cuando exista información visual admitida.
+
+ruta_imagen permanecerá en None para estas operaciones.
+
+### 7.6. Selección y progreso de especialistas
+
+Se conservarán:
+
+| Campo | Tipo |
+|---|---|
+| necesita_residuos | bool |
+| necesita_puntos | bool |
+| residuos_completado | bool |
+| puntos_completado | bool |
+| siguiente | str |
+| iteracion | int |
+
+Estos campos permitirán determinar qué operaciones se necesitan y controlar el progreso del agente.
+
+### 7.7. Resultados y evidencias
+
+Se conservarán:
+
+| Campo | Tipo |
+|---|---|
+| notas_residuos | str |
+| notas_puntos | str |
+| evidencias | list[dict] |
+| fuentes | list[dict] |
+| abstencion | bool |
+| motivo | str o None |
+| limitaciones | list[str] |
+| estado_evidencia | EstadoEvidencia |
+
+Las evidencias deberán mantener su procedencia.
+
+Las observaciones visuales reutilizadas deberán distinguirse de las nuevas ejecuciones de herramientas.
+
+### 7.8. Respuesta y control conversacional
+
+| Campo | Tipo | Valor inicial |
+|---|---|---|
+| respuesta | str | Cadena vacía |
+| plan | list[str] | Lista vacía |
+| plan_aprobado | bool o None | None |
+| pendiente_hitl | bool | False |
+| approval_id | str o None | None |
+| done | bool | False |
+| error | str o None | None |
+
+approval_id identificará la propuesta concreta pendiente de resolución.
+
+Se generará después de construir y validar la respuesta y el plan, antes de alcanzar la interrupción HITL.
+
+Durante la transición entre síntesis e interrupción podrá existir un approval_id todavía no expuesto al consumidor.
+
+En las respuestas públicas satisfactorias, approval_id únicamente tendrá valor cuando pendiente_hitl=True.
+
+### 7.9. Límites
 
 Se conservarán:
 
@@ -328,9 +475,9 @@ Se conservarán:
 - turnos_consumidos.
 - tool_calls_turno.
 
-Los valores y condiciones de utilización se ajustarán a [15-robustez-observabilidad.md](15-robustez-observabilidad.md).
+Los valores se ajustarán conforme a [15-robustez-observabilidad.md](15-robustez-observabilidad.md).
 
-### 7.8. Trazabilidad
+### 7.10. Trazabilidad
 
 Se conservarán:
 
@@ -338,184 +485,320 @@ Se conservarán:
 - traza_tools.
 - historial_turnos.
 
-La información de trazabilidad interna no se expondrá automáticamente mediante los contratos HTTP.
+Las trazas internas no se expondrán automáticamente mediante los contratos HTTP.
 
-### 7.9. Registro interno de turnos
+### 7.11. RegistroTurno
 
-El contrato RegistroTurno deberá admitir turnos resueltos con y sin aprobación HITL.
-
-El campo aprobado deberá admitir los valores:
+Se conservará el contrato existente:
 
 ```python
-bool | None
+class RegistroTurno(TypedDict):
+    pedido: str
+    respuesta: str
+    plan: list[str]
+    aprobado: bool
 ```
 
-Su significado será:
+El campo aprobado seguirá siendo bool.
 
 | Valor | Significado |
 |---|---|
 | True | Plan aprobado |
 | False | Plan rechazado |
-| None | Turno resuelto sin necesidad de HITL |
 
-La ausencia de una decisión HITL no deberá confundirse con un rechazo.
+No se incorporará None como valor de un turno resuelto.
 
-### 7.10. Independencia de estructuras
+Los planes todavía pendientes no formarán parte del historial de turnos resueltos.
 
-Las estructuras mutables de cada conversación deberán ser independientes.
+Las respuestas previas a LangGraph tampoco generarán registros de este tipo.
 
-Las listas de evidencias, fuentes, planes e historial no deberán compartirse entre conversaciones.
+### 7.12. Independencia de estructuras
 
-Se conservará la política de sobrescritura controlada de los campos de estado.
+Las listas de cada conversación deberán ser independientes.
 
-No se introducirán reducers de concatenación indiscriminada que puedan provocar duplicación de información o acumulación de evidencias obsoletas.
+Se conservará la política de sobrescritura controlada del estado.
+
+No se introducirán reducers de concatenación indiscriminada.
+
+Las operaciones de transformación y preparación deberán evitar la modificación accidental de estructuras pertenecientes a checkpoints anteriores.
+
+Se utilizarán copias independientes cuando corresponda.
 
 ## 8. Ciclo de vida de una conversación
 
 ### 8.1. Conversación nueva
 
-Una conversación nueva dispondrá de un estado inicial independiente.
+Una conversación nueva comenzará con:
 
-No contendrá planes pendientes ni evidencias procedentes de otras conversaciones.
+- Estado independiente.
+- turnos_consumidos=0.
+- tool_calls_turno=0.
+- iteracion=0.
+- plan=[].
+- plan_aprobado=None.
+- pendiente_hitl=False.
+- approval_id=None.
+- done=False.
+- error=None.
+- Historial vacío.
+
+En el flujo HTTP, la conversación SQL se creará únicamente cuando corresponda iniciar LangGraph.
 
 ### 8.2. Inicio de un turno
 
-Antes de iniciar una nueva ejecución deberá comprobarse:
+Antes de iniciar una consulta deberán comprobarse:
 
-- Que la consulta es válida.
-- Que la conversación corresponde al identificador utilizado.
-- Que no existe una aprobación pendiente.
-- Que no existe una ejecución anterior incompleta.
-- Que la conversación no ha finalizado.
-- Que se respetan los límites establecidos.
-- Que el estado operativo es consistente.
+- La validez del mensaje.
+- La correspondencia entre estado y thread_id.
+- La disponibilidad del checkpoint cuando exista una conversación previa.
+- La ausencia de otra ejecución incompleta.
+- La ausencia de una aprobación pendiente.
+- Que la conversación no haya finalizado.
+- Que el límite de turnos no esté agotado.
+- La validez de las entradas multimodales.
 
-En el servicio HTTP se aplicarán adicionalmente los controles de autenticación, autorización, concurrencia y consumo correspondientes.
+FastAPI aplicará adicionalmente autenticación, autorización, concurrencia y consumo.
 
 ### 8.3. Preparación del estado
 
-Al iniciar un nuevo turno deberán limpiarse los campos transitorios correspondientes a la ejecución anterior.
+preparar_nuevo_turno() continuará construyendo un estado limpio para la nueva consulta.
 
-Entre ellos:
+Se reiniciarán:
 
-- Resultados de especialistas.
+- Resultados transitorios de especialistas.
 - Evidencias.
 - Fuentes.
+- Notas.
+- Limitaciones.
+- Respuesta anterior.
 - Plan anterior.
-- Identificador de aprobación anterior.
+- Decisión HITL anterior.
+- approval_id.
 - Errores transitorios.
-- Contadores correspondientes al turno.
-- Datos temporales de herramientas.
+- Iteraciones del supervisor.
+- Contador de herramientas del turno.
+- Trazas específicas del turno.
+- Información multimodal de la entrada anterior.
+- Ubicación de la entrada anterior, salvo que el backend vuelva a proporcionarla expresamente.
 
-Se conservarán los elementos de contexto necesarios para interpretar la nueva petición.
+Se conservarán:
 
-### 8.4. Resolución del turno
+- El límite de conversación.
+- La configuración permitida de rondas.
+- El historial interno acotado.
+- El contexto de revisión.
+- El contador acumulado de turnos.
 
-Un turno podrá resolverse mediante:
+### 8.4. Contabilización
 
-- Respuesta directa.
-- Aclaración.
-- Abstención válida.
-- Aprobación de un plan.
-- Rechazo de un plan.
+preparar_nuevo_turno() incrementará turnos_consumidos una única vez.
 
-La existencia de una aprobación pendiente implica que el turno todavía no se encuentra resuelto.
+La preparación de un turno deberá realizarse inmediatamente antes de iniciar su ejecución en LangGraph.
 
-Un fallo técnico no constituye una resolución satisfactoria.
+No se utilizará esta función para contabilizar respuestas previas al agente.
 
-### 8.5. Finalización de la conversación
+### 8.5. Resultado pendiente
+
+Una ejecución satisfactoria de procesar_turno() devolverá una propuesta pendiente de HITL.
+
+El turno todavía no estará resuelto.
+
+No se registrará en el historial interno de turnos resueltos.
+
+No se persistirán sus mensajes en PostgreSQL.
+
+### 8.6. Resolución del turno
+
+Un turno del agente quedará resuelto cuando:
+
+- Su plan se apruebe correctamente.
+- Su plan se rechace correctamente.
+
+La aprobación o rechazo deberán ejecutarse mediante el nodo aplicar.
+
+Las abstenciones y aclaraciones generadas dentro del agente también deberán atravesar este proceso.
+
+Un fallo técnico no constituirá una resolución válida.
+
+### 8.7. Finalización de la conversación
 
 La resolución de un turno no implica necesariamente la finalización de la conversación.
 
-El atributo done indicará que la conversación ha finalizado.
+done=True indicará que el plan ha sido aprobado y que la conversación ha finalizado.
 
-No deberá utilizarse como indicador único de que un turno está resuelto.
+done=False podrá corresponder a:
+
+- Conversación nueva.
+- Turno en ejecución.
+- HITL pendiente.
+- Turno rechazado.
+- Conversación disponible para reformulación.
+- Ejecución fallida.
+
+Por tanto, done no se utilizará como único indicador de que un turno está resuelto.
 
 ## 9. Supervisor y enrutamiento
 
 ### 9.1. Responsabilidad
 
-El supervisor determinará la siguiente operación necesaria para satisfacer la consulta.
+El supervisor determinará las operaciones necesarias para resolver la consulta.
 
-Podrá seleccionar los especialistas, solicitar la síntesis o concluir el flujo conforme a las transiciones autorizadas.
+Seleccionará especialistas, solicitará la síntesis y finalizará el enrutamiento cuando exista una respuesta y un plan válidos.
 
-### 9.2. Decisiones del modelo
+### 9.2. Rutas autorizadas
 
-Las decisiones generadas por Gemini deberán ajustarse a las opciones permitidas por el sistema.
+Se conservarán las opciones existentes:
 
-No podrán utilizarse para:
+```python
+Ruta = Literal[
+    "residuos",
+    "puntos",
+    "sintetizar",
+    "FINISH",
+]
+```
 
-- Ejecutar nodos inexistentes.
-- Saltar comprobaciones de seguridad.
-- Superar presupuestos.
-- Aprobar planes.
-- Acceder a conversaciones ajenas.
-- Finalizar artificialmente una consulta incompleta.
+El modelo no podrá generar rutas ejecutables arbitrarias.
 
-### 9.3. Fallback determinista
+### 9.3. Validación determinista
 
-Cuando el modelo no proporcione una decisión válida, se utilizarán las reglas controladas de src/agent_routing.py.
+src/agent_routing.py continuará verificando:
 
-El fallback deberá seleccionar una transición segura y compatible con el estado existente.
+- Las necesidades de la consulta.
+- Los especialistas requeridos.
+- Los especialistas pendientes.
+- El orden de ejecución.
+- Los límites de iteraciones.
+- La existencia de una respuesta válida.
+- La existencia de un plan válido.
 
-No se ejecutarán especialistas adicionales únicamente como consecuencia de una respuesta inválida del modelo.
+La decisión final de enrutamiento será responsabilidad de Python.
 
-### 9.4. Consultas simples
+### 9.4. Fallback
 
-Cuando una única especialidad sea suficiente, el supervisor no deberá ejecutar la especialidad restante sin justificación.
+Cuando el supervisor no proporcione una decisión válida, podrán utilizarse las reglas deterministas existentes.
 
-### 9.5. Consultas compuestas
+El fallback deberá conservar la seguridad, el progreso y las restricciones del estado.
 
-Cuando una consulta requiera ambas especialidades, deberán completarse las operaciones necesarias antes de presentar una respuesta final.
+Una recuperación determinista válida no constituye por sí sola un fallo técnico.
 
-Si alguna especialidad no puede satisfacer su responsabilidad, se comunicarán las limitaciones o el fallo correspondiente.
+No se utilizará el fallback para ocultar fallos imprescindibles que impidan resolver la consulta.
 
-### 9.6. Finalización del enrutamiento
+### 9.5. Consultas simples
 
-La finalización del enrutamiento deberá distinguir entre:
+Si una única especialidad resulta suficiente, no deberá ejecutarse la restante sin justificación.
 
-- Respuesta directa válida.
-- Plan válido que requiere aprobación.
-- Abstención válida.
-- Solicitud de aclaración.
-- Fallo técnico.
+Las rutas deterministas se conservarán para reducir el consumo.
 
-La decisión FINISH no deberá provocar automáticamente una transición hacia aplicar.
+### 9.6. Consultas compuestas
 
-La transición dependerá de la existencia de un plan válido que requiera HITL.
+Cuando ambas especialidades resulten necesarias, deberán ejecutarse las operaciones correspondientes antes de sintetizar.
+
+Se integrarán sus evidencias conforme a la naturaleza de la consulta.
+
+La ausencia legítima de evidencia podrá generar limitaciones.
+
+Un fallo técnico imprescindible no recuperado deberá impedir la finalización satisfactoria.
+
+### 9.7. Finalización del enrutamiento
+
+Se conservará la transición existente:
+
+```python
+return "aplicar" if ruta == "FINISH" else ruta
+```
+
+FINISH únicamente podrá utilizarse cuando:
+
+- Se hayan completado las operaciones necesarias.
+- Exista una respuesta no vacía.
+- Exista un plan estructuralmente válido.
+- Exista un approval_id válido asociado a la propuesta.
+- No exista un fallo técnico bloqueante.
+
+La función de validación de salida deberá incorporar las comprobaciones adicionales que correspondan.
+
+No se añadirá una transición FINISH hacia END que evite aplicar.
+
+### 9.8. Presupuesto del supervisor
+
+MAX_ITER tendrá inicialmente el valor 4.
+
+Una consulta que requiera ambos especialistas podrá utilizar la siguiente secuencia:
+
+1. Supervisor selecciona residuos.
+2. Supervisor selecciona puntos.
+3. Supervisor selecciona sintetizar.
+4. Supervisor selecciona FINISH.
+
+La interrupción y posterior ejecución de aplicar no constituyen nuevas decisiones del supervisor.
+
+La suficiencia del límite deberá verificarse mediante pruebas de regresión.
 
 ## 10. Especialista residuos
 
 ### 10.1. Responsabilidad
 
-El especialista residuos obtendrá evidencia documental relacionada con la clasificación, tratamiento y destino de los residuos consultados.
+El especialista residuos obtendrá evidencia documental relacionada con:
+
+- Identificación.
+- Clasificación.
+- Materiales.
+- Tratamiento.
+- Destino de depósito.
+- Restricciones documentadas.
 
 ### 10.2. Herramientas
 
 Podrá utilizar:
 
 - consultar_rag.
-- describir_imagen, conforme a las condiciones del flujo correspondiente.
+- describir_imagen.
 
-Los permisos y contratos se definen en [05-tools.md](05-tools.md).
+Los permisos se establecen en [05-tools.md](05-tools.md).
+
+No podrá acceder directamente a herramientas geográficas no autorizadas para su rol.
 
 ### 10.3. Clasificación documental
 
-Las recomendaciones deberán fundamentarse en la evidencia obtenida mediante el RAG.
+Las recomendaciones deberán fundamentarse exclusivamente en la evidencia documental autorizada.
 
-No se utilizará exclusivamente la inferencia del modelo para recomendar un destino.
+No se utilizará conocimiento general de Gemini como sustituto del corpus.
+
+La descripción visual podrá orientar la recuperación documental.
+
+No constituirá evidencia suficiente por sí sola para recomendar un contenedor.
 
 ### 10.4. Consultas multimodales
 
-Cuando el backend proporcione una identificación visual previamente validada, el especialista deberá utilizar dicha información.
+Cuando exista identificacion_imagen admitida, deberá reutilizarse.
 
-No deberá volver a describir la misma imagen mediante una nueva llamada a Gemini.
+El especialista no enviará nuevamente la imagen a Gemini.
+
+Podrá utilizar la descripción validada para:
+
+- Interpretar el objeto.
+- Identificar la intención.
+- Construir una consulta documental.
+- Comunicar características observables.
+- Solicitar aclaraciones cuando corresponda.
+
+Una solicitud exclusivamente descriptiva podrá fundamentarse en la observación visual.
+
+Una recomendación de reciclaje requerirá evidencia documental.
 
 ## 11. Especialista puntos
 
 ### 11.1. Responsabilidad
 
-El especialista puntos obtendrá información relacionada con instalaciones municipales, modalidades de recogida, proximidad y horarios.
+El especialista puntos obtendrá información relacionada con:
+
+- Instalaciones municipales.
+- Modalidades de recogida.
+- Proximidad.
+- Compatibilidad documentada.
+- Horarios.
+- Restricciones temporales.
 
 ### 11.2. Herramientas
 
@@ -527,37 +810,47 @@ Podrá utilizar:
 
 ### 11.3. Restricciones
 
-La búsqueda geográfica únicamente se ejecutará cuando existan coordenadas válidas proporcionadas explícitamente.
+La búsqueda geográfica únicamente se ejecutará cuando existan coordenadas válidas y autorizadas.
 
-La herramienta temporal únicamente se utilizará cuando resulte necesaria para interpretar la consulta.
+La herramienta temporal únicamente se utilizará cuando la consulta requiera interpretar información temporal actual.
+
+No se consultarán proveedores geográficos adicionales.
 
 ### 11.4. Procedencia
 
-Los resultados deberán conservar su procedencia.
-
 Se distinguirá entre:
 
-- Información obtenida del servicio municipal.
-- Información obtenida del corpus local.
+- Información de ArcGIS.
+- Información del corpus local.
 - Evidencia documental.
-- Resultados derivados de cálculos geográficos.
+- Resultados derivados de Haversine.
 - Interpretaciones de horarios publicados.
+
+Una instalación cercana no se considerará automáticamente compatible con el residuo consultado.
+
+Un horario publicado no constituye confirmación de apertura física.
 
 ## 12. Ejecución de herramientas
 
-### 12.1. Ruta directa
+### 12.1. Ruta determinista
 
-Se conservarán las rutas deterministas que permitan resolver una operación mediante una herramienta concreta sin requerir rondas adicionales de razonamiento.
+Se conservarán las rutas que permitan ejecutar una herramienta concreta sin rondas adicionales de razonamiento.
 
-### 12.2. Ruta mediante modelo de lenguaje
+Esta optimización reducirá llamadas innecesarias al modelo.
 
-Cuando la consulta requiera una selección menos evidente de herramientas, el especialista podrá utilizar el modelo de lenguaje para determinar las operaciones necesarias.
+La ruta determinista no implica finalizar el turno sin HITL.
+
+### 12.2. Ruta mediante modelo
+
+Cuando la selección de herramientas requiera razonamiento adicional, el especialista podrá solicitar las operaciones necesarias mediante el modelo.
+
+Las solicitudes deberán superar las comprobaciones deterministas correspondientes.
 
 ### 12.3. Controles comunes
 
-Ambas rutas deberán respetar:
+Ambas rutas respetarán:
 
-- Registro autorizado de herramientas.
+- Registro autorizado.
 - Permisos del especialista.
 - Validación de argumentos.
 - Presupuestos internos.
@@ -567,29 +860,61 @@ Ambas rutas deberán respetar:
 
 ### 12.4. Presupuestos
 
-El módulo src/agent_tool_loop.py será responsable de impedir ejecuciones que superen los límites establecidos.
+src/agent_tool_loop.py continuará aplicando los límites establecidos.
 
-La generación de varias llamadas a herramientas en una misma respuesta del modelo no permitirá superar dichos presupuestos.
+Una respuesta del modelo que solicite múltiples herramientas no permitirá superar los presupuestos.
 
-Las reglas correspondientes se definen en [05-tools.md](05-tools.md) y [15-robustez-observabilidad.md](15-robustez-observabilidad.md).
+Las reglas se establecen en [05-tools.md](05-tools.md) y [15-robustez-observabilidad.md](15-robustez-observabilidad.md).
+
+### 12.5. Reutilización
+
+Podrán reutilizarse resultados válidos obtenidos dentro del mismo turno.
+
+La reutilización deberá mantener su procedencia y respetar los permisos.
+
+No se contabilizará como una nueva invocación efectiva.
+
+No se utilizarán evidencias procedentes de conversaciones ajenas.
+
+### 12.6. Errores de herramientas
+
+Los fallos internos deberán conservarse hasta determinar si existe una recuperación válida.
+
+Un error de una herramienta auxiliar podrá tratarse como limitación cuando no impida satisfacer la consulta.
+
+Por ejemplo, una consulta de horarios publicados no necesita necesariamente conocer la hora actual.
+
+Un fallo técnico de una herramienta imprescindible no podrá ocultarse mediante una respuesta parcial aparentemente satisfactoria.
+
+La necesidad de la herramienta deberá evaluarse según la consulta.
 
 ## 13. Síntesis y control de evidencia
 
 ### 13.1. Responsabilidad
 
-El nodo sintetizar integrará las evidencias obtenidas durante la ejecución.
+El nodo sintetizar integrará las evidencias y construirá:
 
-No deberá generar información que no pueda fundamentarse mediante las operaciones autorizadas.
+- Una respuesta.
+- Un plan.
+- El estado de evidencia.
+- Las referencias autorizadas.
+- Las limitaciones.
+- El motivo de abstención, cuando corresponda.
+- El identificador de aprobación.
+
+No deberá producir información carente de respaldo.
 
 ### 13.2. Reutilización de respuestas
 
-Cuando exista una respuesta RAG completa, citada y suficiente, deberá reutilizarse.
+Cuando exista una respuesta RAG completa, citada y suficiente, se reutilizará.
 
-No se invocará nuevamente al modelo únicamente para reformular información que ya satisface la consulta.
+No se invocará nuevamente a Gemini únicamente para reformular información que ya satisface la consulta.
+
+La reutilización incluirá la construcción del plan correspondiente mediante mecanismos deterministas cuando resulte suficiente.
 
 ### 13.3. Integración determinista
 
-Se conservarán los mecanismos de integración de:
+Se conservarán los mecanismos existentes de integración de:
 
 - Clasificaciones documentales.
 - Resultados geográficos.
@@ -598,17 +923,19 @@ Se conservarán los mecanismos de integración de:
 - Fuentes.
 - Limitaciones.
 
-La integración podrá realizarse mediante src/agent_resultado.py y src/agent_schedule.py sin nuevas llamadas externas cuando resulte suficiente.
+src/agent_resultado.py y src/agent_schedule.py permitirán integrar estos resultados sin nuevas llamadas externas cuando resulte posible.
 
 ### 13.4. Síntesis mediante Gemini
 
-Cuando la integración determinista no permita construir una respuesta adecuada, podrá utilizarse Gemini.
+Cuando la integración determinista resulte insuficiente, podrá utilizarse Gemini.
 
-El resultado deberá superar las validaciones correspondientes.
+La respuesta generada deberá superar las validaciones correspondientes.
+
+No se habilitarán búsquedas abiertas en Internet ni mecanismos externos de grounding.
 
 ### 13.5. Estado de evidencia
 
-Se conservará el contrato:
+Se conservará:
 
 ```python
 EstadoEvidencia = Literal[
@@ -620,146 +947,247 @@ EstadoEvidencia = Literal[
 
 | Estado | Significado |
 |---|---|
-| suficiente | La evidencia permite resolver adecuadamente la consulta |
-| parcial | La evidencia permite resolver únicamente determinados aspectos |
-| insuficiente | No existe evidencia suficiente para fundamentar la recomendación |
+| suficiente | La evidencia permite resolver los aspectos requeridos |
+| parcial | Solo pueden resolverse determinados aspectos |
+| insuficiente | No existe evidencia suficiente para fundamentar la respuesta solicitada |
 
-La existencia de evidencia insuficiente no implica necesariamente un fallo técnico.
+La insuficiencia documental no constituye necesariamente un fallo técnico.
 
-### 13.6. Planificación
+Una búsqueda geográfica legítimamente vacía podrá aportar evidencia suficiente para afirmar que no se han encontrado instalaciones dentro del radio consultado.
 
-La síntesis deberá determinar si la consulta requiere un plan conforme a las necesidades funcionales del producto.
+Una observación visual podrá ser suficiente para una solicitud exclusivamente descriptiva.
 
-No se generará un plan únicamente para alcanzar la interrupción HITL.
+### 13.6. Fallos bloqueantes
 
-Los planes deberán conservar las validaciones estructurales y de evidencia correspondientes.
+Antes de concluir satisfactoriamente la síntesis deberá verificarse la ausencia de fallos técnicos bloqueantes.
 
-Las reglas de generación se definen en [03-generacion.md](03-generacion.md).
+Se revisará el comportamiento de _hay_fallo_bloqueante() para que considere:
 
-## 14. Respuestas directas
+- Errores del estado.
+- Errores de herramientas imprescindibles.
+- Recuperaciones autorizadas.
+- Información multimodal previamente identificada.
+- Necesidades temporales reales de la consulta.
+
+Un fallo técnico bloqueante no deberá transformarse en una respuesta satisfactoria por existir alguna evidencia parcial.
+
+La existencia de datos válidos de otra herramienta no demuestra que la operación completa haya podido realizarse correctamente.
+
+### 13.7. Plan obligatorio
+
+Se conservará la generación de planes del PB02.
+
+Toda síntesis satisfactoria deberá producir un plan válido.
+
+El plan deberá cumplir:
+
+- Ser una lista de cadenas.
+- Contener al menos dos elementos.
+- No contener pasos vacíos.
+- Ser coherente con la respuesta.
+- Respetar las evidencias disponibles.
+- No recomendar acciones no fundamentadas.
+- No afirmar que se han ejecutado acciones externas.
+
+Las consultas informativas conservarán un plan de comprobación, verificación o actuación coherente con la respuesta.
+
+Las abstenciones y aclaraciones podrán generar un plan orientado a obtener la información necesaria y verificar posteriormente la consulta.
+
+La generación del plan no autoriza inventar recomendaciones.
+
+### 13.8. Identificador de aprobación
+
+Una vez validadas la respuesta y el plan, se generará mediante Python:
+
+```python
+approval_id = str(uuid4())
+```
+
+El identificador se almacenará en el estado de LangGraph.
+
+No será generado por Gemini.
+
+Cada nueva propuesta pendiente dispondrá de un identificador diferente.
+
+No se reutilizará approval_id de turnos anteriores.
+
+## 14. Respuestas anteriores a LangGraph
 
 ### 14.1. Finalidad
 
-El asistente deberá poder resolver consultas que no requieran una aprobación humana.
+El backend podrá resolver determinadas situaciones antes de ejecutar el agente.
+
+Este mecanismo permitirá evitar consumo innecesario y aplicar controles de admisibilidad.
+
+No constituye una ruta adicional de LangGraph.
 
 ### 14.2. Situaciones aplicables
 
-Podrán resolverse directamente:
+Podrán finalizar antes del agente:
 
-- Consultas informativas.
-- Aclaraciones que no requieran un plan.
-- Abstenciones válidas.
-- Resultados documentales suficientes que no necesiten una decisión HITL.
-- Otros resultados compatibles con el alcance funcional establecido.
+- Consultas inequívocamente fuera del dominio.
+- Aclaraciones deterministas previas.
+- Imágenes identificadas como fuera del dominio.
+- Imágenes cuya identificación resulte incierta.
+- Imágenes con contenido no permitido.
+- Entradas rechazadas por los controles correspondientes.
 
-### 14.3. Estado resultante
+Los fallos técnicos y las entradas inválidas devolverán el error HTTP aplicable.
 
-Una respuesta directa que resuelva correctamente un turno mantendrá:
+### 14.3. Respuesta semántica válida
+
+Una respuesta previa válida podrá representarse mediante AskOut.
+
+Cuando no exista una conversación anterior:
 
 | Campo | Valor |
 |---|---|
-| respuesta | Respuesta válida |
-| plan | Lista vacía |
+| thread_id | None |
+| plan | [] |
 | plan_aprobado | None |
 | pendiente_hitl | False |
 | approval_id | None |
 | done | False |
+| turnos_consumidos | 0 |
+| abstencion | True |
+| estado_evidencia | insuficiente |
 | error | None |
 
-La conversación podrá continuar mientras cumpla las condiciones correspondientes.
+El backend construirá esta respuesta sin ejecutar LangGraph.
 
-### 14.4. Finalización válida del grafo
+No se generará un EstadoProducto ficticio para aparentar una ejecución satisfactoria del agente.
 
-La ausencia de una interrupción HITL no constituirá automáticamente un error.
+### 14.4. Conversación existente
 
-procesar_turno() deberá distinguir entre:
+Si existe un hilo autorizado y operativamente disponible, la respuesta previa conservará:
 
-- Ejecución finalizada correctamente sin plan.
-- Ejecución interrumpida antes de aplicar.
-- Ejecución incompleta.
-- Fallo técnico.
+- El thread_id.
+- El contador de turnos correspondiente.
 
-No se considerará satisfactoria una ejecución que termine sin una respuesta válida ni un resultado explícitamente resuelto.
+No modificará su checkpoint.
 
-### 14.5. Registro del turno
+Deberán comprobarse previamente las restricciones de estado de la conversación.
 
-Los turnos directos deberán incorporarse al historial interno cuando corresponda.
+### 14.5. Contabilización y persistencia
 
-El registro se realizará una única vez.
+Las respuestas anteriores a LangGraph:
 
-No se utilizará el nodo aplicar para simular una aprobación que no ha sido necesaria.
+- No incrementarán turnos_consumidos.
+- No generarán RegistroTurno.
+- No generarán mensajes persistidos.
+- No requerirán HITL.
+- No crearán una conversación nueva.
+
+Las consultas textuales resueltas determinísticamente no consumirán cuota comercial.
+
+Las identificaciones multimodales ejecutadas sí consumirán la cuota correspondiente, aunque no continúen hacia LangGraph.
+
+### 14.6. Diferenciación
+
+Una respuesta anterior a LangGraph no equivale a una salida directa del grafo.
+
+Dentro de LangGraph no existirán turnos resueltos satisfactoriamente sin HITL.
 
 ## 15. Supervisión humana — HITL
 
 ### 15.1. Finalidad
 
-HITL permitirá al consumidor revisar, aprobar o rechazar los planes generados por el asistente.
+HITL permitirá revisar, aprobar o rechazar las propuestas generadas por el asistente.
+
+Se conservará el comportamiento obligatorio desarrollado durante el PB02.
 
 La aprobación constituye una decisión registrada dentro del producto.
 
-No supone ejecutar acciones físicas ni operaciones externas.
+No supone ejecutar acciones físicas, realizar reservas ni efectuar operaciones administrativas externas.
 
-### 15.2. Condiciones de interrupción
+### 15.2. Interrupción
 
-El grafo únicamente deberá interrumpirse antes del nodo aplicar cuando:
+El grafo alcanzará la interrupción antes del nodo aplicar cuando exista una propuesta válida.
 
-- Exista un plan válido.
-- El plan requiera una decisión HITL.
-- El turno todavía no se encuentre resuelto.
-- No exista un fallo técnico que impida continuar.
+La interrupción se comprobará mediante el checkpoint real.
+
+Se conservará hay_hitl_pendiente() como mecanismo de comprobación.
+
+La posición esperada será:
+
+```python
+tuple(snapshot.next) == ("aplicar",)
+```
+
+El valor de pendiente_hitl almacenado o mostrado por una interfaz no será suficiente por sí solo.
 
 ### 15.3. Estado pendiente
 
-Cuando exista una aprobación pendiente:
+Una propuesta pendiente válida deberá presentar:
 
 | Campo | Valor |
 |---|---|
-| plan | Plan válido |
+| respuesta | Cadena no vacía |
+| plan | Lista válida de pasos |
 | plan_aprobado | None |
 | pendiente_hitl | True |
 | approval_id | UUID válido |
 | done | False |
 | error | None |
 
-La interrupción deberá existir realmente en el checkpoint.
+La interrupción real deberá corresponder a la propuesta presentada.
 
-Un flag almacenado por el cliente no será suficiente para acreditar la existencia de HITL.
+La existencia de un checkpoint pausado con errores o con un plan inválido no autorizará su aprobación.
 
 ### 15.4. Identificador de aprobación
 
-Cada plan pendiente dispondrá de un approval_id único.
+approval_id identificará exclusivamente la propuesta actualmente pendiente.
 
-El identificador deberá generarse mediante código Python.
+Se conservará dentro del checkpoint.
 
-Se encontrará asociado exclusivamente a la aprobación pendiente correspondiente.
+El consumidor deberá devolverlo al aprobar o rechazar.
 
-No podrá reutilizarse para resolver un plan posterior.
+Conocer approval_id no sustituye la autenticación ni la autorización.
 
 ### 15.5. Bloqueo conversacional
 
-Mientras exista una aprobación pendiente, no se admitirán nuevas consultas ordinarias dentro de la misma conversación.
+Mientras exista un HITL pendiente, no podrán iniciarse nuevas consultas ordinarias en ese hilo.
 
-Podrá resolverse la aprobación correspondiente o iniciarse otra conversación independiente.
+El consumidor podrá:
+
+- Aprobar la propuesta.
+- Rechazar la propuesta.
+- Consultar el historial autorizado.
+- Iniciar otra conversación independiente.
+
+No se mantendrá reservado el worker mientras el consumidor decide.
 
 ### 15.6. Validación de la decisión
 
-Antes de reanudar el grafo deberá comprobarse:
+aprobar_plan() deberá comprobar:
 
-- La existencia del checkpoint.
-- La consistencia del estado.
-- La existencia de una interrupción HITL real.
-- La validez del plan.
-- La coincidencia de approval_id.
-- La validez de la decisión.
-- La autorización de la operación cuando proceda del servicio HTTP.
+1. La validez de thread_id.
+2. La validez de aprobado.
+3. La validez de approval_id.
+4. La existencia de un checkpoint real.
+5. La consistencia del estado.
+6. La existencia de una interrupción HITL.
+7. La ausencia de errores bloqueantes.
+8. La validez del plan pendiente.
+9. La coincidencia de approval_id.
+10. Que la propuesta todavía no esté resuelta.
 
-La comprobación y modificación del estado deberán realizarse dentro de los mecanismos de exclusión correspondientes.
+En el flujo HTTP, la autorización y exclusión mutua deberán haberse comprobado previamente.
+
+No se utilizará un estado proporcionado por el cliente para completar campos ausentes del checkpoint.
 
 ### 15.7. Reanudación
 
-Una vez validada la decisión, el orquestador actualizará el estado y reanudará el grafo.
+Una vez validada la decisión, se actualizará el checkpoint:
 
-Se conservará el mecanismo de reanudación compatible con la interrupción estática:
+```python
+app.update_state(
+    configuracion,
+    {"plan_aprobado": aprobado},
+)
+```
+
+Posteriormente se reanudará la ejecución:
 
 ```python
 app.invoke(
@@ -768,83 +1196,219 @@ app.invoke(
 )
 ```
 
-El cliente HTTP no manipulará directamente el checkpoint ni invocará LangGraph.
+Se conservará el mecanismo existente de interrupción estática.
+
+La reanudación no constituirá un nuevo turno.
+
+### 15.8. Confirmación de resolución
+
+Después de reanudar el grafo deberá comprobarse:
+
+- Que existe un checkpoint final.
+- Que no quedan nodos pendientes de ejecución.
+- Que no existe HITL pendiente.
+- Que approval_id ha sido eliminado.
+- Que plan_aprobado coincide con la decisión.
+- Que done coincide con el resultado esperado.
+- Que el registro añadido al historial corresponde al turno actual.
+- Que no existen errores técnicos.
+- Que turnos_consumidos no ha aumentado.
+
+No será suficiente encontrar un registro anterior con la misma decisión booleana.
+
+La comprobación deberá identificar que aplicar se ha ejecutado correctamente para la propuesta actual.
+
+Se tendrá en cuenta que el historial interno puede haber alcanzado su longitud máxima.
+
+### 15.9. Errores
+
+| Situación | Código HTTP correspondiente |
+|---|---|
+| No existe HITL pendiente | 409 NO_PENDING_APPROVAL |
+| approval_id no coincide con la propuesta pendiente | 409 STALE_APPROVAL |
+| Estado operativo perdido o inconsistente | 409 THREAD_STATE_LOST |
+| Conversación ocupada | 409 THREAD_BUSY |
+| Decisión estructuralmente inválida | 422 VALIDATION_ERROR |
+| Fallo interno durante la reanudación | 500 o 503, según la causa |
+| Timeout de ejecución | 504 AGENT_TIMEOUT |
+
+El núcleo comunicará los errores mediante mecanismos internos controlados.
+
+FastAPI será responsable de transformarlos a ErrorOut.
 
 ## 16. Nodo aplicar
 
 ### 16.1. Responsabilidad
 
-El nodo aplicar registrará la decisión correspondiente al plan pendiente.
+El nodo aplicar continuará registrando la decisión correspondiente al plan pendiente.
 
-No ejecutará herramientas adicionales ni realizará operaciones externas.
+No ejecutará herramientas adicionales.
 
-### 16.2. Aprobación
+No llamará a Gemini.
 
-Cuando la decisión sea favorable:
+No realizará escrituras directas en PostgreSQL.
 
-| Campo | Valor |
+### 16.2. Registro interno
+
+Antes de retirar o modificar una propuesta rechazada, se reutilizará registrar_turno().
+
+El registro conservará:
+
+- pedido_original.
+- respuesta original.
+- plan original.
+- aprobado.
+
+El turno se incorporará una única vez al historial interno.
+
+No se añadirá un segundo registro por la propia petición de aprobación.
+
+### 16.3. Aprobación
+
+Cuando aprobado=True:
+
+| Campo | Valor resultante |
 |---|---|
+| respuesta | Respuesta aprobada |
+| plan | Plan aprobado |
 | plan_aprobado | True |
 | pendiente_hitl | False |
 | approval_id | None |
 | done | True |
+| error | None |
 
-El turno quedará resuelto y la conversación finalizará.
+El turno quedará resuelto.
 
-### 16.3. Rechazo
+La conversación finalizará.
 
-Cuando la decisión sea desfavorable:
+### 16.4. Rechazo
 
-| Campo | Valor |
+Cuando aprobado=False:
+
+| Campo | Valor resultante |
 |---|---|
+| respuesta | Mensaje controlado de rechazo |
+| plan | [] |
 | plan_aprobado | False |
 | pendiente_hitl | False |
 | approval_id | None |
 | done | False |
+| error | None |
 
-El turno quedará resuelto.
+Se conservará el mensaje existente:
 
-El usuario podrá reformular la consulta mientras se mantengan las condiciones de continuidad.
+```text
+Plan rechazado. Puedes reformular tu consulta.
+```
 
-### 16.4. Contexto posterior al rechazo
+El rechazo resolverá el turno.
 
-El rechazo permitirá conservar el contexto necesario para interpretar la siguiente consulta.
+La conversación podrá continuar mientras respete sus límites y condiciones de estado.
 
-El plan rechazado no deberá permanecer como aprobación pendiente.
+### 16.5. Contexto posterior al rechazo
 
-Las evidencias anteriores no se considerarán automáticamente válidas para fundamentar una nueva recomendación.
+Se conservará el contexto necesario para interpretar una reformulación.
 
-### 16.5. Fallos durante la reanudación
+El plan rechazado no permanecerá como propuesta pendiente.
 
-Cuando la reanudación no pueda completarse correctamente, no se comunicará una aprobación o rechazo satisfactorio.
+Las evidencias activas, fuentes y notas anteriores se limpiarán conforme al comportamiento existente.
 
-El estado deberá evaluarse para determinar si puede reutilizarse de manera segura.
+El historial interno conservará la propuesta original y la decisión de rechazo.
+
+Las evidencias anteriores no se considerarán automáticamente válidas para una nueva recomendación.
+
+### 16.6. Persistencia del rechazo
+
+La capa de servicios recuperará el RegistroTurno correspondiente para conservar la propuesta original.
+
+La respuesta persistente deberá identificar expresamente que el plan fue rechazado.
+
+Se conservará también el mensaje final de rechazo cuando corresponda.
+
+Esta transformación se realizará de forma determinista, conforme a [13-persistencia.md](13-persistencia.md).
+
+### 16.7. Fallos de resolución
+
+Si aplicar no puede completar correctamente la resolución, no se comunicará una aprobación o rechazo satisfactorio.
+
+El estado deberá evaluarse para determinar si puede reutilizarse.
+
+No se generarán registros SQL de turnos fallidos.
 
 ## 17. Modalidades de aprobación
 
-### 17.1. Aprobación manual
+### 17.1. Aprobación manual mediante HTTP
 
-Streamlit y el modo interactivo de terminal requerirán una decisión explícita cuando exista HITL pendiente.
+Cuando auto_aprobar=False:
+
+- Se ejecutará procesar_turno().
+- Se comprobará el HITL real.
+- Se validará el resultado.
+- Se devolverá AskOut con pendiente_hitl=True.
+- No se persistirán los mensajes del turno.
+- Se liberarán los recursos de ejecución.
+
+El consumidor resolverá posteriormente la propuesta mediante POST /approve.
 
 ### 17.2. Aprobación automática mediante HTTP
 
-El contrato HTTP permitirá utilizar auto_aprobar conforme a [12-contratos-http.md](12-contratos-http.md).
+Cuando auto_aprobar=True:
 
-Cuando auto_aprobar=True y exista un plan válido pendiente, la capa de servicios podrá resolverlo automáticamente.
+1. Ejecutar procesar_turno().
+2. Confirmar que no existe error.
+3. Confirmar una interrupción HITL válida.
+4. Obtener approval_id del estado interno.
+5. Ejecutar aprobar_plan() con aprobado=True.
+6. Validar el estado resultante.
+7. Persistir el turno correctamente resuelto.
+8. Devolver AskOut.
 
-La resolución automática deberá utilizar las mismas comprobaciones y transiciones que una aprobación manual.
+La aprobación automática utilizará el mismo mecanismo que la aprobación manual.
 
-No se omitirá el nodo aplicar.
+No se modificará done directamente para simular una aprobación.
 
-No se permitirá que Gemini determine por sí mismo si debe aprobarse un plan.
+No se omitirá aplicar.
 
-### 17.3. Respuestas sin plan
+La ejecución conservará el bloqueo correspondiente sin intentar adquirir nuevamente el mismo bloqueo conversacional.
 
-Cuando una consulta se resuelva directamente, auto_aprobar no deberá provocar la creación de un plan artificial ni la ejecución de aplicar.
+### 17.3. Respuestas anteriores al agente
 
-### 17.4. Modo de demostración
+auto_aprobar no provocará ninguna operación HITL cuando la petición haya sido resuelta antes de LangGraph.
 
-Se conservará la opción explícita --auto-aprobar de la interfaz de terminal.
+No se creará un plan artificial para estas respuestas.
+
+### 17.4. CLI
+
+La interfaz de terminal conservará sus modalidades de aprobación interactiva y automática.
+
+Se adaptará la función _decidir() de src/cli_agent.py para utilizar la firma definitiva de aprobar_plan().
+
+Conceptualmente:
+
+```python
+aprobar_plan(
+    estado["thread_id"],
+    aprobado,
+    approval_id=estado["approval_id"],
+)
+```
+
+Antes de realizar la llamada se comprobará que approval_id existe y que el turno no contiene errores.
+
+### 17.5. run_demo
+
+run_demo() conservará su responsabilidad de coordinar una demostración del agente.
+
+Se adaptará a la nueva firma de aprobar_plan().
+
+No realizará aprobación automática cuando:
+
+- Exista error.
+- No exista una interrupción HITL real.
+- El plan no sea válido.
+- approval_id no esté disponible.
+
+Se conservará la opción explícita --auto-aprobar.
 
 ## 18. Transiciones del estado conversacional
 
@@ -852,99 +1416,133 @@ Se conservará la opción explícita --auto-aprobar de la interfaz de terminal.
 stateDiagram-v2
     [*] --> Disponible
 
-    Disponible --> Procesando: Consulta admitida
+    Disponible --> Procesando: Nuevo turno admitido
 
-    Procesando --> Disponible: Respuesta directa
-    Procesando --> Disponible: Abstencion valida
-    Procesando --> Disponible: Aclaracion
-    Procesando --> Pendiente: Plan valido
-    Procesando --> Error: Fallo tecnico
+    Procesando --> Pendiente: Respuesta y plan válidos
+    Procesando --> Error: Fallo técnico
 
-    Pendiente --> Finalizada: Aprobacion
+    Pendiente --> Finalizada: Aprobación
     Pendiente --> Disponible: Rechazo
-    Pendiente --> Error: Fallo de reanudacion
+    Pendiente --> Error: Fallo de resolución
 
-    Error --> Disponible: Estado consistente recuperable
+    Error --> Disponible: Estado seguro y consistente
     Error --> NoReutilizable: Estado inconsistente
+
+    Disponible --> Agotada: Límite de turnos alcanzado
 
     Finalizada --> [*]
     NoReutilizable --> [*]
+    Agotada --> [*]
 ```
 
-### 18.1. Estado disponible
+Las transiciones representan estados funcionales y no nuevos nodos de LangGraph.
 
-Permite iniciar una nueva consulta si se cumplen los límites y requisitos de autorización.
+La aprobación o el rechazo del último turno permitido se resolverá antes de determinar la disponibilidad posterior de la conversación.
 
-### 18.2. Estado procesando
+### 18.1. Disponible
 
-Existe una operación en ejecución que puede modificar el estado.
+Permite iniciar una consulta cuando se cumplen las restricciones de autorización, estado y consumo.
 
-No se admitirán otras modificaciones simultáneas de la misma conversación.
+### 18.2. Procesando
 
-### 18.3. Estado pendiente
+Existe una ejecución activa que puede modificar el checkpoint.
 
-Existe una interrupción HITL real y un approval_id válido.
+No se permitirán modificaciones simultáneas del mismo hilo.
 
-### 18.4. Estado finalizado
+### 18.3. Pendiente
 
-La conversación ha sido aprobada y no admite nuevas consultas ordinarias.
+Existe una interrupción HITL real y una propuesta válida identificada mediante approval_id.
 
-### 18.5. Estado no reutilizable
+### 18.4. Finalizada
 
-El estado operativo no puede considerarse consistente.
+El plan ha sido aprobado y done=True.
 
-La conversación no podrá continuar mediante el checkpoint afectado.
+No se admitirán nuevas consultas ordinarias.
 
-El historial previamente persistido seguirá disponible conforme a los permisos correspondientes.
+### 18.5. Agotada
 
-### 18.6. Agotamiento de turnos
+Se ha alcanzado el límite de turnos y no existe un HITL pendiente que pueda resolverse.
 
-El agotamiento del límite de turnos impedirá iniciar nuevas consultas.
+No se admitirán nuevas consultas.
 
-No deberá confundirse con una aprobación satisfactoria de un plan.
+### 18.6. Error
 
-Un plan pendiente generado durante el último turno permitido podrá resolverse conforme a las reglas HITL.
+La operación no ha podido completarse satisfactoriamente.
+
+No se considerará automáticamente una conversación disponible.
+
+Deberá comprobarse la consistencia del estado.
+
+### 18.7. No reutilizable
+
+El checkpoint se ha perdido o no puede considerarse consistente.
+
+La conversación no podrá continuar desde ese estado.
+
+El historial SQL permanecerá disponible conforme a los permisos correspondientes.
+
+### 18.8. Respuestas previas
+
+Las respuestas deterministas anteriores a LangGraph no producirán transiciones en su estado.
+
+La existencia de una conversación disponible no implica que todas las peticiones deban ejecutar el agente.
 
 ## 19. Continuidad conversacional
 
 ### 19.1. Contexto autorizado
 
-El asistente utilizará únicamente el contexto perteneciente a la conversación correspondiente.
+El asistente utilizará únicamente el contexto perteneciente al hilo correspondiente.
+
+No incorporará información de otros consumidores.
 
 ### 19.2. Reformulaciones
 
-Las consultas que dependan de mensajes anteriores podrán interpretarse mediante el contexto conservado.
+Tras rechazar un plan, el consumidor podrá formular consultas relacionadas con el contexto anterior.
 
-Por ejemplo:
+Ejemplos:
 
 - ¿Y si es de plástico?
 - Mejor uno más cercano.
 - ¿Y mañana?
 - Prefiero otro distrito.
 
+La interpretación deberá respetar las nuevas condiciones aportadas.
+
 ### 19.3. Historial interno
 
-El historial interno permitirá conservar información relevante de los turnos resueltos.
+historial_turnos conservará exclusivamente registros de turnos aprobados o rechazados.
 
-Su tamaño permanecerá limitado conforme a MAX_HISTORY_TURNS.
+Su tamaño máximo se establecerá mediante MAX_HISTORY_TURNS.
 
-El historial deberá admitir turnos directos, aprobados y rechazados.
+El historial interno no constituirá una copia íntegra del historial SQL.
 
 ### 19.4. Contexto frente a evidencia
 
-El contexto conversacional podrá ayudar a interpretar la intención.
+El contexto permitirá interpretar referencias a consultas anteriores.
 
-No constituirá automáticamente evidencia documental válida para una nueva respuesta.
+No constituirá automáticamente evidencia documental válida.
+
+Cada nueva consulta deberá disponer de la evidencia necesaria para fundamentar su resultado.
 
 ### 19.5. Restricciones modificadas
 
-Cuando el usuario modifique una condición anterior, el nuevo turno deberá utilizar las restricciones actualizadas.
+Cuando el consumidor modifique una condición anterior, el agente utilizará las restricciones actualizadas.
 
-### 19.6. Independencia de evidencias
+No se conservarán coordenadas o archivos anteriores como entradas activas sin autorización.
 
-Cada turno deberá obtener o validar las evidencias necesarias para resolver su consulta.
+### 19.6. Respuestas anteriores a LangGraph
 
-No se reutilizarán resultados anteriores cuando hayan perdido pertinencia, validez o compatibilidad.
+Las respuestas previas al agente no se incorporarán a historial_turnos ni a contexto_revision.
+
+Si una aclaración previa requiere información adicional, el cliente deberá facilitar una consulta suficientemente completa.
+
+No se reconstruirá automáticamente el contexto mediante mensajes mantenidos exclusivamente en Streamlit.
+
+### 19.7. Evidencias anteriores
+
+Las evidencias anteriores únicamente podrán utilizarse cuando conserven su validez, procedencia y pertinencia.
+
+No se reutilizarán resultados obsoletos por el simple hecho de pertenecer al mismo hilo.
 
 ## 20. Integración multimodal
 
@@ -952,69 +1550,635 @@ No se reutilizarán resultados anteriores cuando hayan perdido pertinencia, vali
 
 Las imágenes recibidas mediante HTTP deberán superar la validación técnica y semántica antes de ejecutar LangGraph.
 
-Las reglas correspondientes se definen en [15-robustez-observabilidad.md](15-robustez-observabilidad.md).
+Las reglas se establecen en:
+
+- [05-tools.md](05-tools.md).
+- [12-contratos-http.md](12-contratos-http.md).
+- [15-robustez-observabilidad.md](15-robustez-observabilidad.md).
 
 ### 20.2. Identificación reutilizable
 
-La información multimodal previamente validada deberá incorporarse al contexto de la consulta.
+La función identificar_imagen() devolverá IdentificacionImagen.
 
-Su estructura definitiva se establecerá conjuntamente con el contrato interno definido en [05-tools.md](05-tools.md).
+Únicamente las identificaciones admitidas podrán proporcionarse a procesar_turno() mediante identificacion_imagen.
 
-### 20.3. Ausencia de llamadas duplicadas
+### 20.3. Entradas mutuamente excluyentes
 
-El asistente no deberá solicitar nuevamente a Gemini la descripción de una imagen cuya identificación válida ya se encuentra disponible.
+| Modalidad | ruta_imagen | identificacion_imagen |
+|---|---|---|
+| Consulta textual | None | None |
+| Consulta multimodal HTTP | None | Identificación admitida |
+| Consulta multimodal local | Ruta autorizada | None |
 
-### 20.4. Clasificación documental
+No se admitirán simultáneamente una ruta de imagen y una identificación previa.
 
-La identificación visual permitirá orientar la recuperación documental.
+### 20.4. Adaptación del enrutamiento
 
-No sustituirá la evidencia necesaria para recomendar un destino de depósito.
+Las comprobaciones existentes que detectan imágenes deberán contemplar las dos modalidades.
 
-### 20.5. Imágenes no admitidas
+Por ejemplo:
 
-Las imágenes rechazadas antes de ejecutar el asistente no deberán provocar una invocación de LangGraph.
+```python
+hay_imagen = bool(
+    estado.get("ruta_imagen")
+    or estado.get("identificacion_imagen")
+)
+```
 
-### 20.6. Archivos temporales
+Se revisarán especialmente:
 
-Los checkpoints no deberán depender de archivos temporales eliminados.
+- src/agent_routing.py.
+- El contexto proporcionado al supervisor.
+- src/agent_tool_loop.py.
+- La comprobación de solicitudes exclusivamente descriptivas.
+- La evaluación de evidencia.
+- La síntesis de observaciones visuales.
+- La detección de fallos relacionados con imágenes.
 
-La continuidad de la conversación deberá utilizar la información descriptiva que pueda conservarse legítimamente en el estado.
+Una identificación admitida deberá activar las necesidades correspondientes del especialista de residuos.
 
-### 20.7. Ejecución independiente
+### 20.5. Evidencia visual reutilizada
 
-La interfaz de terminal conservará la posibilidad de proporcionar imágenes mediante los mecanismos locales autorizados.
+La identificación previa deberá incorporarse al contexto como información descriptiva.
 
-La adaptación deberá evitar duplicar la lógica de identificación multimodal.
+Deberá mantenerse una procedencia explícita que permita diferenciarla de una nueva ejecución de describir_imagen.
+
+Las comprobaciones de suficiencia de evidencia deberán reconocer esta modalidad.
+
+No se inventará una invocación de herramienta para satisfacer las comprobaciones actuales.
+
+### 20.6. Ausencia de duplicación
+
+Cuando exista una identificación válida:
+
+- No se volverá a leer la imagen.
+- No se repetirá la llamada multimodal.
+- No se incrementará ficticiamente tool_calls_turno.
+- No se generarán trazas de herramientas no ejecutadas.
+
+### 20.7. Imágenes no admitidas
+
+Los estados out_of_domain, policy_violation y uncertain obtenidos en el flujo HTTP impedirán ejecutar LangGraph.
+
+Los fallos técnicos de identificación también impedirán iniciar el agente.
+
+Estos resultados no producirán planes, HITL ni turnos persistidos.
+
+### 20.8. Archivos temporales
+
+Los checkpoints HTTP no deberán depender de referencias a imágenes temporales eliminadas.
+
+La continuidad conversacional utilizará información descriptiva conservada legítimamente.
+
+No se almacenará el contenido binario de las imágenes dentro del estado operativo.
+
+### 20.9. Ejecución independiente
+
+La CLI conservará la posibilidad de utilizar imágenes locales autorizadas.
+
+La herramienta describir_imagen reutilizará identificar_imagen().
+
+Los errores y rechazos semánticos deberán tratarse conforme a los contratos internos establecidos.
+
+No se duplicará la lógica multimodal para cada interfaz.
 
 ## 21. Filtrado previo de dominio
 
-El filtrado previo de dominio del servicio HTTP constituye una operación anterior a LangGraph.
+El filtrado previo del servicio HTTP constituirá una operación anterior a LangGraph.
 
-Su finalidad será impedir ejecuciones innecesarias del asistente.
+Su finalidad será evitar ejecuciones innecesarias y aplicar controles de admisibilidad.
 
-Las consultas inequívocamente fuera del dominio y las aclaraciones deterministas previas podrán resolverse sin invocar:
+### 21.1. Restricciones
 
-- El supervisor.
-- Los especialistas.
-- Las herramientas.
-- El RAG.
+El filtrado determinista de consultas textuales no invocará:
+
+- Supervisor.
+- Especialistas.
+- RAG.
 - Gemini.
-- La síntesis.
+- Herramientas.
+- Síntesis.
 - HITL.
 
-El filtrado previo no sustituirá las reglas de interpretación, seguridad y alcance geográfico existentes dentro del núcleo RAG.
+### 21.2. Contexto
 
-La coordinación del contexto, la numeración y la persistencia de las respuestas generadas antes de LangGraph deberá respetar la política conjunta de los documentos 12, 13 y 15.
+El filtro deberá contemplar el contexto operativo autorizado cuando exista.
+
+No se aplicará una política exclusivamente basada en palabras clave que impida interpretar reformulaciones legítimas.
+
+### 21.3. Estado y autorización
+
+Antes de resolver una consulta previa sobre un hilo existente deberán comprobarse:
+
+- Existencia de la conversación.
+- Propiedad.
+- Disponibilidad del checkpoint.
+- Ausencia de HITL pendiente.
+- Ausencia de ejecución concurrente.
+- Que la conversación no esté finalizada.
+- Que el límite de turnos no esté agotado.
+
+### 21.4. Independencia
+
+El filtrado previo no sustituirá las restricciones internas del RAG ni las validaciones de herramientas.
+
+Las consultas que superen el filtro deberán seguir respetando los controles del agente.
 
 ## 22. Límites internos de ejecución
 
-### 22.1. Configuración
+### 22.1. Configuración inicial
 
-Los valores de los límites internos se definen en [15-robustez-observabilidad.md](15-robustez-observabilidad.md).
+| Parámetro | Valor |
+|---|---|
+| MAX_PREGUNTA_CARACTERES | 500 |
+| MAX_STEPS_DEFAULT | 3 |
+| MAX_STEPS_LIMIT | 4 |
+| MAX_TURNS_DEFAULT | 6 |
+| MAX_TURNS_LIMIT | 12 |
+| MAX_HISTORY_TURNS | 6 |
+| MAX_TOOL_CALLS_PER_SPECIALIST | 4 |
+| MAX_TOOL_CALLS_PER_TURN | 6 |
+| MAX_ITER | 4 |
+| GRAPH_RECURSION_LIMIT | 16 |
 
-Esta especificación no establecerá valores alternativos.
+Los valores definitivos se establecerán conforme a [15-robustez-observabilidad.md](15-robustez-observabilidad.md).
 
-Se conservarán los controles relacionados con:
+Estos valores iniciales deberán validarse experimentalmente.
+
+### 22.2. Aplicación
+
+Los límites serán gestionados mediante Python.
+
+El modelo no podrá ampliarlos.
+
+### 22.3. Contador de turnos
+
+turnos_consumidos contabilizará los turnos iniciados en LangGraph.
+
+La preparación de un turno incrementará el contador una única vez.
+
+La aprobación y el rechazo no volverán a incrementarlo.
+
+Las respuestas previas al agente tampoco lo incrementarán.
+
+### 22.4. Relación con PostgreSQL
+
+turn_number procederá directamente de turnos_consumidos.
+
+No se incorporará un contador SQL independiente.
+
+No se utilizará el número de registros persistidos para reconstruir el contador operativo.
+
+### 22.5. Diferenciación de contadores
+
+El contador de turnos no deberá confundirse con:
+
+- Rate limiting HTTP.
+- Cuotas comerciales.
+- Iteraciones del supervisor.
+- Rondas de los especialistas.
+- Invocaciones de herramientas.
+- Llamadas facturables a proveedores.
+
+### 22.6. Agotamiento
+
+Cuando se alcance max_turns:
+
+- No podrán iniciarse nuevas consultas.
+- No se reiniciará artificialmente turnos_consumidos.
+- No se crearán nuevos checkpoints para el mismo identificador con el objetivo de evitar el límite.
+
+Un HITL pendiente generado durante el último turno permitido podrá resolverse.
+
+### 22.7. Fallos por presupuestos
+
+No se fabricarán respuestas ni planes para ocultar una ejecución que no haya podido completarse dentro de los límites.
+
+Si el agente no puede alcanzar una propuesta válida debido a un fallo de ejecución, deberá comunicar el error correspondiente.
+
+## 23. MemorySaver y checkpoints
+
+### 23.1. Responsabilidad
+
+MemorySaver conservará los checkpoints necesarios para la continuidad operativa.
+
+### 23.2. Alcance
+
+Los checkpoints permanecerán almacenados en la memoria del proceso.
+
+No sobrevivirán automáticamente a un reinicio o redeploy.
+
+### 23.3. Estado autorizado
+
+El checkpoint real tendrá prioridad sobre cualquier representación anterior del estado.
+
+Cuando exista una conversación HTTP previa, no se utilizará EstadoProducto proporcionado por un cliente para sustituir canales ausentes o inconsistentes.
+
+La capa de servicios comprobará que el checkpoint necesario existe antes de invocar el agente.
+
+### 23.4. Conversaciones nuevas
+
+La inicialización de un nuevo estado estará permitida cuando el backend haya creado legítimamente una conversación nueva.
+
+No se utilizará para recuperar una conversación existente cuyo checkpoint se haya perdido.
+
+### 23.5. Estado incompleto
+
+Una ejecución anterior incompleta no se considerará automáticamente disponible para continuar.
+
+Deberá comprobarse:
+
+- La posición del checkpoint.
+- La existencia de tareas pendientes.
+- Los errores registrados.
+- La validez de la información operativa.
+- La posible invalidación del hilo.
+
+### 23.6. Pérdida de estado
+
+Cuando una conversación persistida carezca del checkpoint necesario:
+
+```text
+HTTP 409 THREAD_STATE_LOST
+```
+
+No se reconstruirá automáticamente LangGraph a partir de los mensajes SQL.
+
+El consumidor podrá consultar su historial autorizado e iniciar otra conversación.
+
+### 23.7. Pérdida de una respuesta HTTP
+
+Cuando el cliente pierda una respuesta:
+
+- No repetirá automáticamente la operación.
+- No inferirá approval_id a partir del historial.
+- No deducirá el estado operativo mediante la existencia de mensajes SQL.
+
+No se incorporarán endpoints adicionales de recuperación de checkpoints durante el PB03.
+
+### 23.8. Fuera de alcance
+
+No se implementará persistencia durable de checkpoints mediante PostgreSQL, Redis u otros sistemas.
+
+Esta limitación deberá documentarse en la entrega.
+
+## 24. Persistencia de turnos
+
+### 24.1. Separación de responsabilidades
+
+LangGraph gestionará el estado operativo.
+
+PostgreSQL conservará las entidades relacionales y los mensajes de turnos resueltos.
+
+El núcleo no escribirá directamente en PostgreSQL.
+
+### 24.2. Resultados del orquestador
+
+El orquestador deberá permitir distinguir:
+
+- Propuesta pendiente de HITL.
+- Turno aprobado.
+- Turno rechazado.
+- Fallo técnico.
+
+Las respuestas anteriores a LangGraph serán construidas por la capa de servicios y no constituirán resultados de procesar_turno().
+
+### 24.3. Criterio de persistencia
+
+Se persistirán exclusivamente los turnos aprobados o rechazados correctamente.
+
+Esto incluirá abstenciones y aclaraciones generadas dentro del agente cuando su HITL haya sido resuelto.
+
+No se utilizará done=True como único criterio de persistencia.
+
+### 24.4. Turnos pendientes
+
+Los planes pendientes no generarán mensajes persistidos.
+
+La existencia de una fila conversation no implica que exista un turno resuelto.
+
+### 24.5. Obtención del turno
+
+La capa de servicios recuperará el RegistroTurno correspondiente al resultado recién resuelto.
+
+Se verificará su correspondencia con la propuesta y la decisión actuales.
+
+No se utilizarán registros de turnos anteriores.
+
+turn_number procederá del contador turnos_consumidos.
+
+### 24.6. Consistencia
+
+Si LangGraph resuelve una propuesta pero falla la persistencia obligatoria:
+
+- No se devolverá HTTP 200.
+- Se aplicarán las reglas de rollback cuando corresponda.
+- Se protegerá la consistencia del estado.
+- Se invalidará el hilo cuando no pueda garantizarse su reutilización.
+
+No existe una transacción atómica compartida entre MemorySaver y PostgreSQL.
+
+### 24.7. Independencia de la CLI
+
+La ejecución independiente no requerirá PostgreSQL.
+
+Su historial operativo permanecerá gestionado por el agente.
+
+Las reglas de persistencia SQL se aplicarán exclusivamente mediante la capa correspondiente.
+
+## 25. Concurrencia
+
+### 25.1. Exclusión por conversación
+
+Las operaciones que puedan modificar un mismo checkpoint deberán ejecutarse bajo los mecanismos de exclusión establecidos.
+
+No podrán ejecutarse simultáneamente dos operaciones de modificación sobre el mismo hilo.
+
+### 25.2. Capacidad global
+
+La configuración inicial utilizará un único worker de ThreadPoolExecutor para las operaciones costosas del asistente.
+
+El backend podrá atender peticiones HTTP concurrentes sin ejecutar simultáneamente varias operaciones del agente.
+
+### 25.3. Aprobaciones concurrentes
+
+Dos peticiones no podrán resolver simultáneamente la misma aprobación.
+
+La operación admitida deberá completar las comprobaciones, la resolución y la persistencia bajo la protección correspondiente.
+
+### 25.4. Aprobaciones obsoletas
+
+Un approval_id anterior no podrá resolver una propuesta posterior.
+
+La comparación se realizará contra el checkpoint actual.
+
+### 25.5. Aprobación automática
+
+La ejecución y aprobación automática estarán protegidas por el mismo bloqueo conversacional.
+
+No se adquirirá nuevamente un bloqueo no reentrante que ya corresponda a la operación.
+
+### 25.6. Responsabilidad
+
+Los bloqueos, el semáforo de capacidad y la admisión serán responsabilidad de la capa de servicios.
+
+Las reglas completas se establecen en [15-robustez-observabilidad.md](15-robustez-observabilidad.md).
+
+## 26. Timeout y resultados tardíos
+
+### 26.1. Presupuesto compartido
+
+La ejecución HTTP dispondrá del presupuesto temporal configurado.
+
+Cuando corresponda, incluirá:
+
+- Identificación visual.
+- Ejecución de LangGraph.
+- Aprobación automática.
+
+No se asignará un presupuesto completo independiente a cada fase.
+
+### 26.2. Aprobación manual
+
+El tiempo de decisión humana no consumirá el presupuesto de ejecución.
+
+POST /approve dispondrá de un nuevo presupuesto temporal.
+
+### 26.3. Superación del timeout
+
+Cuando se comunique HTTP 504:
+
+- El resultado no se considerará satisfactorio.
+- No se persistirán los mensajes del turno.
+- No se aceptará posteriormente un resultado tardío.
+- No se liberarán prematuramente los recursos utilizados.
+- No se permitirá modificar simultáneamente el checkpoint afectado.
+
+### 26.4. Limitaciones
+
+La devolución del timeout no implica que la ejecución subyacente haya sido cancelada.
+
+No se implementará cancelación cooperativa ni interrupción forzada del grafo durante el PB03.
+
+### 26.5. Consistencia posterior
+
+Si la ejecución tardía puede haber modificado un checkpoint cuya consistencia no pueda garantizarse, se impedirá reutilizar dicho hilo.
+
+El resultado tardío podrá utilizarse exclusivamente para limpieza, registro de finalización e invalidación correspondiente.
+
+No autorizará la persistencia de mensajes.
+
+## 27. Gestión de errores
+
+### 27.1. Resultados semánticos válidos
+
+Podrán constituir resultados válidos:
+
+- Abstención por ausencia real de evidencia.
+- Respuesta con evidencia parcial legítima.
+- Solicitud de aclaración.
+- Ausencia de instalaciones dentro del radio.
+- Ausencia de instalaciones compatibles.
+- Horario desconocido.
+- Rechazo del plan.
+
+Cuando estos resultados sean generados dentro de LangGraph, deberán respetar el HITL obligatorio.
+
+### 27.2. Fallos técnicos
+
+Se distinguirán de los resultados semánticos:
+
+- Fallos imprescindibles del modelo.
+- Fallos imprescindibles de herramientas.
+- Errores del RAG.
+- Errores de ejecución del grafo.
+- Transiciones incompatibles.
+- Respuestas estructuradas inválidas no recuperadas.
+- Planes inválidos.
+- Interrupciones inesperadas.
+- Fallos durante la reanudación.
+- Timeouts.
+
+### 27.3. Estado de error
+
+Un fallo técnico no deberá provocar:
+
+- Una aprobación ficticia.
+- Una respuesta inventada.
+- La creación de un plan ficticio.
+- Un registro de turno resuelto.
+- Una finalización satisfactoria aparente.
+
+La existencia de respuesta o plan no invalidará automáticamente un error técnico presente en el estado.
+
+### 27.4. Propagación
+
+El núcleo deberá comunicar los errores mediante excepciones o estados internos controlados.
+
+No utilizará HTTPException.
+
+Se conservará la posibilidad de identificar causas técnicas mediante información estructurada o excepciones controladas.
+
+No se dependerá exclusivamente de interpretar textos arbitrarios generados por el modelo.
+
+### 27.5. Transformación HTTP
+
+FastAPI verificará el resultado antes de construir AskOut.
+
+Toda respuesta AskOut satisfactoria deberá contener:
+
+```json
+{
+    "error": null
+}
+```
+
+Una ejecución fallida no se devolverá mediante HTTP 200 con un campo error relleno.
+
+Las reglas completas se establecen en [12-contratos-http.md](12-contratos-http.md).
+
+### 27.6. Recuperación
+
+Cuando un fallo deje el checkpoint en un estado cuya consistencia no pueda garantizarse, la conversación quedará invalidada.
+
+No se reinicializará silenciosamente su estado.
+
+El historial persistente seguirá disponible.
+
+## 28. Observabilidad
+
+El agente conservará información suficiente para analizar:
+
+- Decisiones del supervisor.
+- Especialistas seleccionados.
+- Herramientas solicitadas.
+- Herramientas ejecutadas.
+- Resultados reutilizados.
+- Operaciones denegadas.
+- Presupuestos alcanzados.
+- Procedencia de evidencias.
+- Rutas deterministas.
+- Síntesis mediante Gemini.
+- Creación de propuestas.
+- Interrupciones HITL.
+- Aprobaciones y rechazos.
+- Reanudaciones.
+- Errores técnicos.
+
+Las trazas internas se distinguirán de los registros HTTP.
+
+No se expondrá automáticamente el estado completo de LangGraph.
+
+Los logs operativos no deberán incluir secretos, consultas completas, imágenes ni información personal innecesaria.
+
+Las reglas de observabilidad se establecen en [15-robustez-observabilidad.md](15-robustez-observabilidad.md).
+
+## 29. Seguridad
+
+El modelo de lenguaje no podrá:
+
+- Modificar permisos de herramientas.
+- Ampliar límites internos.
+- Alterar identificadores de conversaciones.
+- Generar approval_id autorizados.
+- Acceder a checkpoints ajenos.
+- Aprobar sus propios planes.
+- Saltarse el HITL obligatorio.
+- Ejecutar código arbitrario.
+- Modificar reglas de autenticación.
+- Autorizar operaciones administrativas.
+- Persistir directamente información en PostgreSQL.
+- Consultar fuentes documentales no autorizadas.
+- Habilitar búsquedas abiertas en Internet.
+
+Las decisiones críticas se comprobarán mediante Python.
+
+Las instrucciones presentes en documentos, imágenes y respuestas externas se tratarán como datos no confiables.
+
+Las reglas generales se establecen en [10-seguridad.md](10-seguridad.md).
+
+## 30. Validación
+
+### 30.1. Arquitectura
+
+- Conservación de los cinco nodos.
+- Conservación de las aristas.
+- Conservación de MemorySaver.
+- Conservación de interrupt_before=["aplicar"].
+- Ausencia de rutas de finalización satisfactoria sin HITL.
+
+### 30.2. Enrutamiento
+
+- Consultas que requieren residuos.
+- Consultas que requieren puntos.
+- Consultas que requieren ambos especialistas.
+- Fallback determinista.
+- Decisiones inválidas del modelo.
+- Ausencia de ejecuciones innecesarias.
+- Validación de FINISH.
+- Límite de iteraciones del supervisor.
+
+### 30.3. Estado
+
+- Creación de estados independientes.
+- Aislamiento entre conversaciones.
+- Limpieza de campos transitorios.
+- Conservación del contexto.
+- Prioridad del checkpoint.
+- Inicialización de identificacion_imagen.
+- Inicialización de approval_id.
+- Ausencia de evidencias obsoletas.
+- Conservación de RegistroTurno.aprobado como bool.
+
+### 30.4. Respuestas anteriores al agente
+
+- Consultas fuera de dominio.
+- Aclaraciones deterministas previas.
+- Ausencia de invocación de LangGraph.
+- Ausencia de HITL.
+- Ausencia de creación innecesaria de conversaciones.
+- Ausencia de incremento de turnos.
+- Ausencia de registros internos de turnos.
+- Ausencia de mensajes persistidos.
+- Respeto de restricciones de conversaciones existentes.
+
+### 30.5. HITL obligatorio
+
+- Interrupción real antes de aplicar.
+- Consulta documental sencilla con HITL.
+- Consulta geográfica con HITL.
+- Consulta temporal con HITL.
+- Consulta compuesta con HITL.
+- Consulta multimodal admitida con HITL.
+- Abstención del agente con HITL.
+- Aclaración del agente con HITL.
+- Generación de approval_id.
+- Validación estructural del plan.
+- Ausencia de aprobación con errores técnicos.
+- Fallo controlado cuando el grafo termina inesperadamente sin HITL.
+
+### 30.6. Resolución de aprobaciones
+
+- Firma definitiva de aprobar_plan().
+- Aprobación válida.
+- Rechazo válido.
+- Aprobación automática.
+- Rechazo sin incremento del contador.
+- Aprobación sin incremento del contador.
+- Resolución sin EstadoProducto aportado por la interfaz.
+- Aprobación sin interrupción pendiente.
+- Identificador obsoleto.
+- Identificador inválido.
+- Aprobaciones concurrentes.
+- Aprobaciones repetidas.
+- Limpieza de approval_id.
+- Registro único del turno.
+- Conservación de la propuesta original tras el rechazo.
+- Reformulación posterior al rechazo.
+- Finalización de la conversación tras aprobar.
+- Resolución del último turno permitido.
+
+### 30.7. Límites
 
 - MAX_ITER.
 - MAX_STEPS_DEFAULT.
@@ -1026,389 +2190,150 @@ Se conservarán los controles relacionados con:
 - MAX_HISTORY_TURNS.
 - GRAPH_RECURSION_LIMIT.
 
-### 22.2. Aplicación
-
-Los límites deberán aplicarse mediante código Python.
-
-El modelo de lenguaje no podrá ampliarlos.
-
-### 22.3. Contador de turnos
-
-El agente mantendrá el contador turnos_consumidos conforme a las reglas de ejecución establecidas.
-
-La aprobación o el rechazo de un plan no incrementarán nuevamente el contador correspondiente a la consulta que originó el plan.
-
-La contabilización de respuestas generadas antes de ejecutar LangGraph deberá resolverse de forma coherente con el modelo de persistencia y el ciclo conversacional.
-
-### 22.4. Diferenciación de contadores
-
-El contador de turnos de una conversación no deberá confundirse con:
-
-- Cuotas comerciales.
-- Rate limiting HTTP.
-- Iteraciones del supervisor.
-- Rondas de razonamiento de los especialistas.
-- Número de llamadas a herramientas.
-- Número de llamadas facturables a servicios externos.
-
-### 22.5. Agotamiento de límites
-
-Cuando se alcance un límite interno, deberán impedirse nuevas operaciones que lo superen.
-
-No se fabricarán resultados para completar una consulta que no haya podido resolverse dentro de los presupuestos establecidos.
-
-## 23. MemorySaver y checkpoints
-
-### 23.1. Responsabilidad
-
-MemorySaver conservará los checkpoints necesarios para la continuidad operativa de las conversaciones.
-
-### 23.2. Alcance
-
-Los checkpoints permanecerán almacenados en la memoria del proceso.
-
-No se conservarán automáticamente después de un reinicio o redeploy.
-
-### 23.3. Fuente de estado operativo
-
-El checkpoint real tendrá prioridad sobre cualquier representación del estado conservada por el cliente.
-
-No se confiará en estados proporcionados externamente para determinar si una conversación puede continuar.
-
-### 23.4. Estado incompleto
-
-Una ejecución anterior incompleta no deberá considerarse automáticamente un estado válido para iniciar un nuevo turno.
-
-El orquestador deberá comprobar la consistencia del checkpoint.
-
-### 23.5. Pérdida de estado
-
-Cuando una operación requiera un checkpoint que ya no se encuentra disponible, deberá impedirse la continuación insegura de la conversación.
-
-No se reconstruirá automáticamente el estado de LangGraph utilizando únicamente los mensajes persistidos en PostgreSQL.
-
-### 23.6. Fuera de alcance
-
-La persistencia durable de checkpoints en PostgreSQL u otros sistemas de almacenamiento no forma parte de esta fase del desarrollo.
-
-## 24. Persistencia de turnos
-
-### 24.1. Separación de responsabilidades
-
-LangGraph será responsable del estado operativo.
-
-PostgreSQL será responsable del almacenamiento de los datos relacionales y del historial persistente.
-
-El núcleo del asistente no escribirá directamente en PostgreSQL.
-
-### 24.2. Resultado del orquestador
-
-El resultado devuelto por el orquestador deberá permitir distinguir:
-
-- Turno resuelto directamente.
-- Turno pendiente de aprobación.
-- Turno aprobado.
-- Turno rechazado.
-- Fallo técnico.
-
-### 24.3. Criterio de persistencia
-
-La capa de servicios determinará si el turno debe persistirse conforme a [13-persistencia.md](13-persistencia.md).
-
-No se utilizará únicamente done=True como condición de persistencia.
-
-### 24.4. Aprobación pendiente
-
-Un turno pendiente de aprobación no deberá registrarse como resuelto.
-
-### 24.5. Consistencia
-
-Cuando el estado operativo avance correctamente pero falle la persistencia SQL, deberán aplicarse los mecanismos de protección establecidos.
-
-No se permitirá continuar una conversación desde un estado cuya consistencia no pueda garantizarse.
-
-### 24.6. Independencia de la ejecución local
-
-La ejecución independiente mediante terminal no requerirá una conexión a PostgreSQL.
-
-## 25. Concurrencia
-
-### 25.1. Exclusión por conversación
-
-Las operaciones que puedan modificar un mismo checkpoint deberán ejecutarse bajo los mecanismos de exclusión establecidos.
-
-No podrán modificarse simultáneamente los estados de una misma conversación.
-
-### 25.2. Capacidad global
-
-La configuración inicial utilizará un único worker para las operaciones del asistente.
-
-El backend podrá atender peticiones HTTP concurrentes sin ejecutar simultáneamente varias operaciones del agente.
-
-### 25.3. Aprobaciones concurrentes
-
-Cuando varias peticiones intenten resolver una misma aprobación, únicamente una podrá modificar válidamente el estado correspondiente.
-
-Las peticiones posteriores deberán comprobar nuevamente el estado real.
-
-### 25.4. Aprobaciones obsoletas
-
-Una aprobación correspondiente a un approval_id anterior no podrá resolver un plan posterior.
-
-### 25.5. Responsabilidad
-
-Los bloqueos, mecanismos de admisión y límites globales serán coordinados por la capa de servicios.
-
-Las condiciones específicas se definen en [15-robustez-observabilidad.md](15-robustez-observabilidad.md).
-
-## 26. Timeout y resultados tardíos
-
-La ejecución del asistente estará sujeta al límite temporal definido en el documento de robustez.
-
-Cuando una petición HTTP finalice por timeout, la ejecución subyacente podrá continuar activa.
-
-En estas circunstancias:
-
-- No se considerará resuelto el turno.
-- No se persistirá automáticamente el resultado tardío.
-- No se permitirá una modificación concurrente del checkpoint afectado.
-- No se liberarán prematuramente los recursos utilizados.
-- Se comprobará la consistencia del estado antes de autorizar una posible continuación.
-
-La devolución de un timeout no implica que la ejecución del agente haya sido cancelada.
-
-Las reglas completas se definen en [15-robustez-observabilidad.md](15-robustez-observabilidad.md).
-
-## 27. Gestión de errores
-
-### 27.1. Resultados semánticos
-
-Se considerarán resultados válidos, cuando corresponda:
-
-- Abstención por evidencia insuficiente.
-- Respuesta con evidencia parcial.
-- Solicitud de aclaración.
-- Ausencia de instalaciones compatibles.
-- Horario desconocido.
-- Respuesta directa.
-
-### 27.2. Fallos técnicos
-
-Los fallos técnicos deberán distinguirse de los resultados semánticos válidos.
-
-Entre ellos:
-
-- Fallos del modelo de lenguaje.
-- Fallos de herramientas.
-- Errores de ejecución del grafo.
-- Transiciones incompatibles.
-- Respuestas estructuradas inválidas persistentes.
-- Fallos durante la reanudación de checkpoints.
-- Timeouts.
-
-### 27.3. Estado de error
-
-Un fallo técnico no deberá provocar:
-
-- Una aprobación ficticia.
-- Una respuesta satisfactoria inventada.
-- La creación de un plan ficticio.
-- La finalización satisfactoria de la conversación.
-- El registro de un turno como resuelto.
-
-### 27.4. Recuperación
-
-Cuando un fallo deje el checkpoint en un estado cuya consistencia no pueda garantizarse, la conversación no podrá reutilizarse.
-
-### 27.5. Contrato HTTP
-
-La transformación de los errores internos al contrato ErrorOut será responsabilidad de FastAPI.
-
-Los códigos HTTP se definen en [12-contratos-http.md](12-contratos-http.md).
-
-## 28. Observabilidad
-
-El asistente deberá conservar información suficiente para analizar:
-
-- Decisiones del supervisor.
-- Especialistas seleccionados.
-- Herramientas solicitadas.
-- Herramientas ejecutadas.
-- Operaciones denegadas.
-- Presupuestos alcanzados.
-- Evidencias obtenidas.
-- Rutas deterministas.
-- Síntesis mediante modelo.
-- Interrupciones HITL.
-- Reanudaciones.
-- Errores técnicos.
-
-Las trazas internas deberán distinguirse de los registros HTTP.
-
-No se expondrá directamente la totalidad del estado de LangGraph mediante los endpoints públicos.
-
-Las restricciones de observabilidad se definen en [15-robustez-observabilidad.md](15-robustez-observabilidad.md).
-
-## 29. Seguridad
-
-El modelo de lenguaje no podrá:
-
-- Modificar los permisos de las herramientas.
-- Ampliar los límites internos.
-- Alterar los identificadores de conversación.
-- Acceder a checkpoints ajenos.
-- Generar decisiones HITL autorizadas por sí mismo.
-- Saltarse la interrupción de un plan que requiere aprobación.
-- Ejecutar código arbitrario.
-- Modificar las reglas de autenticación.
-- Autorizar operaciones administrativas.
-- Persistir directamente información en PostgreSQL.
-
-Las decisiones críticas deberán comprobarse mediante código Python.
-
-Las reglas generales de seguridad del núcleo se definen en [10-seguridad.md](10-seguridad.md).
-
-## 30. Validación
-
-### 30.1. Enrutamiento
-
-Las pruebas deberán verificar:
-
-- Consultas que únicamente requieren residuos.
-- Consultas que únicamente requieren puntos.
-- Consultas que requieren ambas especialidades.
-- Fallback ante decisiones inválidas.
-- Ausencia de ejecuciones innecesarias.
-
-### 30.2. Estado
-
-Las pruebas deberán verificar:
-
-- Creación de estados independientes.
-- Aislamiento entre conversaciones.
-- Limpieza de campos transitorios.
-- Conservación del contexto necesario.
-- Ausencia de evidencias obsoletas.
-- Prioridad del checkpoint sobre representaciones del cliente.
-
-### 30.3. Respuestas directas
-
-Las pruebas deberán verificar:
-
-- Resolución de una consulta sin plan.
-- Abstención válida sin HITL.
-- Solicitud de aclaración sin HITL.
-- Registro único del turno directo.
-- Continuación de la conversación.
-- Ausencia de aprobación ficticia.
-- Diferenciación entre finalización válida y ejecución incompleta.
-
-### 30.4. HITL
-
-Las pruebas deberán verificar:
-
-- Interrupción real antes de aplicar.
-- Generación de approval_id.
-- Aprobación válida.
-- Rechazo válido.
-- Aprobación automática autorizada.
-- Aprobación sin interrupción pendiente.
-- Rechazo de aprobaciones obsoletas.
-- Resolución concurrente de una aprobación.
-- Limpieza de approval_id después de resolver el turno.
-- Reformulación después del rechazo.
-- Imposibilidad de continuar una conversación finalizada.
-- Resolución de un plan pendiente en el último turno permitido.
-
-### 30.5. Límites
-
-Las pruebas deberán verificar:
-
-- Límite de iteraciones del supervisor.
-- Límites de rondas de los especialistas.
-- Presupuesto por especialista.
-- Presupuesto global por turno.
-- Límites de conversación.
-- Tamaño máximo del historial.
-- Límite de recursión.
-
-### 30.6. Consultas multimodales
-
-Las pruebas deberán verificar:
-
-- Incorporación de una identificación visual válida.
+Se comprobará que los límites iniciales permiten conservar las funcionalidades requeridas.
+
+### 30.8. Multimodalidad
+
+- Identificación admitida.
+- Identificación estructuralmente inválida.
+- Rechazo de identificaciones no admitidas en el orquestador.
+- Mutua exclusión entre ruta_imagen e identificacion_imagen.
+- Activación del especialista residuos mediante identificación previa.
+- Reutilización de la observación visual.
 - Ausencia de llamadas multimodales duplicadas.
-- Exclusión de imágenes no admitidas.
-- Independencia respecto a archivos temporales eliminados.
+- Ausencia de contadores ficticios.
+- Ausencia de referencias HTTP a archivos temporales eliminados.
+- Conservación del HITL obligatorio.
+- Compatibilidad con imágenes locales mediante CLI.
 
-### 30.7. Robustez
-
-Las pruebas deberán verificar:
+### 30.9. Robustez
 
 - Fallos técnicos del agente.
+- Fallos imprescindibles de herramientas.
+- Recuperaciones autorizadas.
+- Fallos durante la síntesis.
 - Fallos durante la reanudación.
-- Ausencia de aprobaciones ficticias.
+- Ausencia de falsos éxitos HTTP.
 - Pérdida de checkpoints.
-- Timeouts.
-- Resultados tardíos.
+- Timeout.
+- Descarte de resultados tardíos.
 - Conversaciones no reutilizables.
 - Fallos de persistencia posteriores a una ejecución válida.
 
-### 30.8. Regresión
+### 30.10. Regresión
 
-Se conservarán las pruebas existentes relacionadas con:
+Se conservarán y adaptarán cuando corresponda:
 
 - tests/test_agent_regression.py.
 - tests/test_agent_resultado.py.
 - tests/test_agent_schedule.py.
 - tests/test_agent_schedule_integration.py.
+- tests/test_cli.py.
+- tests/test_tools_registry.py.
+- tests/test_describir_imagen.py.
 
-Las pruebas deberán adaptarse cuando cambien expresamente los contratos y las transiciones correspondientes.
+Las pruebas se modificarán únicamente cuando exista un cambio de contrato autorizado.
 
-Las modificaciones no deberán eliminar comprobaciones válidas únicamente para obtener resultados satisfactorios.
+No se retirarán comprobaciones de HITL para facilitar artificialmente la superación de las pruebas.
 
-La estrategia general de pruebas se define en [08-pruebas-y-validacion.md](08-pruebas-y-validacion.md).
+La estrategia general se establece en [08-pruebas-y-validacion.md](08-pruebas-y-validacion.md).
 
 ## 31. Criterios de aceptación
 
+### 31.1. Arquitectura
+
 - El núcleo RAG permanece independiente de LangGraph.
-- Se conservan las responsabilidades de los cinco nodos existentes.
-- El supervisor selecciona únicamente los especialistas necesarios.
-- Las consultas compuestas utilizan las evidencias correspondientes.
-- Las decisiones inválidas del modelo disponen de fallback controlado.
-- Las herramientas respetan sus permisos.
-- Los presupuestos internos se aplican mediante Python.
+- Se conservan los cinco nodos existentes.
+- Se conservan las aristas originales.
+- FINISH continúa conduciendo a aplicar.
+- Se conserva MemorySaver.
+- HITL permanece como interrupción antes de aplicar.
+- No se añade una ruta satisfactoria que evite HITL.
+- El núcleo no depende directamente de FastAPI ni PostgreSQL.
+
+### 31.2. Orquestación
+
+- procesar_turno() utiliza la firma definitiva.
+- aprobar_plan() utiliza la firma definitiva.
+- El supervisor selecciona las operaciones necesarias.
+- Las decisiones inválidas disponen de fallback controlado.
+- Los especialistas respetan sus permisos.
+- Los presupuestos se aplican mediante Python.
+- Las rutas deterministas reducen llamadas innecesarias sin eliminar HITL.
+- Las respuestas utilizan exclusivamente fuentes autorizadas.
+
+### 31.3. Estado
+
 - Los estados permanecen aislados por conversación.
-- El checkpoint real tiene prioridad sobre el estado del cliente.
+- El checkpoint real tiene prioridad.
 - Los campos transitorios se reinician correctamente.
-- El contexto conversacional no se confunde con evidencia documental.
-- Las respuestas directas pueden finalizar correctamente una invocación sin HITL.
-- Las respuestas directas no generan aprobaciones ficticias.
-- Los turnos resueltos sin HITL pueden incorporarse al historial interno.
-- Los planes que requieren aprobación alcanzan una interrupción real.
-- Cada aprobación pendiente dispone de un approval_id único.
-- Una aprobación obsoleta no puede resolver un plan posterior.
+- El contexto no se confunde con evidencia documental.
+- Los registros de turnos resueltos conservan una decisión booleana.
+- No se generan registros internos para respuestas previas al agente.
+- Los clientes HTTP no manipulan el estado operativo.
+
+### 31.4. HITL
+
+- Toda ejecución satisfactoria de LangGraph alcanza una interrupción válida.
+- Cada propuesta dispone de un approval_id único.
+- El identificador se genera mediante Python.
+- La aprobación se verifica contra el checkpoint real.
+- Las aprobaciones obsoletas no modifican el estado.
+- Las aprobaciones duplicadas no generan turnos duplicados.
 - El nodo aplicar registra únicamente decisiones válidas.
-- La aprobación finaliza la conversación.
-- El rechazo permite una reformulación.
-- Las aprobaciones no incrementan nuevamente el contador de consultas.
-- La resolución de un turno se distingue de la finalización de una conversación.
-- La identificación multimodal admitida puede reutilizarse.
-- No se repiten innecesariamente las llamadas multimodales.
-- Los checkpoints no dependen de archivos temporales eliminados.
-- Las consultas rechazadas antes de LangGraph no ejecutan el grafo.
+- La aprobación automática reutiliza la resolución real.
+- Aprobar finaliza la conversación.
+- Rechazar permite reformular mientras existan turnos disponibles.
+- approval_id se elimina después de la resolución.
+- La aprobación o rechazo no incrementan turnos_consumidos.
+- El último turno permitido puede resolver su HITL.
+
+### 31.5. Multimodalidad
+
+- Las imágenes HTTP se validan antes de LangGraph.
+- Las imágenes no admitidas no ejecutan el agente.
+- Las identificaciones admitidas se reutilizan.
+- No se repiten llamadas multimodales innecesarias.
+- No se generan invocaciones ficticias.
+- El estado HTTP no depende de archivos temporales eliminados.
+- La descripción visual no sustituye la evidencia documental.
+- Las ejecuciones multimodales satisfactorias conservan el HITL obligatorio.
+
+### 31.6. Contabilización y persistencia
+
+- turnos_consumidos aumenta al iniciar un nuevo turno.
+- turn_number procede del contador del agente.
+- Las respuestas previas no consumen turnos de LangGraph.
+- Los planes pendientes no generan mensajes SQL.
+- Los turnos aprobados y rechazados se persisten conforme al contrato.
+- La propuesta original se conserva tras un rechazo.
+- No se generan mensajes duplicados.
+- El núcleo no realiza escrituras directas en PostgreSQL.
+
+### 31.7. Robustez
+
 - Los errores técnicos se distinguen de las abstenciones válidas.
-- Los fallos técnicos no generan aprobaciones ni respuestas ficticias.
-- No se permiten modificaciones simultáneas del mismo checkpoint.
-- Los resultados tardíos no se persisten automáticamente.
+- Los fallos técnicos no generan aprobaciones ficticias.
+- Las ejecuciones fallidas no se presentan mediante HTTP 200.
+- No existen modificaciones concurrentes del mismo checkpoint.
+- Los resultados tardíos no se persisten.
+- Los recursos no se liberan prematuramente.
 - Los estados inconsistentes no se reutilizan.
-- MemorySaver conserva el estado únicamente durante la vida del proceso.
-- El núcleo del asistente no depende directamente de PostgreSQL.
-- La pérdida de checkpoints se distingue de la pérdida del historial persistente.
-- La interfaz de terminal conserva su funcionamiento independiente.
-- FastAPI transforma los resultados internos conforme a los contratos públicos.
-- Streamlit no manipula directamente los checkpoints.
-- La incorporación de MLOps conserva las funcionalidades y los requisitos de calidad establecidos.
+- La pérdida de checkpoints no elimina el historial SQL.
+- No se reconstruyen automáticamente checkpoints perdidos.
+- No se repiten automáticamente operaciones POST de resultado desconocido.
+
+### 31.8. Compatibilidad académica
+
+- Se conserva el agente desarrollado durante el PB02.
+- No se reescribe la topología del grafo.
+- auto_aprobar=False devuelve una aprobación pendiente válida.
+- auto_aprobar=True resuelve el HITL.
+- POST /approve permite aprobar o rechazar.
+- Streamlit utiliza los endpoints HTTP correspondientes.
+- MemorySaver continúa almacenando los checkpoints en memoria.
+- PostgreSQL conserva el historial de los turnos resueltos.
+- La CLI permanece operativa de forma independiente.
 
 ## 32. Especificaciones relacionadas
 
@@ -1416,15 +2341,17 @@ La estrategia general de pruebas se define en [08-pruebas-y-validacion.md](08-pr
 |---|---|
 | [00-producto.md](00-producto.md) | Alcance funcional |
 | [01-retrieval.md](01-retrieval.md) | Recuperación semántica |
+| [02-mejoras-retrieval.md](02-mejoras-retrieval.md) | Recuperación estructurada |
 | [03-generacion.md](03-generacion.md) | Generación y control de evidencia |
 | [04-consultas-generales.md](04-consultas-generales.md) | Interpretación de consultas |
-| [05-tools.md](05-tools.md) | Herramientas, contratos y permisos |
-| [07-streamlit.md](07-streamlit.md) | Interfaz del consumidor |
+| [05-tools.md](05-tools.md) | Herramientas y contratos internos |
+| [07-streamlit.md](07-streamlit.md) | Cliente HTTP |
 | [08-pruebas-y-validacion.md](08-pruebas-y-validacion.md) | Evaluación y pruebas |
+| [09-datos-y-fuentes.md](09-datos-y-fuentes.md) | Fuentes autorizadas |
 | [10-seguridad.md](10-seguridad.md) | Seguridad del núcleo |
-| [11-arquitectura-mlops.md](11-arquitectura-mlops.md) | Separación arquitectónica |
-| [12-contratos-http.md](12-contratos-http.md) | Contratos HTTP y operaciones HITL |
-| [13-persistencia.md](13-persistencia.md) | Historial persistente y consistencia |
+| [11-arquitectura-mlops.md](11-arquitectura-mlops.md) | Arquitectura general |
+| [12-contratos-http.md](12-contratos-http.md) | Contratos HTTP |
+| [13-persistencia.md](13-persistencia.md) | Persistencia y consistencia |
 | [14-autenticacion-autorizacion.md](14-autenticacion-autorizacion.md) | Autorización y propiedad |
-| [15-robustez-observabilidad.md](15-robustez-observabilidad.md) | Límites, concurrencia, timeout y observabilidad |
+| [15-robustez-observabilidad.md](15-robustez-observabilidad.md) | Límites, concurrencia y timeout |
 | [16-despliegue.md](16-despliegue.md) | Infraestructura y despliegue |
