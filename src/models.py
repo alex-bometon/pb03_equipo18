@@ -3,6 +3,8 @@
 from datetime import datetime, timezone
 from uuid import UUID, uuid4
 
+from config import EMAIL_MAX_LENGTH
+
 from sqlalchemy import (
     BigInteger,
     CHAR,
@@ -48,7 +50,7 @@ class User(SQLModel, table=True):
     )
 
     email: str = Field(
-        max_length=254,
+        max_length=EMAIL_MAX_LENGTH,
         nullable=False,
     )
 

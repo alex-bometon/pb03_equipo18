@@ -40,6 +40,7 @@ Pillow>=11,<13
 
 # Seguridad y autenticacion
 bcrypt>=4.2,<6
+email-validator>=2.2,<3
 
 # Tests
 pytest>=8,<10

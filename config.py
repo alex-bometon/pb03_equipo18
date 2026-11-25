@@ -218,3 +218,13 @@ AGENT_TOOLS_BY_ROLE = {
         "hora_actual",
     ),
 }
+
+
+# =========================================================
+# POLÍTICA DE CREDENCIALES
+# =========================================================
+
+EMAIL_MAX_LENGTH = 254
+
+PASSWORD_MIN_LENGTH = 12
+PASSWORD_MAX_BYTES = 72

@@ -1,22 +1,30 @@
 """Contratos públicos HTTP de ReciclaTÍA."""
 
+from datetime import datetime, timezone
 from typing import Annotated, Literal, Self
 from uuid import UUID
 
 from pydantic import (
     AfterValidator,
-    BaseModel,
-    ConfigDict,
+    AwareDatetime,
     Field,
     HttpUrl,
+    SecretStr,
     StrictBool,
     StrictInt,
     StrictStr,
     model_validator,
 )
 
+from api.base import SecureBaseModel
 from api.config import MAX_API_STEPS
+from api.credential_validation import (
+    normalizar_email,
+    validar_nueva_password,
+    validar_password_verificacion,
+)
 from config import (
+    EMAIL_MAX_LENGTH,
     GEO_MAX_LATITUDE,
     GEO_MAX_LONGITUDE,
     GEO_MAX_RADIUS_METERS,
@@ -26,6 +34,7 @@ from config import (
     GEO_MIN_RADIUS_METERS,
     MAX_PREGUNTA_CARACTERES,
 )
+from src.enums import ApiKeyRole
 from src.input_validation import validar_pregunta
 
 
@@ -34,12 +43,8 @@ from src.input_validation import validar_pregunta
 # =========================================================
 
 
-class ApiSchema(BaseModel):
+class ApiSchema(SecureBaseModel):
     """Configuración común de los modelos públicos de la API."""
-
-    model_config = ConfigDict(
-        extra="forbid",
-    )
 
 
 # =========================================================
@@ -100,6 +105,71 @@ Longitude = Annotated[
     ),
 ]
 
+
+EmailText = Annotated[
+    StrictStr,
+    Field(json_schema_extra={"format": "email"}),
+    AfterValidator(normalizar_email),
+]
+
+
+StrictSecretStr = Annotated[
+    SecretStr,
+    Field(strict=True),
+]
+
+
+def _validar_password_secret(value: SecretStr) -> SecretStr:
+    """Comprueba una contraseña utilizada para autenticación."""
+
+    validar_password_verificacion(value.get_secret_value())
+
+    return value
+
+
+def _validar_nueva_password_secret(value: SecretStr) -> SecretStr:
+    """Comprueba una contraseña de nueva creación."""
+
+    validar_nueva_password(value.get_secret_value())
+
+    return value
+
+
+PasswordText = Annotated[
+    StrictSecretStr,
+    AfterValidator(_validar_password_secret),
+]
+
+
+NewPasswordText = Annotated[
+    StrictSecretStr,
+    AfterValidator(_validar_nueva_password_secret),
+]
+
+
+IssuableApiKeyRole = Literal[
+    ApiKeyRole.FREE,
+    ApiKeyRole.USER,
+]
+
+
+def _normalizar_fecha_utc(value: datetime) -> datetime:
+    """Normaliza una fecha con zona horaria a UTC."""
+
+    return value.astimezone(timezone.utc)
+
+
+UTCDateTime = Annotated[
+    AwareDatetime,
+    Field(strict=True),
+    AfterValidator(_normalizar_fecha_utc),
+]
+
+
+CredentialOutText = Annotated[
+    NonBlankText,
+    Field(repr=False),
+]
 
 # =========================================================
 # CONTRATOS DE ENTRADA DEL ASISTENTE
@@ -402,3 +472,140 @@ class AskOut(ApiSchema):
             raise ValueError(
                 "La respuesta previa al agente es inconsistente."
             )
+
+
+# =========================================================
+# CONTRATOS DE ENTRADA DE CUENTAS Y CREDENCIALES
+# =========================================================
+
+class RegisterIn(ApiSchema):
+    """Solicitud de registro de una cuenta."""
+
+    email: EmailText
+
+    password: NewPasswordText
+
+
+class LoginIn(ApiSchema):
+    """Credenciales de inicio de sesión."""
+
+    email: EmailText
+
+    password: PasswordText
+
+
+class PasswordChangeIn(ApiSchema):
+    """Solicitud de cambio de contraseña."""
+
+    current_password: PasswordText
+
+    new_password: NewPasswordText
+
+
+class ApiKeyCreateIn(ApiSchema):
+    """Solicitud ordinaria de emisión de una API key."""
+
+    role: IssuableApiKeyRole = ApiKeyRole.FREE
+
+
+class AdminApiKeyCreateIn(ApiSchema):
+    """Solicitud administrativa de emisión de una API key."""
+
+    role: IssuableApiKeyRole
+
+    user_id: UUID | None = None
+
+    @model_validator(mode="after")
+    def validar_propietario(self) -> Self:
+        """Exige un propietario para las claves User."""
+
+        if (
+            self.role == ApiKeyRole.USER
+            and self.user_id is None
+        ):
+            raise ValueError(
+                "Una API key User requiere un propietario."
+            )
+
+        return self
+
+
+class ActiveStatusIn(ApiSchema):
+    """Solicitud de modificación del estado de un recurso."""
+
+    is_active: StrictBool
+
+
+# =========================================================
+# CONTRATOS DE SALIDA DE CUENTAS Y CREDENCIALES
+# =========================================================
+
+class UserOut(ApiSchema):
+    """Representación pública de un usuario."""
+
+    id: UUID
+
+    email: NonBlankText = Field(
+        max_length=EMAIL_MAX_LENGTH,
+    )
+
+    created_at: UTCDateTime
+
+    is_active: StrictBool
+
+
+class LoginOut(ApiSchema):
+    """Resultado de una autenticación satisfactoria."""
+
+    session_token: CredentialOutText
+
+    token_type: Literal["Bearer"]
+
+    expires_at: UTCDateTime
+
+    user: UserOut
+
+
+class ApiKeyOut(ApiSchema):
+    """Representación pública de una API key."""
+
+    id: UUID
+
+    role: ApiKeyRole
+
+    user_id: UUID | None
+
+    is_active: StrictBool
+
+    created_at: UTCDateTime
+
+    last_used_at: UTCDateTime | None
+
+    deleted_at: UTCDateTime | None
+
+    @model_validator(mode="after")
+    def validar_estado_credencial(self) -> Self:
+        """Comprueba las invariantes de una credencial."""
+
+        if (
+            self.role != ApiKeyRole.FREE
+            and self.user_id is None
+        ):
+            raise ValueError(
+                "La API key requiere un propietario."
+            )
+
+        if self.deleted_at is not None and self.is_active:
+            raise ValueError(
+                "Una API key eliminada no puede estar activa."
+            )
+
+        return self
+
+
+class ApiKeyCreatedOut(ApiKeyOut):
+    """Resultado de la emisión de una API key."""
+
+    role: IssuableApiKeyRole
+
+    api_key: CredentialOutText

@@ -7,7 +7,6 @@ from uuid import UUID
 
 from dotenv import load_dotenv
 from pydantic import (
-    BaseModel,
     ConfigDict,
     Field,
     PositiveInt,
@@ -15,6 +14,8 @@ from pydantic import (
     ValidationError,
     field_validator,
 )
+
+from api.base import SecureBaseModel
 from sqlalchemy.engine import make_url
 
 from config import BASE_DIR, IMAGE_MAX_BYTES, IMAGE_MAX_PIXELS
@@ -23,13 +24,11 @@ from config import BASE_DIR, IMAGE_MAX_BYTES, IMAGE_MAX_PIXELS
 MAX_API_STEPS = 4
 
 
-class ApiSettings(BaseModel):
+class ApiSettings(SecureBaseModel):
     """Parámetros de configuración del backend."""
 
     model_config = ConfigDict(
         frozen=True,
-        extra="forbid",
-        hide_input_in_errors=True,
     )
 
     # Servidor
