@@ -7,8 +7,13 @@ from api.schemas import (
     ApiSchema,
     ApproveIn,
     AskIn,
+    AskOut,
+    FuenteOut,
+    GeografiaOut,
+    PuntoLimpioOut,
     UbicacionIn,
 )
+
 from config import MAX_PREGUNTA_CARACTERES
 from src.input_validation import (
     PreguntaDemasiadoLargaError,
@@ -384,3 +389,587 @@ def test_approve_in_rechaza_plan_proporcionado_por_cliente():
             aprobado=True,
             plan=["Plan modificado por el cliente"],
         )
+
+
+# =========================================================
+# FUENTE OUT
+# =========================================================
+
+def test_fuente_out_valida():
+    fuente = FuenteOut(
+        chunk_id="C1",
+        source="fraccion_vidrio.html",
+        url="https://www.madrid.es/",
+        rol="residuos",
+        id_llamada="llamada-1",
+    )
+
+    assert fuente.chunk_id == "C1"
+    assert fuente.rol == "residuos"
+    assert str(fuente.url) == "https://www.madrid.es/"
+
+
+def test_fuente_out_admite_opcionales_omitidos():
+    fuente = FuenteOut(
+        chunk_id="C1",
+        source="fraccion_vidrio.html",
+    )
+
+    assert fuente.url is None
+    assert fuente.rol is None
+    assert fuente.id_llamada is None
+
+
+@pytest.mark.parametrize(
+    "campo, valor",
+    [
+        ("chunk_id", ""),
+        ("chunk_id", "   "),
+        ("source", ""),
+        ("source", "   "),
+        ("rol", "admin"),
+        ("url", "file:///documento.pdf"),
+        ("url", "ftp://servidor.es/documento.pdf"),
+        ("url", "documento.pdf"),
+    ],
+)
+def test_fuente_out_rechaza_valores_invalidos(campo, valor):
+    datos = {
+        "chunk_id": "C1",
+        "source": "fraccion_vidrio.html",
+    }
+
+    datos[campo] = valor
+
+    with pytest.raises(ValidationError):
+        FuenteOut(**datos)
+
+
+@pytest.mark.parametrize(
+    "campo",
+    ["path", "text", "embedding"],
+)
+def test_fuente_out_rechaza_campos_internos(campo):
+    datos = {
+        "chunk_id": "C1",
+        "source": "fraccion_vidrio.html",
+        campo: "información interna",
+    }
+
+    with pytest.raises(ValidationError):
+        FuenteOut(**datos)
+
+
+# =========================================================
+# PUNTO LIMPIO OUT
+# =========================================================
+
+@pytest.fixture
+def punto_limpio_valido():
+    return {
+        "tipo": "fijo",
+        "direccion": "Calle de prueba, 10",
+        "latitud": 40.4168,
+        "longitud": -3.7038,
+        "distancia_metros": 250.0,
+    }
+
+
+def test_punto_limpio_out_valido(punto_limpio_valido):
+    punto = PuntoLimpioOut(**punto_limpio_valido)
+
+    assert punto.tipo == "fijo"
+    assert punto.distancia_metros == 250.0
+    assert punto.distrito is None
+
+
+@pytest.mark.parametrize(
+    "campo, valor",
+    [
+        ("tipo", ""),
+        ("direccion", "   "),
+        ("latitud", 91),
+        ("longitud", -181),
+        ("latitud", True),
+        ("longitud", "40"),
+        ("distancia_metros", -1),
+        ("distancia_metros", True),
+        ("distancia_metros", "250"),
+        ("distancia_metros", float("nan")),
+        ("distancia_metros", float("inf")),
+    ],
+)
+def test_punto_limpio_out_rechaza_valores_invalidos(
+    punto_limpio_valido,
+    campo,
+    valor,
+):
+    punto_limpio_valido[campo] = valor
+
+    with pytest.raises(ValidationError):
+        PuntoLimpioOut(**punto_limpio_valido)
+
+
+def test_punto_limpio_out_conserva_horarios(
+    punto_limpio_valido,
+):
+    punto_limpio_valido["horario_apertura"] = (
+        "09:00, excepto festivos"
+    )
+
+    punto = PuntoLimpioOut(**punto_limpio_valido)
+
+    assert punto.horario_apertura == "09:00, excepto festivos"
+
+
+# =========================================================
+# GEOGRAFIA OUT
+# =========================================================
+
+@pytest.fixture
+def geografia_valida(punto_limpio_valido):
+    return {
+        "fuente": "api",
+        "tipo_solicitado": "todos",
+        "radio_metros": 2000,
+        "total_encontrados": 1,
+        "puntos": [punto_limpio_valido],
+        "aviso": None,
+    }
+
+
+def test_geografia_out_valida(geografia_valida):
+    resultado = GeografiaOut(**geografia_valida)
+
+    assert resultado.total_encontrados == 1
+    assert len(resultado.puntos) == 1
+
+
+def test_geografia_out_acepta_busqueda_vacia(
+    geografia_valida,
+):
+    geografia_valida["total_encontrados"] = 0
+    geografia_valida["puntos"] = []
+
+    resultado = GeografiaOut(**geografia_valida)
+
+    assert resultado.total_encontrados == 0
+    assert resultado.puntos == []
+
+
+def test_geografia_out_acepta_limite_presentacion(
+    geografia_valida,
+    punto_limpio_valido,
+):
+    geografia_valida["total_encontrados"] = 15
+
+    geografia_valida["puntos"] = [
+        {
+            **punto_limpio_valido,
+            "distancia_metros": 100.0 * indice,
+        }
+        for indice in range(1, 11)
+    ]
+
+    resultado = GeografiaOut(**geografia_valida)
+
+    assert resultado.total_encontrados == 15
+    assert len(resultado.puntos) == 10
+
+
+@pytest.mark.parametrize(
+    "campo, valor",
+    [
+        ("fuente", "desconocida"),
+        ("tipo_solicitado", "desconocido"),
+        ("radio_metros", 0),
+        ("radio_metros", 5001),
+        ("radio_metros", True),
+        ("total_encontrados", -1),
+        ("total_encontrados", True),
+        ("total_encontrados", 0),
+        ("total_encontrados", 2),
+    ],
+)
+def test_geografia_out_rechaza_valores_invalidos(
+    geografia_valida,
+    campo,
+    valor,
+):
+    geografia_valida[campo] = valor
+
+    with pytest.raises(ValidationError):
+        GeografiaOut(**geografia_valida)
+
+
+def test_geografia_out_rechaza_mas_de_diez_puntos(
+    geografia_valida,
+    punto_limpio_valido,
+):
+    geografia_valida["total_encontrados"] = 11
+    geografia_valida["puntos"] = [
+        punto_limpio_valido.copy()
+        for _ in range(11)
+    ]
+
+    with pytest.raises(ValidationError):
+        GeografiaOut(**geografia_valida)
+
+
+def test_geografia_out_rechaza_puntos_desordenados(
+    geografia_valida,
+    punto_limpio_valido,
+):
+    geografia_valida["total_encontrados"] = 2
+
+    geografia_valida["puntos"] = [
+        {
+            **punto_limpio_valido,
+            "distancia_metros": 500.0,
+        },
+        {
+            **punto_limpio_valido,
+            "distancia_metros": 100.0,
+        },
+    ]
+
+    with pytest.raises(ValidationError):
+        GeografiaOut(**geografia_valida)
+
+
+def test_geografia_out_rechaza_puntos_fuera_del_radio(
+    geografia_valida,
+):
+    geografia_valida["puntos"][0]["distancia_metros"] = 2001.0
+
+    with pytest.raises(ValidationError):
+        GeografiaOut(**geografia_valida)
+
+
+@pytest.mark.parametrize("aviso", [None, "", "   "])
+def test_geografia_out_exige_aviso_en_respaldo_local(
+    geografia_valida,
+    aviso,
+):
+    geografia_valida["fuente"] = "corpus_local"
+    geografia_valida["aviso"] = aviso
+
+    with pytest.raises(ValidationError):
+        GeografiaOut(**geografia_valida)
+
+
+def test_geografia_out_acepta_respaldo_local(
+    geografia_valida,
+):
+    geografia_valida["fuente"] = "corpus_local"
+
+    geografia_valida["aviso"] = (
+        "Los datos pueden estar desactualizados."
+    )
+
+    resultado = GeografiaOut(**geografia_valida)
+
+    assert resultado.fuente == "corpus_local"
+
+
+def test_geografia_out_rechaza_candidatos_internos(
+    geografia_valida,
+):
+    geografia_valida["puntos_candidatos"] = []
+
+    with pytest.raises(ValidationError):
+        GeografiaOut(**geografia_valida)
+
+
+# =========================================================
+# ASK OUT
+# =========================================================
+
+@pytest.fixture
+def ask_out_pendiente():
+    return {
+        "thread_id": THREAD_ID,
+        "respuesta": "Las pilas deben depositarse en puntos autorizados.",
+        "plan": [
+            "Identificar el punto de recogida.",
+            "Depositar las pilas correctamente.",
+        ],
+        "plan_aprobado": None,
+        "done": False,
+        "pendiente_hitl": True,
+        "fuentes": [],
+        "geografia": [],
+        "abstencion": False,
+        "motivo": None,
+        "estado_evidencia": "suficiente",
+        "limitaciones": [],
+        "turnos_consumidos": 1,
+        "error": None,
+        "approval_id": APPROVAL_ID,
+    }
+
+
+def test_ask_out_propuesta_pendiente(ask_out_pendiente):
+    respuesta = AskOut(**ask_out_pendiente)
+
+    assert respuesta.pendiente_hitl is True
+    assert respuesta.plan_aprobado is None
+    assert respuesta.approval_id == APPROVAL_ID
+
+
+def test_ask_out_plan_aprobado(ask_out_pendiente):
+    ask_out_pendiente.update(
+        pendiente_hitl=False,
+        plan_aprobado=True,
+        done=True,
+        approval_id=None,
+    )
+
+    respuesta = AskOut(**ask_out_pendiente)
+
+    assert respuesta.done is True
+    assert respuesta.plan_aprobado is True
+
+
+def test_ask_out_plan_rechazado(ask_out_pendiente):
+    ask_out_pendiente.update(
+        respuesta="Plan rechazado. Puedes reformular tu consulta.",
+        pendiente_hitl=False,
+        plan_aprobado=False,
+        done=False,
+        approval_id=None,
+        plan=[],
+        abstencion=True,
+        estado_evidencia="insuficiente",
+    )
+
+    respuesta = AskOut(**ask_out_pendiente)
+
+    assert respuesta.plan_aprobado is False
+    assert respuesta.plan == []
+    assert respuesta.done is False
+
+
+@pytest.fixture
+def ask_out_previo(ask_out_pendiente):
+    ask_out_pendiente.update(
+        thread_id=None,
+        respuesta="Necesito que concretes el residuo.",
+        plan=[],
+        pendiente_hitl=False,
+        plan_aprobado=None,
+        approval_id=None,
+        abstencion=True,
+        estado_evidencia="insuficiente",
+        turnos_consumidos=0,
+    )
+
+    return ask_out_pendiente
+
+
+def test_ask_out_respuesta_previa(ask_out_previo):
+    respuesta = AskOut(**ask_out_previo)
+
+    assert respuesta.thread_id is None
+    assert respuesta.turnos_consumidos == 0
+    assert respuesta.abstencion is True
+
+
+def test_ask_out_respuesta_previa_con_hilo_existente(
+    ask_out_previo,
+):
+    ask_out_previo.update(
+        thread_id=THREAD_ID,
+        turnos_consumidos=2,
+    )
+
+    respuesta = AskOut(**ask_out_previo)
+
+    assert respuesta.thread_id == THREAD_ID
+    assert respuesta.turnos_consumidos == 2
+
+
+@pytest.mark.parametrize(
+    "campo, valor",
+    [
+        ("respuesta", ""),
+        ("respuesta", "   "),
+        ("plan", []),
+        ("plan", ["Un único paso"]),
+        ("plan", ["Primer paso", "   "]),
+        ("plan_aprobado", True),
+        ("plan_aprobado", False),
+        ("done", True),
+        ("approval_id", None),
+        ("approval_id", "invalido"),
+        ("thread_id", None),
+        ("turnos_consumidos", 0),
+        ("turnos_consumidos", -1),
+        ("turnos_consumidos", True),
+        ("error", "Fallo interno"),
+        ("error", ""),
+        ("pendiente_hitl", "true"),
+        ("estado_evidencia", "desconocido"),
+    ],
+)
+def test_ask_out_rechaza_propuesta_inconsistente(
+    ask_out_pendiente,
+    campo,
+    valor,
+):
+    ask_out_pendiente[campo] = valor
+
+    with pytest.raises(ValidationError):
+        AskOut(**ask_out_pendiente)
+
+
+@pytest.mark.parametrize(
+    "cambios",
+    [
+        {"done": False},
+        {"approval_id": APPROVAL_ID},
+        {"plan": []},
+    ],
+)
+def test_ask_out_rechaza_aprobacion_inconsistente(
+    ask_out_pendiente,
+    cambios,
+):
+    ask_out_pendiente.update(
+        pendiente_hitl=False,
+        plan_aprobado=True,
+        done=True,
+        approval_id=None,
+    )
+
+    ask_out_pendiente.update(cambios)
+
+    with pytest.raises(ValidationError):
+        AskOut(**ask_out_pendiente)
+
+
+@pytest.mark.parametrize(
+    "cambios",
+    [
+        {"done": True},
+        {"approval_id": APPROVAL_ID},
+        {"plan": ["Primer paso", "Segundo paso"]},
+    ],
+)
+def test_ask_out_rechaza_rechazo_inconsistente(
+    ask_out_pendiente,
+    cambios,
+):
+    ask_out_pendiente.update(
+        pendiente_hitl=False,
+        plan_aprobado=False,
+        done=False,
+        approval_id=None,
+        plan=[],
+    )
+
+    ask_out_pendiente.update(cambios)
+
+    with pytest.raises(ValidationError):
+        AskOut(**ask_out_pendiente)
+
+
+@pytest.mark.parametrize(
+    "campo, valor",
+    [
+        ("done", True),
+        ("approval_id", APPROVAL_ID),
+        ("plan", ["Primer paso", "Segundo paso"]),
+        ("abstencion", False),
+        ("estado_evidencia", "suficiente"),
+        ("turnos_consumidos", 1),
+    ],
+)
+def test_ask_out_rechaza_respuesta_previa_inconsistente(
+    ask_out_previo,
+    campo,
+    valor,
+):
+    ask_out_previo[campo] = valor
+
+    with pytest.raises(ValidationError):
+        AskOut(**ask_out_previo)
+
+
+def test_ask_out_respuesta_previa_rechaza_fuentes(
+    ask_out_previo,
+):
+    ask_out_previo["fuentes"] = [
+        {
+            "chunk_id": "C1",
+            "source": "fraccion_vidrio.html",
+        }
+    ]
+
+    with pytest.raises(ValidationError):
+        AskOut(**ask_out_previo)
+
+
+def test_ask_out_respuesta_previa_rechaza_geografia(
+    ask_out_previo,
+    geografia_valida,
+):
+    ask_out_previo["geografia"] = [geografia_valida]
+
+    with pytest.raises(ValidationError):
+        AskOut(**ask_out_previo)
+
+
+def test_ask_out_valida_modelos_anidados(
+    ask_out_pendiente,
+    geografia_valida,
+):
+    ask_out_pendiente["geografia"] = [geografia_valida]
+
+    ask_out_pendiente["fuentes"] = [
+        {
+            "chunk_id": "C1",
+            "source": "fraccion_vidrio.html",
+        }
+    ]
+
+    respuesta = AskOut(**ask_out_pendiente)
+
+    assert isinstance(respuesta.fuentes[0], FuenteOut)
+    assert isinstance(respuesta.geografia[0], GeografiaOut)
+    assert isinstance(
+        respuesta.geografia[0].puntos[0],
+        PuntoLimpioOut,
+    )
+
+
+def test_ask_out_requiere_todos_los_campos(
+    ask_out_pendiente,
+):
+    for campo in AskOut.model_fields:
+        datos = ask_out_pendiente.copy()
+
+        del datos[campo]
+
+        with pytest.raises(ValidationError):
+            AskOut(**datos)
+
+
+@pytest.mark.parametrize(
+    "campo",
+    [
+        "checkpoint",
+        "evidencias",
+        "historial_turnos",
+        "traza_tools",
+        "log",
+    ],
+)
+def test_ask_out_rechaza_campos_internos(
+    ask_out_pendiente,
+    campo,
+):
+    ask_out_pendiente[campo] = []
+
+    with pytest.raises(ValidationError):
+        AskOut(**ask_out_pendiente)

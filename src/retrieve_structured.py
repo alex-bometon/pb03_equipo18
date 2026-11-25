@@ -8,7 +8,14 @@ sin ocultar dependencias ni acoplar esta capa a la orquestación.
 import re
 from typing import Callable
 
-from config import MAX_PREGUNTA_CARACTERES, EJEMPLOS_POR_DESTINO
+from config import (
+    EJEMPLOS_POR_DESTINO,
+    GEO_MAX_LATITUDE,
+    GEO_MAX_LONGITUDE,
+    GEO_MIN_LATITUDE,
+    GEO_MIN_LONGITUDE,
+    MAX_PREGUNTA_CARACTERES,
+)
 from src.text_utils import normalizar_distrito, normalizar_texto
 
 from math import isfinite
@@ -414,10 +421,10 @@ def consultar_puntos_limpios_locales(
         ):
             continue
 
-        if not (-90 <= latitud <= 90):
+        if not GEO_MIN_LATITUDE <= latitud <= GEO_MAX_LATITUDE:
             continue
 
-        if not (-180 <= longitud <= 180):
+        if not GEO_MIN_LONGITUDE <= longitud <= GEO_MAX_LONGITUDE:
             continue
 
         direccion = _extraer_campo(texto, "Dirección")

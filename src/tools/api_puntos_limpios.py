@@ -11,12 +11,16 @@ from src.retrieve_structured import consultar_puntos_limpios_locales
 
 from config import (
     API_PUNTOS_LIMPIOS_URL,
-    API_TIMEOUT_SECONDS,
     API_RESULT_RECORD_COUNT,
+    API_TIMEOUT_SECONDS,
     GEO_DEFAULT_RADIUS_METERS,
-    GEO_MIN_RADIUS_METERS,
+    GEO_MAX_LATITUDE,
+    GEO_MAX_LONGITUDE,
     GEO_MAX_RADIUS_METERS,
     GEO_MAX_RESULTS,
+    GEO_MIN_LATITUDE,
+    GEO_MIN_LONGITUDE,
+    GEO_MIN_RADIUS_METERS,
 )
 
 TIPOS_PUNTOS_LIMPIOS = {
@@ -25,6 +29,21 @@ TIPOS_PUNTOS_LIMPIOS = {
     "movil": "Móvil",
     "proximidad": "Proximidad",
 }
+
+
+def _coordenada_valida(
+    valor: object,
+    minimo: float,
+    maximo: float,
+) -> bool:
+    """Comprueba el tipo, rango y finitud de una coordenada."""
+
+    return (
+        isinstance(valor, (int, float))
+        and not isinstance(valor, bool)
+        and minimo <= valor <= maximo
+        and isfinite(valor)
+    )
 
 
 def _consultar_api_puntos_limpios(
@@ -46,16 +65,13 @@ def _consultar_api_puntos_limpios(
 
     # Validación de coordenadas.
     for nombre, valor, minimo, maximo in (
-        ("latitud", latitud, -90, 90),
-        ("longitud", longitud, -180, 180),
+        ("latitud", latitud, GEO_MIN_LATITUDE, GEO_MAX_LATITUDE),
+        ("longitud", longitud, GEO_MIN_LONGITUDE, GEO_MAX_LONGITUDE),
     ):
-        if (
-            isinstance(valor, bool)
-            or not isinstance(valor, (int, float))
-            or not isfinite(valor)
-            or not minimo <= valor <= maximo
-        ):
-            raise ValueError(f"{nombre} no es una coordenada válida.")
+        if not _coordenada_valida(valor, minimo, maximo):
+            raise ValueError(
+                f"{nombre} no es una coordenada válida."
+            )
 
     # Validación del radio.
     if (
@@ -169,15 +185,17 @@ def _normalizar_registro_api(registro: dict) -> dict | None:
         longitud = atributos.get("LONGITUD")
 
     # Comprobar coordenadas numéricas y finitas.
-    if (
-        isinstance(latitud, bool)
-        or not isinstance(latitud, (int, float))
-        or not isfinite(latitud)
-        or not -90 <= latitud <= 90
-        or isinstance(longitud, bool)
-        or not isinstance(longitud, (int, float))
-        or not isfinite(longitud)
-        or not -180 <= longitud <= 180
+    if not (
+        _coordenada_valida(
+            latitud,
+            GEO_MIN_LATITUDE,
+            GEO_MAX_LATITUDE,
+        )
+        and _coordenada_valida(
+            longitud,
+            GEO_MIN_LONGITUDE,
+            GEO_MAX_LONGITUDE,
+        )
     ):
         return None
 
