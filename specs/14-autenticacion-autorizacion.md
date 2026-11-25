@@ -389,6 +389,8 @@ Si la autorización ha dejado de ser válida:
 
 Las comprobaciones finales y escrituras se coordinarán con las modificaciones administrativas concurrentes conforme a la especificación 13.
 
+La comprobación final de la vigencia de una sesión y la confirmación de las operaciones autorizadas deberán coordinarse con su invalidación concurrente mediante los mecanismos de sincronización de sesiones.
+
 La revocación no garantiza la cancelación inmediata de operaciones externas ya iniciadas.
 
 ## 9. Implementación en FastAPI

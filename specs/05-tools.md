@@ -16,7 +16,7 @@ Se conservarán TOOLS y TOOL_BY_NAME en src/tools/__init__.py.
 |---|---|---|---|
 | consultar_rag | Consulta documental | Sí | Sí |
 | buscar_puntos_limpios_cercanos | Localización y proximidad | No | Sí |
-| hora_actual | Información temporal de Madrid | No | Sí |
+| hora_actual | Información temporal de Madrid | Sí | Sí |
 | describir_imagen | Identificación visual | Sí | No |
 
 Los permisos se establecerán mediante AGENT_TOOLS_BY_ROLE en config.py.
@@ -338,6 +338,8 @@ El resultado deberá contener exactamente estado y descripcion, con tipos válid
 describir_imagen() devolverá la descripción cuando estado=allowed.
 
 Los demás estados producirán una limitación o rechazo semántico controlado. No se tratarán como observaciones admitidas ni como fallos técnicos del proveedor.
+
+Se conservará el envío de imágenes mediante datos binarios nativos y el cierre del cliente Gemini creado por la función, incluso cuando se produzcan excepciones.
 
 ### 7.4. Validación técnica y rutas
 

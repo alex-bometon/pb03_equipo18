@@ -406,6 +406,8 @@ Los campos compartidos respetarán los valores predeterminados y restricciones d
 
 Las coordenadas deberán proporcionarse conjuntamente.
 
+Los campos escalares recibidos mediante multipart/form-data se convertirán explícitamente a sus tipos autorizados antes de aplicar las validaciones compartidas. No se admitirán conversiones ambiguas ni valores incompatibles con el contrato.
+
 Los formatos autorizados, límites de recepción, adaptación y procesamiento se establecen en [15-robustez-observabilidad.md](15-robustez-observabilidad.md).
 
 No se aceptarán rutas locales del cliente.

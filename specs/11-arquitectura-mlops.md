@@ -60,7 +60,7 @@ flowchart TD
 - Los módulos de persistencia no ejecutarán el asistente.
 - La CLI conservará el acceso independiente al núcleo.
 
-La estructura objetivo del repositorio se establece en el apartado 24 de [plan-trabajo-pb03.md](../docs/plan-trabajo-pb03.md).
+Los componentes previstos y archivos afectados se establecen en las fases de implementación de [plan-trabajo-pb03.md](../docs/plan-trabajo-pb03.md).
 
 Se conservará src/ para los componentes existentes y los módulos relacionales previstos, api/ para el backend HTTP y app.py como punto de entrada de Streamlit.
 

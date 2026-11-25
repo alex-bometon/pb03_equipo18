@@ -167,6 +167,8 @@ El cierre de sesión eliminará las credenciales y los datos protegidos de la se
 
 Si el backend no está disponible durante el cierre de sesión, se realizará igualmente la limpieza local y se informará de que no ha podido confirmarse la invalidación remota del token.
 
+Cuando el backend confirme que la sesión ha caducado o ha sido invalidada, se eliminarán las credenciales y los datos protegidos del estado local antes de solicitar una nueva autenticación.
+
 ## 5. Conversaciones
 
 ### 5.1. Nueva conversación

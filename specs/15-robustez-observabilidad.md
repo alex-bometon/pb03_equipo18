@@ -288,6 +288,8 @@ Las respuestas previas no consumirán cuota comercial, no incrementarán turnos 
 
 El filtrado no permitirá eludir las restricciones de estado de una conversación existente.
 
+En las consultas multimodales, la ausencia de información que pueda obtenerse mediante la imagen no provocará por sí sola una aclaración previa. El filtrado textual deberá considerar la existencia de la entrada visual antes de impedir su identificación semántica.
+
 Los criterios funcionales y geográficos se establecen en [04-consultas-generales.md](04-consultas-generales.md).
 
 ## 8. Timeout
@@ -367,6 +369,10 @@ future.result(timeout=...) no cancela una tarea que ya está ejecutándose.
 future.cancel() únicamente podrá cancelar una tarea que todavía no haya comenzado.
 
 No se implementará interrupción forzada de hilos ni un sistema adicional de cancelación cooperativa.
+
+La aceptación del resultado exigirá comprobar que la ejecución finalizó dentro del presupuesto temporal. 
+
+La finalización del Future no constituirá por sí sola una garantía de cumplimiento del plazo.
 
 ### 8.5. Finalización real
 

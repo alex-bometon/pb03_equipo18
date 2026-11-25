@@ -155,7 +155,7 @@ No se generarán claves adicionales ni se reiniciará el backend para eludir cuo
 | I12 | SERVER_BUSY | Capacidad ocupada y duración de ejecuciones | Esperar capacidad disponible |
 | I13 | AGENT_TIMEOUT | Duración HTTP, fases ejecutadas y finalización real | Descartar resultados tardíos y proteger el estado |
 | I14 | THREAD_STATE_LOST | Historial SQL, checkpoint y reinicios | Conservar el historial e iniciar otro hilo |
-| I15 | Conflicto HITL | Checkpoint, proposal_id vigente y decisión anterior | Aplicar el procedimiento correspondiente |
+| I15 | Conflicto HITL | Checkpoint, approval_id vigente y decisión anterior | Aplicar el procedimiento correspondiente |
 | I16 | Fallo de persistencia | Transacción, restricciones, mensajes y checkpoint | Recuperar PostgreSQL y proteger la consistencia |
 
 ### 6.1. Timeout y concurrencia
