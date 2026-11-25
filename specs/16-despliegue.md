@@ -149,11 +149,21 @@ El número de procesos de Uvicorn será uno.
 
 PostgreSQL se ejecutará en un contenedor independiente con un volumen persistente.
 
-Se utilizará una versión compatible con la seleccionada en Render.
+La versión seleccionada para el desarrollo y la validación local es PostgreSQL 18.7.
 
-La versión definitiva se fijará antes de las pruebas de integración.
+Se utilizará la imagen oficial postgres:18.7.
 
-Docker Compose será opcional y podrá coordinar el backend, PostgreSQL, la red interna, el volumen y las comprobaciones de disponibilidad.
+En equipos Apple Silicon se utilizará la arquitectura ARM64 nativa.
+
+El volumen persistente se montará en /var/lib/postgresql, conforme a la estructura de almacenamiento de PostgreSQL 18.
+
+El puerto PostgreSQL se publicará exclusivamente en la interfaz local durante el desarrollo.
+
+Se utilizarán bases de datos y credenciales independientes para desarrollo y pruebas.
+
+Docker Compose continuará siendo opcional.
+
+Los procedimientos de creación, configuración y comprobación se establecen en [operaciones-despliegue.md](../docs/operaciones-despliegue.md).
 
 ### 5.2. Producción
 
