@@ -450,40 +450,19 @@ No se asumirá que el plan gratuito constituye una infraestructura de producció
 
 ### 11.2. Autenticación y autorización
 
-| Variable | Valor inicial |
-|---|---|
-| SESSION_TTL_SECONDS | 28800 |
-| BCRYPT_ROUNDS | 12 |
-| FREE_MAX_ACTIVE_KEYS | 1 |
-| USER_MAX_ACTIVE_KEYS | 5 |
-| USER_TIER_ALLOWED_EMAILS | Según configuración |
+Las variables de entorno relacionadas con la autenticación, la autorización, las sesiones y la emisión de credenciales se definen en [14-autenticacion-autorizacion.md](14-autenticacion-autorizacion.md).
 
-Las credenciales necesarias para el aprovisionamiento administrativo deberán definirse durante la implementación de dicho procedimiento.
+Las credenciales administrativas deberán obtenerse de un entorno seguro.
 
 No se utilizarán credenciales administrativas predeterminadas.
 
 ### 11.3. Cuotas comerciales
 
-| Variable | Valor inicial |
-|---|---:|
-| FREE_RATE_LIMIT_PER_MINUTE | 2 |
-| FREE_RATE_LIMIT_PER_HOUR | 10 |
-| FREE_RATE_LIMIT_PER_DAY | 30 |
-| USER_RATE_LIMIT_PER_MINUTE | 5 |
-| USER_RATE_LIMIT_PER_HOUR | 20 |
-| USER_RATE_LIMIT_PER_DAY | 45 |
+Las variables de entorno y los valores correspondientes a las cuotas comerciales del asistente se definen en [15-robustez-observabilidad.md](15-robustez-observabilidad.md).
 
 ### 11.4. Robustez
 
-| Variable | Valor inicial |
-|---|---:|
-| RATE_LIMIT_PER_MINUTE | 30 |
-| AGENT_MAX_WORKERS | 1 |
-| ASK_TIMEOUT_SECONDS | 60 |
-| IMAGE_UPLOAD_MAX_BYTES | 20971520 |
-| IMAGE_UPLOAD_MAX_PIXELS | 32000000 |
-
-Los límites temporales de registro, autenticación y emisión de claves se añadirán a la configuración centralizada.
+Las variables de entorno relacionadas con rate limiting, concurrencia, timeout, procesamiento de imágenes y observabilidad se definen en [15-robustez-observabilidad.md](15-robustez-observabilidad.md).
 
 ### 11.5. Configuración local
 
@@ -533,17 +512,7 @@ Los siguientes valores se considerarán sensibles:
 - No publicar credenciales en el informe técnico.
 - No proporcionar credenciales administrativas a consumidores ordinarios.
 
-### 12.2. Credenciales de evaluación
-
-Cuando sea necesario proporcionar acceso a los evaluadores del proyecto, se generará una credencial específica para dicho propósito.
-
-Se utilizará preferentemente una API key User, con acceso a las funcionalidades del asistente y sin permisos administrativos.
-
-Las credenciales administrativas solo se facilitarán de forma privada cuando sean necesarias para evaluar funcionalidades de administración.
-
-Las credenciales de evaluación podrán desactivarse al finalizar la evaluación.
-
-### 12.3. Rotación
+### 12.2. Rotación
 
 Una credencial comprometida deberá revocarse o sustituirse.
 
@@ -719,228 +688,95 @@ Se realizará una prueba de persistencia mediante:
 
 La prueba deberá utilizar la misma base de datos antes y después del redeploy.
 
-## 16. Gestión de versiones
+## 16. Integración continua — CI
 
-### 16.1. Ramas
+### 16.1. Requisitos de validación
 
-| Rama | Responsabilidad |
-|---|---|
-| main | Versión estable y desplegable |
-| develop | Integración de funcionalidades |
-| feature/* | Desarrollo de funcionalidades |
-| fix/* | Corrección de errores |
-| docs/* | Documentación y especificaciones |
+Toda versión candidata a despliegue deberá satisfacer los siguientes requisitos:
 
-La arquitectura de ramas se mantendrá aunque el desarrollo sea individual.
+- Instalación correcta de dependencias.
+- Compatibilidad con Python 3.13.2.
+- Superación de las pruebas unitarias y de integración correspondientes.
+- Superación de las pruebas de regresión.
+- Construcción correcta de la imagen Docker.
+- Construcción de la imagen sin necesidad de credenciales de Gemini.
 
-### 16.2. Integración
+### 16.2. Independencia de las pruebas
 
-Las funcionalidades deberán desarrollarse en ramas independientes.
-
-Antes de integrarlas en develop:
-
-- Revisar los cambios.
-- Ejecutar las pruebas correspondientes.
-- Comprobar las regresiones.
-- Actualizar las especificaciones afectadas.
-- Verificar que no se incorporan secretos.
-
-La integración en main se realizará cuando la versión sea estable y desplegable.
-
-### 16.3. Commits
-
-Los commits deberán representar cambios coherentes y fácilmente identificables.
-
-Se recomienda utilizar prefijos como:
-
-- feat.
-- fix.
-- test.
-- docs.
-- refactor.
-- chore.
-
-No se mezclarán cambios funcionales no relacionados dentro de un mismo commit cuando pueda evitarse.
-
-## 17. Integración continua — CI
-
-### 17.1. Objetivo
-
-Detectar errores automáticamente antes de desplegar una nueva versión.
-
-### 17.2. Validaciones
-
-El proceso de integración continua deberá contemplar:
-
-1. Obtener el código del repositorio.
-2. Configurar Python 3.13.2.
-3. Instalar dependencias.
-4. Ejecutar las pruebas automatizadas.
-5. Verificar la compatibilidad de los componentes.
-6. Construir la imagen Docker.
-7. Comprobar que la construcción no necesita credenciales de Gemini.
-
-### 17.3. Pruebas automatizadas
-
-Las pruebas deberán utilizar mocks o dependencias controladas cuando intervengan servicios externos.
+Las pruebas automatizadas deberán utilizar mocks o dependencias controladas cuando intervengan servicios externos.
 
 Las pruebas unitarias no deberán depender de credenciales reales ni consumir recursos de Gemini.
 
-Las pruebas de integración con PostgreSQL podrán utilizar una base de datos temporal y aislada.
+Las pruebas de integración con PostgreSQL deberán utilizar una base de datos aislada de producción.
 
-### 17.4. GitHub Actions
+### 16.3. Automatización
 
-Se propone utilizar GitHub Actions para automatizar las validaciones.
+La automatización de las validaciones mediante GitHub Actions constituye una ampliación opcional de esta fase del desarrollo.
 
-Ubicación orientativa:
+Los requisitos de validación serán obligatorios independientemente de que su ejecución sea manual o automatizada.
 
-```text
-.github/workflows/ci.yml
-```
+## 17. Entrega y despliegue continuo — CD
 
-La implementación de este workflow se considera una ampliación de esta fase del desarrollo.
+### 17.1. Origen del despliegue
 
-Aunque no se automatice completamente, las validaciones deberán realizarse y documentarse manualmente antes de desplegar.
+Render construirá y desplegará el backend a partir de la rama main del repositorio GitHub.
 
-## 18. Entrega y despliegue continuo — CD
+Cada despliegue deberá estar asociado a una versión identificable del código fuente.
 
-### 18.1. Flujo de despliegue
-
-```mermaid
-flowchart LR
-    A[Rama de trabajo] --> B[Pruebas]
-    B --> C[Pull Request a develop]
-    C --> D[Validacion de integracion]
-    D --> E[Pull Request a main]
-    E --> F[Build Docker en Render]
-    F --> G[Health check]
-    G --> H[Servicio desplegado]
-```
-
-### 18.2. Despliegue automático
-
-Render se vinculará al repositorio GitHub y a la rama main.
+### 17.2. Despliegue automático
 
 Los cambios integrados en main podrán desencadenar automáticamente una nueva construcción y despliegue.
 
-Cuando exista integración continua automatizada, se configurará el despliegue para ejecutarse después de superar las comprobaciones requeridas.
+Cuando exista integración continua automatizada, el despliegue deberá estar condicionado a la superación de las comprobaciones requeridas.
 
-### 18.3. Despliegue manual
+### 17.3. Despliegue manual
 
-El despliegue manual se utilizará cuando sea necesario:
+La infraestructura deberá permitir realizar despliegues manuales para validar versiones, reproducir incidencias y recuperar el servicio.
 
-- Reproducir una incidencia.
-- Validar la persistencia.
-- Desplegar una versión concreta.
-- Recuperar el servicio.
-- Realizar comprobaciones controladas.
+### 17.4. Trazabilidad
 
-### 18.4. Trazabilidad
-
-Se registrará:
+Deberá ser posible identificar:
 
 - Commit desplegado.
 - Fecha del despliegue.
-- Resultado de las comprobaciones.
-- Estado del servicio.
-- Incidencias detectadas.
-- Versión anterior estable.
+- Estado del despliegue.
+- Resultado del health check.
+- Versión anterior disponible para recuperación.
 
-## 19. Rollback
+## 18. Rollback
 
-### 19.1. Objetivo
+### 18.1. Requisitos de recuperación
 
-Recuperar una versión estable del backend cuando una nueva versión introduzca errores.
+La infraestructura deberá permitir recuperar una versión estable del backend cuando un nuevo despliegue introduzca errores.
 
-### 19.2. Procedimiento
+La recuperación de una versión anterior no deberá eliminar los datos persistidos en PostgreSQL.
 
-1. Identificar la incidencia.
-2. Consultar los logs.
-3. Identificar la última versión estable.
-4. Ejecutar el rollback correspondiente.
-5. Verificar GET /health.
-6. Comprobar la autenticación.
-7. Comprobar el historial persistente.
-8. Corregir la causa del problema en una rama independiente.
-9. Validar y desplegar nuevamente.
+La versión recuperada deberá satisfacer los requisitos de disponibilidad, autenticación y acceso al historial.
 
-Si el rollback deshabilita los despliegues automáticos, deberán reactivarse de manera controlada después de solucionar la incidencia.
-
-### 19.3. Limitaciones
+### 18.2. Limitaciones
 
 Un rollback del backend no revierte automáticamente las modificaciones realizadas en PostgreSQL.
 
-El código recuperado debe ser compatible con la estructura actual de la base de datos.
+El código recuperado deberá ser compatible con la estructura actual de la base de datos.
 
-Tampoco recupera los checkpoints, sesiones ni contadores almacenados previamente en memoria.
+El rollback no recuperará los checkpoints, las sesiones ni los contadores almacenados previamente en memoria.
 
-## 20. Gestión de costes
+La recuperación de una versión anterior estará sujeta a las capacidades del proveedor de infraestructura.
 
-### 20.1. Componentes de coste
+## 19. Eficiencia económica y consumo de recursos
 
-| Componente | Factor principal |
-|---|---|
-| Render Web Service | Capacidad de CPU y memoria |
-| Render PostgreSQL | Tipo de instancia y almacenamiento |
-| Gemini | Tokens de entrada, salida y operaciones multimodales |
-| Embeddings | Generación de vectores |
-| Docker | Construcción y almacenamiento de imágenes |
-| Transferencia de datos | Volumen de tráfico |
-| Almacenamiento adicional | Capacidad y persistencia |
+### 19.1. Objetivo
 
-### 20.2. Coste fijo
+La infraestructura y la arquitectura del asistente deberán minimizar el consumo innecesario de recursos computacionales y servicios externos, preservando los requisitos funcionales y de calidad.
 
-El coste fijo mensual será la suma de los recursos de infraestructura contratados.
-
-```text
-Coste fijo = backend + PostgreSQL + otros servicios contratados
-```
-
-### 20.3. Coste variable
-
-El coste variable dependerá principalmente de la utilización de Gemini.
-
-```text
-Coste por consulta =
-    coste de embeddings
-    + coste de tokens de entrada
-    + coste de tokens de salida
-    + coste de análisis multimodal
-    + otros costes asociados
-```
-
-Una consulta puede generar varias llamadas al modelo.
-
-El número de consultas HTTP no representa necesariamente el número de llamadas facturables.
-
-### 20.4. Estimación mensual
-
-```text
-Coste mensual estimado =
-    coste fijo mensual
-    + número de consultas mensuales
-      × coste medio por consulta
-```
-
-El coste medio deberá calcularse mediante consultas representativas.
-
-Se distinguirán, cuando resulte posible:
-
-- Consultas textuales simples.
-- Consultas compuestas.
-- Consultas multimodales.
-- Consultas deterministas.
-- Abstenciones.
-- Consultas con HITL.
-
-### 20.5. Medidas de reducción de costes
+### 19.2. Medidas de control
 
 - Filtrado de dominio antes de ejecutar el asistente.
 - Reutilización de embeddings existentes.
 - Uso de rutas deterministas.
 - Límites de rondas y llamadas a herramientas.
 - Prevención de llamadas duplicadas.
-- Interrupción del flujo multimodal fuera de dominio.
+- Interrupción del flujo multimodal cuando la imagen no sea admisible.
 - Cuotas comerciales.
 - Rate limiting HTTP.
 - Restricción de ejecuciones simultáneas.
@@ -948,29 +784,21 @@ Se distinguirán, cuando resulte posible:
 - Reducción de contexto innecesario.
 - Configuración adecuada de timeouts y reintentos.
 
-Los límites de consumo del proveedor de Gemini deberán utilizarse como protección adicional cuando estén disponibles.
+Los mecanismos de control se definen en [15-robustez-observabilidad.md](15-robustez-observabilidad.md).
+
+### 19.3. Limitaciones económicas
 
 Las cuotas por API key no representan por sí solas un límite económico global.
 
-### 20.6. Evidencias económicas
+El número de consultas HTTP no equivale necesariamente al número de llamadas facturables a servicios externos.
 
-El informe técnico deberá incluir:
+Los límites de consumo proporcionados por Gemini deberán utilizarse como protección adicional cuando estén disponibles.
 
-- Tarifas de infraestructura consultadas.
-- Modelo Gemini utilizado.
-- Tarifas aplicables al modelo.
-- Consumo observado en consultas representativas.
-- Estimación económica mensual.
-- Hipótesis utilizadas en el cálculo.
-- Limitaciones de la estimación.
+La selección de infraestructura deberá considerar los requisitos de CPU, memoria, almacenamiento, disponibilidad y coste.
 
-Los precios se consultarán en las fuentes oficiales durante la validación final.
+## 20. Escalabilidad
 
-No se utilizarán tarifas desactualizadas ni estimaciones presentadas como costes reales.
-
-## 21. Escalabilidad
-
-### 21.1. Arquitectura inicial
+### 20.1. Arquitectura inicial
 
 La primera versión utilizará:
 
@@ -984,7 +812,7 @@ La primera versión utilizará:
 
 Esta configuración prioriza la simplicidad, el control del consumo y la estabilidad.
 
-### 21.2. Escalado vertical
+### 20.2. Escalado vertical
 
 Consiste en aumentar los recursos de la instancia existente.
 
@@ -997,7 +825,7 @@ Puede incluir:
 
 El escalado vertical puede realizarse sin distribuir necesariamente los estados entre varias instancias.
 
-### 21.3. Incremento de workers
+### 20.3. Incremento de workers
 
 El número de workers del asistente podrá aumentarse después de validar:
 
@@ -1010,7 +838,7 @@ El número de workers del asistente podrá aumentarse después de validar:
 
 No se aumentará el número de workers exclusivamente para reducir los tiempos de espera sin evaluar sus consecuencias.
 
-### 21.4. Escalado horizontal
+### 20.4. Escalado horizontal
 
 Consiste en ejecutar varias instancias del backend.
 
@@ -1029,7 +857,7 @@ Los siguientes recursos deberían externalizarse o coordinarse:
 
 La incorporación de Redis, checkpoints persistentes o servicios vectoriales externos queda fuera del alcance inicial.
 
-### 21.5. Redespliegues
+### 20.5. Redespliegues
 
 Aunque se configure una única instancia, el proveedor puede mantener temporalmente la versión anterior y la nueva durante un redeploy.
 
@@ -1037,174 +865,99 @@ Los recursos almacenados en memoria no se compartirán entre ambas ejecuciones.
 
 Los redeploys deberán considerarse puntos de pérdida del estado operativo del agente.
 
-## 22. Limitaciones de infraestructura
+## 21. Limitaciones de infraestructura
 
-Los planes gratuitos de alojamiento pueden presentar restricciones relacionadas con:
+La infraestructura seleccionada deberá satisfacer los requisitos técnicos del sistema teniendo en cuenta:
 
 - Memoria disponible.
 - Capacidad de CPU.
 - Arranques en frío.
 - Suspensión por inactividad.
-- Tiempo de disponibilidad.
+- Disponibilidad del servicio.
 - Capacidad de almacenamiento.
 - Duración de la base de datos.
 - Copias de seguridad.
 - Transferencia de datos.
 
-Estas restricciones deberán comprobarse antes de seleccionar el plan de despliegue.
+El backend deberá disponer de recursos suficientes para ejecutar FastAPI, LangGraph y ChromaDB conjuntamente.
 
 La persistencia de PostgreSQL frente a un reinicio del backend no implica que la base de datos tenga una duración indefinida ni que disponga de copias de seguridad.
 
-El plan seleccionado deberá permanecer disponible durante todo el periodo de evaluación.
+La infraestructura deberá permitir conservar los datos persistentes durante el periodo de utilización del servicio.
 
-Se documentará la estrategia de conservación de los datos si el servicio contratado tiene fecha de caducidad.
+No se dependerá del almacenamiento local del contenedor para conservar información permanente del producto.
 
-## 23. Gestión de incidencias
+## 22. Pruebas de despliegue
 
-Se documentarán, como mínimo, tres escenarios de fallo y sus procedimientos de diagnóstico.
+### 22.1. Validación local
 
-### 23.1. PostgreSQL no disponible
-
-Posibles causas:
-
-- DATABASE_URL incorrecta.
-- Credenciales inválidas.
-- Base de datos suspendida.
-- Restricciones de red.
-- Servicio no disponible.
-
-Comprobaciones:
-
-- Configuración de conexión.
-- Logs del backend.
-- Estado de PostgreSQL.
-- Resultado de GET /health.
-
-### 23.2. Backend no disponible
-
-Posibles causas:
-
-- Error durante la construcción Docker.
-- Dependencias incompatibles.
-- Puerto incorrecto.
-- Fallo de inicialización.
-- Memoria insuficiente.
-
-Comprobaciones:
-
-- Logs de construcción.
-- Logs de ejecución.
-- Configuración de PORT.
-- Estado del servicio Render.
-- Resultado del health check.
-
-### 23.3. Fallo del asistente
-
-Posibles causas:
-
-- Timeout.
-- Cuota de Gemini agotada.
-- Credenciales externas incorrectas.
-- Fallo del servicio municipal.
-- Estado de conversación inconsistente.
-
-Comprobaciones:
-
-- request_id.
-- thread_id.
-- Código HTTP.
-- Código de error.
-- Duración de la petición.
-- Disponibilidad de servicios externos.
-
-No se documentarán como incidencias reales aquellos escenarios que únicamente se hayan planteado de forma teórica.
-
-## 24. Pruebas de despliegue
-
-### 24.1. Validación local
+Las pruebas de despliegue local deberán verificar:
 
 - Instalación correcta de dependencias.
-- Ejecución de pruebas unitarias.
-- Ejecución de pruebas de integración.
-- Creación de tablas PostgreSQL.
 - Construcción de la imagen Docker.
 - Arranque del contenedor.
+- Inicialización de PostgreSQL.
+- Disponibilidad del índice ChromaDB.
 - Disponibilidad de GET /health.
 - Acceso a Swagger.
-- Comunicación entre Streamlit y FastAPI.
+- Comunicación HTTP entre Streamlit y FastAPI.
 
-### 24.2. Validación de seguridad
+### 22.2. Validación de seguridad y robustez
 
-| Código HTTP esperado | Comprobación |
-|---|---|
-| 401 | Petición sin credenciales obligatorias |
-| 403 | Operación sin permisos suficientes |
-| 404 | Acceso a conversación ajena |
-| 409 | Conflicto de estado HITL |
-| 429 | Superación del rate limiting |
-| 504 | Ejecución superior al timeout |
+El backend desplegado deberá respetar los contratos HTTP, las reglas de autenticación y autorización y los mecanismos de robustez establecidos en:
 
-Las pruebas de rate limiting podrán realizarse sobre endpoints que no invoquen Gemini.
+- [12-contratos-http.md](12-contratos-http.md).
+- [14-autenticacion-autorizacion.md](14-autenticacion-autorizacion.md).
+- [15-robustez-observabilidad.md](15-robustez-observabilidad.md).
 
-El timeout deberá validarse mediante una ejecución controlada que supere el límite configurado.
+### 22.3. Validación en Render
 
-### 24.3. Validación en Render
+Las pruebas de despliegue en Render deberán verificar:
 
-- Construcción correcta del servicio.
-- Arranque del backend.
+- Construcción correcta de la imagen.
+- Inicialización del backend.
 - Conexión con PostgreSQL.
-- Acceso a la URL pública HTTPS.
+- Acceso mediante HTTPS.
 - Disponibilidad de GET /health.
 - Acceso a Swagger.
-- Autenticación.
-- Consulta textual válida.
-- Consulta multimodal válida.
-- HITL.
-- Recuperación de historial.
+- Funcionamiento de los endpoints protegidos.
 - Comunicación con Streamlit local.
-- Registro de peticiones en logs.
+- Disponibilidad de los registros de observabilidad.
 - Persistencia del historial después de un redeploy.
+- Comportamiento controlado ante la pérdida de estados en memoria.
 
-### 24.4. Evidencias
+### 22.4. Validación de recuperación
 
-Se conservarán evidencias de las comprobaciones realizadas.
+Deberá verificarse que la recuperación de una versión estable del backend permite restablecer el servicio sin eliminar los datos persistidos en PostgreSQL.
 
-Las evidencias podrán incluir:
-
-- Capturas de Swagger.
-- Respuestas HTTP.
-- Salidas de terminal.
-- Resultados de pytest.
-- Logs sanitizados.
-- Capturas del estado del despliegue.
-- Comprobaciones de PostgreSQL.
-- Comparaciones del historial antes y después de un redeploy.
-
-Las evidencias no incluirán secretos.
-
-## 25. Criterios de aceptación
+## 23. Criterios de aceptación
 
 - El entorno del proyecto es reproducible.
+- El entorno de ejecución utiliza Python 3.13.2.
 - El backend puede ejecutarse mediante Docker.
 - La imagen Docker no contiene credenciales.
 - La imagen incluye los recursos necesarios del RAG.
 - El índice ChromaDB puede reconstruirse sin generar nuevos embeddings.
+- La construcción de la imagen no requiere credenciales de Gemini.
 - PostgreSQL se ejecuta independientemente del backend.
 - FastAPI se despliega correctamente en Render.
 - El backend utiliza el puerto configurado por Render.
 - GET /health permite comprobar el estado del servicio.
 - Swagger está disponible mediante HTTPS.
-- Streamlit se comunica con el backend mediante HTTP.
+- Streamlit se comunica con el backend exclusivamente mediante HTTP.
 - El cambio de entorno no requiere modificar el código de Streamlit.
 - Se utiliza un único proceso de Uvicorn.
 - Se utiliza inicialmente un único worker del asistente.
 - El historial SQL sobrevive a un redeploy.
-- La pérdida de estados en memoria tras un redeploy está documentada.
+- La pérdida de estados en memoria tras un redeploy se gestiona de forma controlada.
+- El aprovisionamiento administrativo es idempotente.
 - Los secretos se gestionan mediante variables de entorno.
 - Los entornos de desarrollo y producción están aislados.
-- El procedimiento de despliegue y rollback es reproducible.
+- Los despliegues pueden asociarse a una versión concreta del código fuente.
+- El rollback permite recuperar una versión estable sin eliminar los datos persistidos.
+- Los límites y mecanismos de protección se mantienen activos en producción.
 
-## 26. Fuera de alcance inicial
+## 24. Fuera de alcance inicial
 
 - Kubernetes.
 - Redis.
