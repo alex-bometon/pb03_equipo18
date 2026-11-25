@@ -1,5 +1,5 @@
-# PB02 — ReciclaTIA multiagente
-# Entorno recomendado: Python 3.11 o 3.12
+# PB03 — ReciclaTIA MLOps
+# Entorno: Python 3.13.2
 
 # RAG: datos, limpieza, chunking y evaluacion
 pandas>=2.2,<3
@@ -11,20 +11,34 @@ langchain-text-splitters>=1.1,<2
 google-genai>=2.0,<3
 python-dotenv>=1.0,<2
 
-# Base vectorial persistente (cliente nativo de ChromaDB)
+# Base vectorial persistente
 chromadb>=1.5,<2
 
-# Multiagente: LangGraph, contratos de tools e integracion LLM
+# Multiagente: LangGraph, herramientas e integracion LLM
 langgraph>=1.2,<2
 langchain-core>=1.4,<2
 langchain-google-genai>=4.3,<5
 
-# Herramienta de API externa / HTTP
+# Comunicaciones HTTP
 requests>=2.31,<3
+httpx>=0.28.1,<1
 
-# Interfaz web, imagenes y futura autenticacion (si se recupera)
+# API REST y validacion
+fastapi>=0.165,<1
+uvicorn>=0.54,<1
+pydantic>=2.10,<3
+python-multipart>=0.0.34,<1
+
+# Persistencia relacional
+sqlmodel>=0.0.49,<0.1
+sqlalchemy>=2.0.44,<2.1
+psycopg2-binary>=2.9.13,<3
+
+# Interfaz web y procesamiento de imagenes
 streamlit>=1.60,<2
 Pillow>=11,<13
+
+# Seguridad y autenticacion
 bcrypt>=4.2,<6
 
 # Tests
