@@ -273,6 +273,9 @@ Respuesta compartida por POST /ask, POST /ask/image y POST /approve.
 | limitaciones | list[str] | Estado del agente |
 | turnos_consumidos | int | Contador de consultas del hilo |
 | error | str o None | Error sanitizado |
+| approval_id | str o None | Identificador UUID de la aprobación pendiente |
+
+approval_id únicamente tendrá valor cuando exista una aprobación HITL pendiente. En cualquier otro caso será None.
 
 FuenteOut y GeografiaOut deberán ajustarse a las estructuras reales devueltas por las herramientas existentes.
 
@@ -300,7 +303,8 @@ No se serializará directamente la totalidad del estado interno de LangGraph.
   "estado_evidencia": "suficiente",
   "limitaciones": [],
   "turnos_consumidos": 1,
-  "error": null
+  "error": null,
+  "approval_id": "550e8400-e29b-41d4-a716-446655440002"
 }
 ```
 
@@ -311,15 +315,19 @@ Ejemplo ilustrativo del contrato, no resultado de una ejecución real.
 | Campo | Tipo | Obligatorio |
 |---|---|---|
 | thread_id | str | Sí |
+| approval_id | str | Sí |
 | aprobado | bool | Sí |
 
-El backend recuperará el estado asociado a la conversación.
+thread_id y approval_id deberán ser UUID válidos.
+
+El backend comprobará que approval_id corresponde a la aprobación actualmente pendiente en la conversación.
 
 No se aceptarán planes, checkpoints ni estados completos proporcionados por el cliente.
 
 ```json
 {
   "thread_id": "550e8400-e29b-41d4-a716-446655440000",
+  "approval_id": "550e8400-e29b-41d4-a716-446655440002",
   "aprobado": true
 }
 ```
@@ -400,7 +408,7 @@ Si PostgreSQL no está disponible, el servicio no debe declarar falsamente que e
 ### ApiKeyOut
 
 - id: str
-- role: Literal["free", "user", "admin"]
+- role: ApiKeyRole
 - user_id: str o None
 - is_active: bool
 - created_at: datetime
@@ -517,12 +525,17 @@ Si el agente genera un plan que requiere aprobación y auto_aprobar=False, devol
 - pendiente_hitl=True
 - plan_aprobado=None
 - done=False
+- approval_id: UUID de la aprobación pendiente.
 
 Streamlit habilitará los botones Aprobar y Rechazar únicamente cuando exista una aprobación pendiente.
 
 POST /approve comprobará el checkpoint real de LangGraph.
 
 Si no existe aprobación pendiente, devolverá 409 NO_PENDING_APPROVAL.
+
+Si existe una aprobación pendiente, pero approval_id no coincide con su identificador, devolverá 409 STALE_APPROVAL.
+
+Los mecanismos de protección frente a aprobaciones duplicadas y obsoletas se definen en [15-robustez-observabilidad.md](15-robustez-observabilidad.md).
 
 ### Aprobación
 
@@ -620,6 +633,7 @@ Los errores de validación de FastAPI se adaptarán al contrato común.
 | 409 | TURN_LIMIT_REACHED | Límite de turnos agotado |
 | 409 | THREAD_BUSY | Otra petición está modificando el hilo |
 | 409 | THREAD_STATE_LOST | El estado necesario para continuar no está disponible |
+| 409 | STALE_APPROVAL | El identificador de aprobación no corresponde al HITL actualmente pendiente |
 
 ### 13.4. Validación
 
@@ -683,38 +697,42 @@ Las respuestas 429 incluirán Retry-After cuando sea posible determinar el tiemp
 | 204 | Cierre de sesión correcto |
 | 204 | Eliminación correcta de un recurso |
 
-Estas respuestas serán deterministas, no generarán un plan ni requerirán aprobación HITL y no continuarán con la ejecución del asistente.
+Las consultas identificadas como fuera de dominio antes de ejecutar el asistente, las aclaraciones deterministas previas, las imágenes identificadas como fuera de dominio y las solicitudes de una nueva imagen por identificación incierta no generarán un plan ni requerirán aprobación HITL.
+
+Estas operaciones devolverán una respuesta determinista sin continuar con la ejecución del asistente.
 
 Una abstención semántica no debe confundirse con un fallo técnico.
 
-## 15. Observabilidad
+## 15. Trazabilidad de las respuestas HTTP
 
-Cada petición protegida generará un registro con:
+Cada petición HTTP dispondrá de un request_id único generado por el backend.
 
-- request_id.
-- Método HTTP.
-- Ruta.
-- thread_id, cuando corresponda.
-- duration_ms.
-- Código de estado HTTP.
+El identificador se devolverá mediante la cabecera X-Request-ID y formará parte del contrato ErrorOut cuando se produzca un error.
 
-No se registrarán API keys originales, tokens de sesión, contraseñas, cadenas de conexión ni contenido binario de imágenes.
+Las respuestas HTTP 429 incluirán la cabecera Retry-After cuando pueda determinarse el tiempo de reintento.
+
+La estructura de los registros, las métricas operativas y las restricciones de logging se definen en [15-robustez-observabilidad.md](15-robustez-observabilidad.md).
 
 ## 16. Criterios de aceptación
 
 - Swagger muestra los contratos y endpoints implementados.
-- Los endpoints protegidos rechazan peticiones sin API key.
-- Las API keys Free se generan automáticamente.
-- Las API keys User se generan a petición del usuario autenticado.
+- Los endpoints protegidos rechazan peticiones que no proporcionen las credenciales exigidas por su contrato de autenticación.
+- Las API keys Free pueden generarse para consumidores anónimos y usuarios registrados.
+- Las API keys User se generan únicamente para usuarios registrados y autorizados.
 - Las conversaciones se aíslan por API key.
 - Una clave desactivada no permite realizar nuevas consultas.
-- Su propietario puede consultar el historial mediante una sesión válida.
+- El propietario de una clave desactivada puede consultar su historial mediante una sesión válida.
 - Un administrador puede consultar cualquier conversación.
 - Las cuotas se aplican de manera independiente por clave.
 - El HITL no puede resolverse sin una interrupción pendiente real.
+- Una aprobación obsoleta no puede resolver un nuevo HITL pendiente.
 - Las imágenes se reciben mediante HTTP sin aceptar rutas locales del cliente.
 - Los errores HTTP respetan el contrato definido.
 - Las abstenciones válidas no se presentan como errores técnicos.
+- Las consultas rechazadas por el filtro de dominio previo no ejecutan el asistente.
+- Las imágenes rechazadas durante la validación semántica no continúan con el flujo.
 - El historial de turnos resueltos sobrevive a un redeploy.
-- Dos conversaciones concurrentes no mezclan sus estados.
-- Los logs no contienen secretos.
+- Las conversaciones mantienen sus estados aislados.
+- Las peticiones concurrentes respetan los límites de ejecución y los bloqueos definidos en la especificación de robustez.
+- Las respuestas HTTP incluyen el identificador de petición.
+- Los errores no exponen información sensible.

@@ -507,7 +507,7 @@ Un consumidor puede intentar obtener nuevas claves mediante sesiones distintas.
 
 Durante esta fase del desarrollo se aplicarán mecanismos razonables de mitigación, sin pretender garantizar una identificación anónima permanente.
 
-Los límites concretos de emisión se definirán en la especificación de robustez y observabilidad.
+Los límites temporales de emisión y sustitución de API keys, así como los mecanismos de control de consumo, se definen en [15-robustez-observabilidad.md](15-robustez-observabilidad.md).
 
 ## 12. Autenticación mediante API key
 
@@ -723,9 +723,11 @@ Su propietario puede consultar el historial mediante una sesión válida.
 
 ### 17.6. API keys eliminadas
 
-Se propone reservar el acceso ordinario al historial de claves eliminadas lógicamente al administrador.
+El acceso ordinario al historial de las claves eliminadas lógicamente queda reservado al administrador.
 
-La política deberá respetar los procedimientos de acceso y supresión de datos personales que se definan antes de la futura explotación comercial.
+La política deberá respetar los procedimientos de acceso y supresión de datos personales aplicables.
+
+Las reglas de conservación de registros e integridad referencial se definen en [13-persistencia.md](13-persistencia.md).
 
 ## 18. Gestión de credenciales y estados
 
@@ -799,27 +801,11 @@ La documentación OpenAPI deberá representar las modalidades de autenticación 
 
 ## 20. Errores de seguridad
 
-| HTTP | Código | Situación |
-|---|---|---|
-| 401 | API_KEY_REQUIRED | No se proporciona una credencial obligatoria |
-| 401 | INVALID_API_KEY | API key incorrecta |
-| 401 | INVALID_CREDENTIALS | Email o contraseña incorrectos |
-| 401 | INVALID_SESSION | Sesión inválida |
-| 401 | SESSION_EXPIRED | Sesión caducada |
-| 403 | API_KEY_INACTIVE | Clave desactivada |
-| 403 | USER_INACTIVE | Usuario desactivado |
-| 403 | INSUFFICIENT_PERMISSIONS | Permisos insuficientes |
-| 403 | USER_TIER_NOT_AUTHORIZED | Acceso al nivel User no autorizado |
-| 404 | API_KEY_NOT_FOUND | Clave inexistente o no accesible |
-| 404 | THREAD_NOT_FOUND | Conversación inexistente o no accesible |
-| 409 | API_KEY_LIMIT_REACHED | Número máximo de claves activas alcanzado |
-| 409 | EMAIL_ALREADY_EXISTS | Email previamente registrado |
-| 422 | INVALID_EMAIL | Email inválido |
-| 422 | INVALID_PASSWORD | Contraseña inválida |
-| 422 | AMBIGUOUS_CREDENTIALS | Modalidades de autenticación incompatibles |
-| 429 | RATE_LIMIT_EXCEEDED | Límite de peticiones o intentos alcanzado |
+Los errores derivados de la autenticación, la autorización, la validación de credenciales y los límites de emisión respetarán el catálogo de errores y los códigos HTTP definidos en [12-contratos-http.md](12-contratos-http.md).
 
-Todas las respuestas respetarán el contrato ErrorOut definido en la especificación HTTP.
+Todas las respuestas de error utilizarán el contrato ErrorOut.
+
+Los errores no expondrán información sensible ni permitirán identificar recursos para los que el consumidor no dispone de autorización.
 
 ## 21. Variables de entorno
 
@@ -844,17 +830,21 @@ No se expondrán mediante respuestas HTTP ni logs:
 
 - Contraseñas originales.
 - Hashes de contraseñas.
-- API keys originales, excepto durante su emisión.
+- API keys originales, excepto en la respuesta correspondiente a su emisión.
 - Hashes de API keys.
-- Tokens de sesión.
+- Tokens de sesión, excepto en la respuesta correspondiente al inicio de sesión.
 - Hashes de tokens de sesión.
 - Cadenas de conexión.
 - Credenciales de Gemini.
 - Secretos administrativos.
 
+Las excepciones relativas a la devolución de API keys y tokens de sesión se aplican exclusivamente a las respuestas HTTP autorizadas, nunca a los logs.
+
 Las comunicaciones en producción utilizarán HTTPS.
 
 Streamlit no almacenará credenciales en archivos de texto ni parámetros de URL.
+
+Las restricciones específicas de logging se definen en [15-robustez-observabilidad.md](15-robustez-observabilidad.md).
 
 ## 23. Criterios de aceptación
 
@@ -883,3 +873,10 @@ Streamlit no almacenará credenciales en archivos de texto ni parámetros de URL
 - Las peticiones directas a la API respetan las mismas restricciones que Streamlit.
 - Los secretos no aparecen en los logs.
 - La pérdida de una sesión tras un redeploy no elimina las cuentas, claves ni conversaciones.
+- Las modalidades de autenticación incompatibles se rechazan.
+- Una sesión ordinaria no permite utilizar una API key Admin.
+- La modificación de contraseña invalida todas las sesiones existentes del usuario.
+- Las claves eliminadas lógicamente no pueden reactivarse mediante operaciones administrativas ordinarias.
+- El aprovisionamiento administrativo es idempotente.
+- Las API keys originales únicamente se devuelven durante su emisión.
+- Los tokens de sesión originales únicamente se devuelven durante el inicio de sesión.

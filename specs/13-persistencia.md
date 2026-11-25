@@ -117,17 +117,12 @@ Almacena las cuentas registradas en ReciclaTÍA.
 - El email se normalizará antes de almacenarse.
 - No podrán existir dos cuentas con el mismo email normalizado.
 - La contraseña original nunca se almacenará.
-- El hash de la contraseña se generará mediante bcrypt y se almacenará en user.password_hash.
-- bcrypt utilizará un salt aleatorio y un factor de coste configurable.
-- La contraseña tendrá una longitud mínima de 12 caracteres y máxima de 72 bytes en UTF-8.
-- No se permiten espacios ni otros caracteres de espacio en blanco.
-- Se permiten caracteres especiales.
-- Las contraseñas no se truncarán ni normalizarán.
+- El hash de la contraseña se almacenará en user.password_hash.
 - El usuario se crea inicialmente como activo.
 - Un usuario desactivado no puede autenticarse ni utilizar sus API keys.
 - Un usuario eliminado lógicamente permanece almacenado para conservar la integridad referencial.
 
-La validación de credenciales y los requisitos de contraseña se definirán en la especificación de autenticación.
+La validación de contraseñas, los requisitos de seguridad y los mecanismos de hashing se definen en [14-autenticacion-autorizacion.md](14-autenticacion-autorizacion.md).
 
 ## 7. Tabla api_key
 
@@ -170,25 +165,21 @@ La capa de seguridad será responsable de controlar la emisión de credenciales 
 
 ### 7.2. Generación
 
-La API key Free se genera automáticamente para identificar al consumidor anónimo.
+La generación y emisión de API keys se realizará conforme a las reglas de autenticación, autorización y aprovisionamiento establecidas en [14-autenticacion-autorizacion.md](14-autenticacion-autorizacion.md).
 
-La API key User se genera cuando un usuario autenticado solicita una nueva clave.
-
-Las API keys administrativas se generan mediante un procedimiento controlado que impida la elevación de privilegios.
+La capa de persistencia garantizará el cumplimiento de las restricciones de integridad, unicidad y asociación de las credenciales.
 
 ### 7.3. Almacenamiento de secretos
 
-Las API keys se generan mediante el módulo secrets de Python utilizando al menos 32 bytes aleatorios.
+El hash de la API key se almacenará en api_key.key_hash como una cadena hexadecimal de 64 caracteres.
 
-El hash de la API key se calcula mediante SHA-256 y se almacena en api_key.key_hash.
+El hash será determinista y único, permitiendo localizar una API key mediante una consulta indexada en PostgreSQL.
 
-El hash determinista permite localizar una API key mediante una consulta indexada en PostgreSQL.
-
-La clave original se devuelve exclusivamente durante su generación.
-
-La clave original no podrá recuperarse posteriormente desde PostgreSQL.
+La clave original no se almacenará ni podrá recuperarse posteriormente desde PostgreSQL.
 
 Ni la clave original ni su hash se devolverán mediante los endpoints de consulta de API keys.
+
+Los mecanismos de generación y hashing se definen en [14-autenticacion-autorizacion.md](14-autenticacion-autorizacion.md).
 
 ### 7.4. Estados
 
@@ -390,11 +381,19 @@ La restricción de unicidad no convierte automáticamente todos los endpoints en
 
 ### 12.4. Fallo de persistencia
 
-Si LangGraph resuelve correctamente un turno pero PostgreSQL no puede almacenarlo, FastAPI devolverá un error técnico.
+Si LangGraph resuelve correctamente un turno pero PostgreSQL no puede almacenarlo, FastAPI devolverá un error técnico conforme al contrato HTTP.
+
+Se ejecutará rollback de la transacción cuando corresponda.
 
 No se devolverá una respuesta satisfactoria que declare como persistido un turno que no lo está.
 
-El backend deberá controlar la inconsistencia temporal entre el checkpoint y la base de datos.
+Si el fallo de persistencia provoca una inconsistencia entre el checkpoint y la base de datos, la conversación quedará marcada internamente como no reutilizable.
+
+No se permitirá continuar una conversación desde un checkpoint cuya consistencia no pueda garantizarse.
+
+Los intentos posteriores de continuar una conversación afectada devolverán HTTP 409 THREAD_STATE_LOST.
+
+El historial previamente persistido permanecerá disponible.
 
 No existe una transacción atómica compartida entre MemorySaver y PostgreSQL.
 
@@ -498,6 +497,7 @@ La capa de servicios y seguridad determina si una operación está autorizada.
 ### 15.1. Desactivación de una API key
 
 - api_key.is_active=False.
+- api_key.deleted_at=NULL.
 - Se conservan la clave y sus conversaciones.
 - Se impide su utilización como credencial activa.
 - Su propietario puede consultar el historial mediante una sesión válida.
@@ -507,20 +507,20 @@ La capa de servicios y seguridad determina si una operación está autorizada.
 
 Se aplicará eliminación lógica.
 
-- is_active=False.
+- api_key.is_active=False.
 - api_key.deleted_at recibe la fecha de eliminación.
 - Se conservan las referencias y los mensajes.
 - La clave deja de estar disponible para su utilización ordinaria.
 - No podrá reactivarse mediante las operaciones administrativas normales.
-
-Se propone reservar el acceso al historial de claves eliminadas al administrador.
+- El acceso ordinario al historial de claves eliminadas queda reservado al administrador.
 
 ### 15.3. Desactivación de un usuario
 
 - user.is_active=False.
+- user.deleted_at=NULL.
 - Se impide la autenticación del usuario.
 - Se impide el uso de todas las API keys vinculadas al usuario.
-- Las sesiones existentes dejan de autorizar operaciones.
+- Se invalidan las sesiones existentes.
 - Se conserva la información almacenada.
 
 No es necesario modificar permanentemente el estado individual de cada API key.
@@ -606,3 +606,8 @@ La información almacenada deberá limitarse a la necesaria para el funcionamien
 - Las API keys desactivadas conservan su historial.
 - La capa RAG puede seguir utilizándose sin conexión a PostgreSQL.
 - Las pruebas de regresión del PB02 continúan superándose, salvo aquellas cuyo comportamiento se modifique expresamente y requieran actualizar su contrato.
+- Un fallo de persistencia no genera una respuesta HTTP satisfactoria.
+- No se permite continuar una conversación desde un checkpoint inconsistente.
+- Un fallo de persistencia no elimina el historial previamente almacenado.
+- Los registros eliminados lógicamente no pueden reactivarse mediante operaciones administrativas ordinarias.
+- La desactivación de un usuario no requiere modificar individualmente el estado de sus API keys.

@@ -51,13 +51,17 @@ El historial SQL debe sobrevivir a los reinicios y redespliegues del backend. Lo
 
 ## 5. Concurrencia
 
-El backend debe admitir peticiones concurrentes de diferentes usuarios y conversaciones.
+El backend debe admitir peticiones HTTP concurrentes de diferentes usuarios y conversaciones.
 
 Las operaciones que modifican una misma conversación deben ejecutarse de manera controlada, evitando modificaciones simultáneas del checkpoint.
 
 El identificador thread_id representa una conversación de LangGraph y no un hilo de ejecución de Python.
 
-La primera versión utilizará un único proceso de Uvicorn con concurrencia controlada.
+La primera versión utilizará un único proceso de Uvicorn y un único worker de ThreadPoolExecutor para la ejecución del asistente.
+
+La concurrencia de peticiones HTTP será independiente de la capacidad de ejecución simultánea del asistente.
+
+Los mecanismos de admisión, bloqueo, concurrencia y timeout se definen en [15-robustez-observabilidad.md](15-robustez-observabilidad.md).
 
 ## 6. Infraestructura
 
@@ -66,24 +70,11 @@ La primera versión utilizará un único proceso de Uvicorn con concurrencia con
 - Streamlit: cliente local configurado mediante API_BASE_URL.
 - Gemini y API municipal: servicios externos.
 
-## 7. Línea base de funcionamiento
+## 7. Compatibilidad y regresión
 
-Fecha de validación: 24/11/2026.
+La incorporación de la capa MLOps deberá preservar las funcionalidades existentes del asistente, del sistema RAG y de las herramientas, salvo aquellas modificaciones expresamente definidas en las especificaciones.
 
-Commit de referencia: 3997e0a.
-
-Comprobaciones realizadas antes de incorporar la capa MLOps:
-
-| Comprobación | Resultado |
-|---|---|
-| Entorno Python | Validado |
-| Índice ChromaDB | Validado |
-| Pruebas automatizadas | 358 superadas |
-| Pruebas fallidas | 0 |
-| Tiempo de ejecución | 1,27 segundos |
-| Compilación sintáctica de app.py | Correcta |
-
-Las pruebas existentes constituyen la referencia inicial para detectar regresiones durante el desarrollo del PB03.
+Las pruebas de regresión existentes constituirán la referencia para verificar dicha compatibilidad.
 
 ## 8. Fuera de alcance inicial
 

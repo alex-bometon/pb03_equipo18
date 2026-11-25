@@ -116,8 +116,8 @@ Las cuotas se aplicarán individualmente a cada API key.
 
 | Endpoint | Consume cuota comercial |
 |---|---|
-| POST /ask | Sí |
-| POST /ask/image | Sí |
+| POST /ask | Según las condiciones de contabilización |
+| POST /ask/image | Según las condiciones de contabilización |
 | POST /approve | No |
 | GET /threads | No |
 | GET /threads/{thread_id} | No |
@@ -149,7 +149,7 @@ En las consultas multimodales, la cuota comercial se contabilizará antes de rea
 | Abstención por falta de evidencia | Sí |
 | Consulta identificada como fuera de dominio antes de ejecutar el asistente | No |
 | Consulta ambigua resuelta mediante una aclaración determinista previa | No |
-| Solicitud de aclaración | Sí |
+| Solicitud de aclaración generada durante la ejecución del asistente | Sí |
 | Consulta que genera HITL | Sí |
 | Consulta cuyo procesamiento termina en timeout | Sí |
 | Fallo técnico después de iniciar la ejecución | Sí |
@@ -176,7 +176,7 @@ Las consultas ambiguas podrán recibir una solicitud de aclaración sin ejecutar
 
 Estas operaciones continuarán sujetas al rate limiting HTTP.
 
-Se revisarán los filtros existentes de la fase de desarrollo anterior y se realizarán pruebas de falsos positivos, falsos negativos y continuidad conversacional antes de considerar finalizada la implementación.
+El filtro de dominio deberá validarse mediante pruebas que contemplen falsos positivos, falsos negativos y consultas dependientes del contexto conversacional.
 
 No se devolverá automáticamente la cuota consumida por una ejecución que haya terminado en timeout o error técnico, ya que puede haber utilizado recursos y servicios externos.
 
@@ -288,13 +288,11 @@ Estos valores serán configurables y podrán ajustarse después de realizar prue
 
 ### 9.2. Límites de claves activas
 
-| Tipo de clave | Máximo |
-|---|---:|
-| Free registrada | 1 por usuario |
-| User | 5 por usuario |
-| Admin | Emisión interna restringida |
+Los límites de claves activas por usuario se definen en [14-autenticacion-autorizacion.md](14-autenticacion-autorizacion.md).
 
-La emisión y sustitución de claves estarán limitadas independientemente del número de claves activas.
+Los límites temporales de emisión y sustitución de claves se aplicarán independientemente del número de claves activas.
+
+Ambos controles deberán superarse antes de autorizar la emisión de una nueva API key.
 
 ### 9.3. Identificación del origen
 
@@ -318,13 +316,15 @@ No se emitirá una nueva clave para cada petición o rerun.
 
 La recreación de sesiones anónimas puede permitir obtener nuevas credenciales dentro de los límites de emisión.
 
-Esta limitación se documentará expresamente.
-
 ## 10. Control de concurrencia
 
 ### 10.1. Objetivo
 
-Permitir que diferentes consumidores utilicen el asistente simultáneamente sin provocar inconsistencias en el estado de LangGraph.
+Permitir que el backend atienda peticiones HTTP concurrentes de diferentes consumidores sin provocar inconsistencias en el estado de LangGraph.
+
+La concurrencia HTTP será independiente de la capacidad de ejecución simultánea del asistente.
+
+Las operaciones del asistente estarán sujetas a los mecanismos de exclusión mutua y a los límites globales de ejecución.
 
 ### 10.2. Conceptos
 
@@ -346,7 +346,9 @@ Las siguientes operaciones no podrán modificar simultáneamente la misma conver
 - POST /ask/image
 - POST /approve
 
-Las conversaciones diferentes podrán ejecutarse concurrentemente dentro de los límites globales del servidor.
+Las conversaciones diferentes estarán sujetas al límite global de ejecuciones simultáneas del asistente.
+
+Con la configuración inicial de un único worker, solamente podrá ejecutarse una operación del asistente simultáneamente, aunque el backend pueda atender otras peticiones HTTP.
 
 ### 10.4. Conversación ocupada
 
@@ -405,11 +407,17 @@ El worker de ThreadPoolExecutor es independiente del proceso de Uvicorn.
 
 ### 11.3. Control de admisión
 
-Se utilizará un mecanismo adicional de admisión, como un semáforo, para limitar las ejecuciones simultáneas.
+Se utilizará un mecanismo de admisión mediante un semáforo cuya capacidad corresponderá al número de workers disponibles.
+
+La capacidad deberá comprobarse antes de enviar una tarea a ThreadPoolExecutor y antes de consumir cuota comercial.
 
 ThreadPoolExecutor por sí solo no garantiza una cola de tareas acotada.
 
-En la primera versión no se mantendrá una cola ilimitada de consultas pendientes.
+Durante esta fase del desarrollo no se mantendrá una cola de espera para las consultas del asistente.
+
+Cuando no exista capacidad disponible, la petición será rechazada inmediatamente conforme al contrato HTTP.
+
+La capacidad ocupada no se liberará mientras la ejecución correspondiente continúe activa.
 
 ### 11.4. Capacidad agotada
 
@@ -530,19 +538,21 @@ Las cuotas HTTP y comerciales no sustituyen los límites internos del agente.
 
 ### 13.2. Calibración y validación
 
-Los nuevos límites deberán validarse antes de finalizar el PB03 mediante:
+Los límites internos deberán preservar las funcionalidades y los criterios de calidad del asistente, evitando ejecuciones y consumos innecesarios.
 
-- Pruebas de regresión del PB02.
+Su validación deberá contemplar:
+
+- Pruebas de regresión.
 - Consultas simples y compuestas.
 - Consultas multimodales.
 - Consultas geográficas y temporales.
 - Reformulaciones y continuidad conversacional.
 - Casos límite de ejecución.
-- Medición del consumo de tokens y llamadas a servicios externos.
+- Consumo de tokens y llamadas a servicios externos.
 
-Se seleccionarán los límites más restrictivos que permitan conservar las funcionalidades y los criterios de calidad del asistente.
+Se utilizarán los límites más restrictivos que permitan satisfacer los requisitos funcionales y de calidad.
 
-Los valores establecidos son el resultado del análisis estático de la arquitectura existente y deberán confirmarse experimentalmente.
+Los valores iniciales deberán confirmarse experimentalmente antes de considerarse definitivos.
 
 ## 14. Robustez del HITL
 
@@ -554,14 +564,17 @@ No se confiará en el valor pendiente_hitl que conserve Streamlit.
 
 ### 14.2. Operaciones incompatibles
 
-| Situación | HTTP | Código |
+| HTTP | Código | Situación |
 |---|---|---|
-| Aprobar sin HITL pendiente | 409 | NO_PENDING_APPROVAL |
-| Preguntar con HITL pendiente | 409 | PENDING_APPROVAL |
-| Preguntar en conversación finalizada | 409 | THREAD_CLOSED |
-| Superar el límite de turnos | 409 | TURN_LIMIT_REACHED |
-| Modificar conversación ocupada | 409 | THREAD_BUSY |
-| Continuar sin checkpoint válido | 409 | THREAD_STATE_LOST |
+| 409 | NO_PENDING_APPROVAL | Aprobar sin HITL pendiente |
+| 409 | PENDING_APPROVAL | Preguntar con HITL pendiente |
+| 409 | THREAD_CLOSED | Preguntar en conversación finalizada |
+| 409 | TURN_LIMIT_REACHED | Superar el límite de turnos |
+| 409 | THREAD_BUSY | Modificar conversación ocupada |
+| 409 | THREAD_STATE_LOST | Continuar sin checkpoint válido |
+| 409 | STALE_APPROVAL | Resolver una aprobación diferente de la actualmente pendiente |
+
+Los códigos de error y sus correspondientes contratos HTTP se definen en [12-contratos-http.md](12-contratos-http.md).
 
 ### 14.3. Aprobaciones duplicadas
 
@@ -577,20 +590,21 @@ UNIQUE (thread_id, turn_number, role)
 
 ### 14.4. Aprobaciones obsoletas
 
-Se propone incorporar un identificador de aprobación denominado approval_id.
+Cada aprobación HITL pendiente dispondrá de un identificador único denominado approval_id.
 
-El identificador deberá estar asociado al plan pendiente concreto.
+El identificador estará asociado exclusivamente al plan pendiente concreto.
 
-El cliente deberá devolver dicho identificador al aprobar o rechazar.
+El cliente deberá proporcionar dicho identificador al aprobar o rechazar un plan.
 
-Esto evitará que una aprobación enviada desde una interfaz desactualizada resuelva accidentalmente un plan posterior.
+El backend comprobará que existe una aprobación pendiente y que su identificador coincide con el recibido.
 
-Una aprobación que no corresponda al plan pendiente devolverá:
+Si no existe una aprobación pendiente, se devolverá HTTP 409 NO_PENDING_APPROVAL.
 
-- HTTP 409
-- STALE_APPROVAL
+Si existe una aprobación pendiente, pero su identificador no coincide con el recibido, se devolverá HTTP 409 STALE_APPROVAL.
 
-Esta ampliación deberá incorporarse al contrato HTTP antes de implementar el endpoint.
+Una aprobación obsoleta no podrá modificar el estado del agente ni generar registros en PostgreSQL.
+
+Los contratos AskOut y ApproveIn se definen en [12-contratos-http.md](12-contratos-http.md).
 
 ## 15. Procesamiento seguro de imágenes
 
@@ -798,13 +812,13 @@ La pregunta y la respuesta se almacenarán dentro de una misma transacción SQL.
 
 ### 17.2. Fallo de PostgreSQL
 
-Si el asistente resuelve correctamente un turno, pero PostgreSQL no puede almacenarlo:
+Si PostgreSQL no puede persistir un turno resuelto, el backend deberá impedir que se devuelva una respuesta HTTP satisfactoria.
 
-- Se ejecutará rollback cuando corresponda.
-- No se devolverá HTTP 200.
-- Se registrará la incidencia.
-- Se impedirá continuar desde un checkpoint inconsistente.
-- El historial anteriormente almacenado permanecerá disponible.
+No se permitirá continuar una conversación desde un checkpoint cuya consistencia no pueda garantizarse.
+
+El fallo deberá registrarse mediante los mecanismos de observabilidad establecidos.
+
+Las reglas de consistencia, rollback y recuperación del historial se definen en [13-persistencia.md](13-persistencia.md).
 
 ### 17.3. Resultado tardío
 
@@ -823,8 +837,6 @@ Después de reiniciar el backend:
 - Las API keys permanecen almacenadas en PostgreSQL.
 - El índice vectorial deberá estar disponible o reconstruirse.
 
-Estas limitaciones deberán documentarse en el informe técnico.
-
 ## 18. Observabilidad
 
 ### 18.1. Objetivo
@@ -835,17 +847,19 @@ Permitir identificar el comportamiento del backend, diagnosticar errores, medir 
 
 Cada petición HTTP recibirá un request_id único generado por el backend.
 
-Se utilizará UUID.
+Se utilizará un UUID como identificador.
 
-El identificador se incluirá en los logs y en las respuestas de error.
+El request_id se incluirá en los registros de acceso y en los eventos técnicos asociados a la petición.
 
-Se propone devolverlo también mediante la cabecera X-Request-ID.
+El identificador se devolverá mediante la cabecera X-Request-ID y formará parte del contrato ErrorOut cuando se produzca un error.
 
 request_id identifica una petición HTTP.
 
 thread_id identifica una conversación.
 
 Una conversación puede estar asociada a múltiples request_id.
+
+El contrato público de trazabilidad se define en [12-contratos-http.md](12-contratos-http.md).
 
 ### 18.3. Registro por petición
 
@@ -963,7 +977,11 @@ La información registrada deberá permitir obtener las siguientes métricas:
 | Número de respuestas SERVER_BUSY | Evaluar capacidad |
 | Ejecuciones simultáneas | Evaluar concurrencia |
 
-Las métricas podrán obtenerse inicialmente a partir de los logs.
+Las métricas podrán obtenerse inicialmente a partir de los registros de acceso y los eventos técnicos.
+
+La concurrencia efectiva del asistente deberá poder determinarse mediante eventos de inicio y finalización real de las ejecuciones.
+
+La devolución de una respuesta HTTP por timeout no se considerará necesariamente la finalización de la ejecución del asistente.
 
 Prometheus, Grafana y sistemas externos de monitorización quedan fuera del alcance inicial.
 
@@ -1102,13 +1120,29 @@ Las pruebas deberán cubrir, como mínimo:
 - Control de peticiones concurrentes.
 - Cálculo correcto de Retry-After.
 
+### Filtrado previo de dominio
+
+- Admisión de consultas pertenecientes al dominio.
+- Rechazo determinista de consultas inequívocamente fuera del dominio.
+- Solicitud de aclaración ante consultas ambiguas.
+- Detección de falsos positivos y falsos negativos.
+- Interpretación de consultas dependientes del contexto conversacional.
+- Ausencia de llamadas a LangGraph, Gemini, RAG y herramientas cuando la consulta se rechace durante el filtrado previo.
+- Ausencia de consumo comercial en consultas rechazadas antes de ejecutar el asistente.
+- Aplicación del rate limiting HTTP independientemente del resultado del filtro.
+
 ### Concurrencia
 
-- Ejecución simultánea de conversaciones distintas.
+- Atención concurrente de peticiones HTTP.
+- Ejecución de una única operación del asistente simultáneamente con la configuración inicial.
 - Rechazo de modificaciones simultáneas del mismo thread_id.
+- Rechazo de nuevas ejecuciones cuando no exista capacidad disponible.
 - Aprobaciones concurrentes.
-- Capacidad máxima del executor.
+- Rechazo de aprobaciones obsoletas.
+- Ausencia de consumo comercial ante rechazos por falta de capacidad.
+- Ausencia de acumulación de consultas en una cola de espera.
 - Liberación de recursos después de una excepción.
+- Conservación de la capacidad ocupada mientras una ejecución siga activa después de un timeout.
 
 ### Timeout
 
@@ -1192,3 +1226,11 @@ Las pruebas de timeout utilizarán ejecuciones controladas que permitan comproba
 - La política CORS es configurable.
 - Las limitaciones del almacenamiento en memoria quedan documentadas.
 - Las pruebas de robustez pueden ejecutarse sin consumir innecesariamente recursos de Gemini.
+- El backend puede atender peticiones HTTP concurrentes sin superar la capacidad de ejecución del asistente.
+- No se acumulan consultas del asistente en una cola de espera.
+- Las aprobaciones obsoletas no modifican el estado del agente.
+- Las consultas textuales se someten a un filtro de dominio previo.
+- Las consultas identificadas como fuera del dominio antes de ejecutar el asistente no consumen cuota comercial.
+- Las aclaraciones deterministas previas a la ejecución no consumen cuota comercial.
+- Las respuestas HTTP incluyen la cabecera X-Request-ID.
+- La finalización de una petición HTTP por timeout no libera prematuramente la capacidad de ejecución.
