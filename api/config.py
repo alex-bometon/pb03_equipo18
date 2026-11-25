@@ -39,6 +39,14 @@ class ApiSettings(BaseModel):
     GEMINI_API_KEY: SecretStr | None = None
     API_KEY: SecretStr | None = None
 
+    # Conexiones PostgreSQL
+    DB_POOL_SIZE: PositiveInt = 3
+    DB_MAX_OVERFLOW: int = Field(default=0, ge=0)
+    DB_POOL_TIMEOUT_SECONDS: PositiveInt = 5
+    DB_CONNECT_TIMEOUT_SECONDS: PositiveInt = 5
+    DB_STATEMENT_TIMEOUT_SECONDS: PositiveInt = 5
+    DB_LOCK_TIMEOUT_SECONDS: PositiveInt = 3
+
     # Autenticación y autorización
     SESSION_TTL_SECONDS: PositiveInt = 28_800
     BCRYPT_ROUNDS: int = Field(default=12, ge=4, le=31)

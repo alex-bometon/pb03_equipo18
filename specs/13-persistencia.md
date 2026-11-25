@@ -86,6 +86,18 @@ No se crearán tablas adicionales para checkpoints, sesiones, cuotas, aprobacion
 - Eliminación lógica de usuarios y API keys.
 - Ausencia de eliminación física en cascada.
 
+Los modelos se definirán mediante SQLModel, utilizando preferentemente Field().
+
+Los tipos y características específicas de PostgreSQL se establecerán mediante sa_type, sa_column_kwargs o Column cuando resulte necesario.
+
+Las relaciones se definirán mediante claves foráneas explícitas, sin utilizar Relationship().
+
+Las fechas de creación se generarán desde Python mediante datetime.now(timezone.utc) y se almacenarán mediante columnas TIMESTAMPTZ.
+
+Los identificadores autoincrementales de message utilizarán BigInteger e Identity().
+
+Las restricciones CHECK, UNIQUE y los índices adicionales tendrán nombres explícitos y descriptivos. Las claves primarias y foráneas podrán conservar los nombres generados automáticamente.
+
 ### 4.2. Tabla user
 
 | Campo | Tipo PostgreSQL | Nullable | Restricción o default |
@@ -358,29 +370,80 @@ Las reglas de sincronización, plazos e invalidación se establecen en [15-robus
 
 Los mensajes se recuperarán mediante ORDER BY id ASC.
 
-created_at representará el momento de almacenamiento.
+created_at representará el momento de creación de la entidad desde Python, expresado en UTC.
 
 Las operaciones de historial serán exclusivamente de lectura y no ejecutarán LangGraph ni reconstruirán checkpoints.
+
+Las operaciones de persistencia se implementarán mediante funciones independientes en src/db.py, sin introducir clases Repository.
+
+Las consultas devolverán objetos SQLModel. Las búsquedas individuales sin resultados devolverán None y las consultas múltiples devolverán listas.
+
+La transformación de los modelos relacionales a los contratos públicos corresponderá a la capa de servicios o HTTP.
+
+Las funciones de consulta que admitan bloqueos de registros incorporarán el parámetro opcional for_update=False.
+
+Cuando se solicite el bloqueo, se utilizará SELECT FOR UPDATE y se actualizará el estado de los objetos previamente cargados en la sesión.
 
 Los modelos públicos se establecen en [12-contratos-http.md](12-contratos-http.md).
 
 ## 9. Gestión de conexiones
 
-DATABASE_URL se obtendrá del entorno.
+DATABASE_URL se obtendrá de la configuración del entorno.
 
-Se utilizará un engine compartido durante la vida del backend, con límites de conexión adecuados.
+Se utilizará un engine compartido, inicializado y liberado mediante el lifespan de FastAPI.
+
+### 9.1. Pool y límites de conexión
+
+| Parámetro | Valor inicial |
+|---|---:|
+| DB_POOL_SIZE | 3 |
+| DB_MAX_OVERFLOW | 0 |
+| DB_POOL_TIMEOUT_SECONDS | 5 |
+| DB_CONNECT_TIMEOUT_SECONDS | 5 |
+| DB_STATEMENT_TIMEOUT_SECONDS | 5 |
+| DB_LOCK_TIMEOUT_SECONDS | 3 |
+
+Se habilitará pool_pre_ping para comprobar las conexiones antes de reutilizarlas.
+
+Las conexiones utilizarán UTC como zona horaria.
+
+Se deshabilitará el logging automático de sentencias SQL y se ocultarán sus parámetros.
+
+Los valores iniciales podrán calibrarse mediante pruebas.
+
+### 9.2. Sesiones y transacciones
 
 Cada unidad de trabajo dispondrá de su propia Session.
 
-Las sesiones no se compartirán entre hilos de ejecución y deberán cerrarse correctamente.
+Las sesiones no se compartirán entre hilos de ejecución.
+
+La capa de servicios controlará la creación y finalización de las transacciones.
+
+Las funciones de persistencia no ejecutarán commits ni rollbacks independientes.
+
+Se utilizará flush() cuando sea necesario para obtener identificadores generados por PostgreSQL, garantizar el orden de inserción de entidades dependientes o detectar anticipadamente restricciones de integridad.
+
+La utilización de flush() no confirmará la transacción.
+
+Cuando se creen entidades relacionadas mediante claves foráneas dentro de una misma transacción, deberá garantizarse que la entidad referenciada se inserte antes que sus dependientes.
 
 No se mantendrán transacciones abiertas durante llamadas prolongadas a Gemini o LangGraph cuando no resulte necesario.
 
+### 9.3. Inicialización y disponibilidad
+
 La creación de tablas utilizará SQLModel.metadata.create_all(engine), después de importar los modelos.
 
-Las reglas de configuración, inicialización y despliegue se establecen en [16-despliegue.md](16-despliegue.md).
+El arranque del backend será estricto respecto a PostgreSQL.
+
+La ausencia de DATABASE_URL, la imposibilidad de establecer una conexión o un fallo durante la inicialización de las tablas impedirán completar el arranque.
+
+Los fallos posteriores al arranque se gestionarán mediante respuestas técnicas controladas, sin permitir operaciones que requieran una persistencia o autorización no disponible.
+
+La recuperación de conexiones no implicará repetir automáticamente transacciones cuyo resultado sea incierto.
 
 El núcleo RAG y la CLI permanecerán independientes de PostgreSQL.
+
+Las reglas de despliegue se establecen en [16-despliegue.md](16-despliegue.md).
 
 ## 10. Desactivación y eliminación lógica
 

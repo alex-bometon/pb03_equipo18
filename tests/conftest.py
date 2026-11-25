@@ -6,6 +6,16 @@ import pytest
 
 from src import rag
 
+import os
+from pathlib import Path
+
+from dotenv import dotenv_values
+from sqlalchemy import text
+from sqlalchemy.engine import make_url
+from sqlmodel import Session
+
+from src.db import create_db_engine, ensure_schema
+
 
 @pytest.fixture
 def chunks():
@@ -134,3 +144,131 @@ def consultas_estructuradas(
     monkeypatch.setattr(rag, "consultar_catalogo_residuos", catalogo)
     monkeypatch.setattr(rag, "consultar_paradas_moviles", moviles)
     return catalogo, moviles
+
+
+# =========================================================
+# POSTGRESQL — PRUEBAS DE INTEGRACIÓN
+# =========================================================
+
+@pytest.fixture(scope="session")
+def test_engine():
+    """Inicializa exclusivamente PostgreSQL de pruebas."""
+
+    env_path = Path(__file__).resolve().parents[1] / ".env.test"
+
+    database_url = (
+        os.environ.get("TEST_DATABASE_URL")
+        or dotenv_values(env_path).get("TEST_DATABASE_URL")
+    )
+
+    if not database_url:
+        pytest.skip("TEST_DATABASE_URL no configurada.")
+
+    url = make_url(database_url)
+
+    if (
+        url.drivername not in {
+            "postgresql",
+            "postgresql+psycopg2",
+        }
+        or url.database != "reciclatia_test"
+        or url.username != "reciclatia_test"
+        or url.host not in {"localhost", "127.0.0.1"}
+        or url.port != 5432
+        or url.query
+    ):
+        raise RuntimeError(
+            "Conexión PostgreSQL de pruebas no autorizada."
+        )
+
+    engine = create_db_engine(
+        database_url,
+        pool_size=3,
+        max_overflow=0,
+        pool_timeout=5,
+        connect_timeout=5,
+        statement_timeout=5,
+        lock_timeout=3,
+    )
+
+    try:
+        with engine.connect() as connection:
+            result = connection.execute(text("""
+                SELECT
+                    current_database(),
+                    current_user,
+                    session_user,
+                    rolsuper,
+                    has_database_privilege(
+                        current_user,
+                        'reciclatia',
+                        'CONNECT'
+                    )
+                FROM pg_roles
+                WHERE rolname = current_user
+            """)).one()
+
+            if tuple(result) != (
+                "reciclatia_test",
+                "reciclatia_test",
+                "reciclatia_test",
+                False,
+                False,
+            ):
+                raise RuntimeError(
+                    "El entorno de pruebas no está aislado."
+                )
+
+        ensure_schema(engine)
+
+        yield engine
+
+    finally:
+        engine.dispose()
+
+
+def clean_test_database(engine):
+    """Elimina exclusivamente los registros de pruebas."""
+
+    with engine.begin() as connection:
+        database, user = connection.execute(text("""
+            SELECT current_database(), current_user
+        """)).one()
+
+        if (
+            database != "reciclatia_test"
+            or user != "reciclatia_test"
+        ):
+            raise RuntimeError(
+                "Limpieza de base de datos no autorizada."
+            )
+
+        connection.execute(text("""
+            TRUNCATE TABLE
+                public.message,
+                public.conversation,
+                public.api_key,
+                public."user"
+            RESTART IDENTITY
+        """))
+
+
+@pytest.fixture
+def clean_db(test_engine):
+    """Limpia los datos antes y después de cada prueba."""
+
+    clean_test_database(test_engine)
+
+    yield test_engine
+
+    clean_test_database(test_engine)
+
+
+@pytest.fixture
+def db_session(clean_db):
+    """Proporciona una sesión SQL independiente por prueba."""
+
+    with Session(clean_db) as session:
+        yield session
+
+        session.rollback()

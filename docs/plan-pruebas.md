@@ -301,6 +301,51 @@ Los invariantes de estado se comprobarán conforme a las especificaciones 06 y 1
 
 ### 5.4. Persistencia
 
+#### Pruebas automatizadas de persistencia
+
+Se utilizará PostgreSQL real mediante una base de datos y un usuario exclusivos de pruebas.
+
+La configuración se obtendrá mediante TEST_DATABASE_URL o el archivo privado .env.test.
+
+Las fixtures de tests/conftest.py comprobarán la identidad de la base de datos, el usuario, el host y los permisos antes de inicializar o limpiar las tablas.
+
+La limpieza se realizará mediante TRUNCATE RESTART IDENTITY sobre las cuatro tablas del entorno de pruebas.
+
+No se utilizará CASCADE ni se ejecutará esta limpieza sobre desarrollo o producción.
+
+Las pruebas que compartan esta base de datos se ejecutarán secuencialmente.
+
+| Archivo | Responsabilidad |
+|---|---|
+| tests/test_db.py | Operaciones de persistencia y consulta |
+| tests/test_db_integrity.py | Restricciones, eliminación lógica y rollback |
+| tests/test_db_concurrency.py | Bloqueos y concurrencia |
+| tests/conftest.py | Inicialización, aislamiento y limpieza |
+
+Las pruebas de integración se identificarán mediante el marcador integration, registrado en pytest.ini.
+
+Ejecutar exclusivamente las pruebas de integración:
+
+```bash
+python -m pytest tests/ -m integration -v --tb=short
+```
+
+Ejecutar exclusivamente las pruebas unitarias:
+
+```bash
+python -m pytest tests/ -m "not integration" -q
+```
+
+Ejecutar la validación completa:
+
+```bash
+python -m pytest tests/ -q --tb=short
+```
+
+La ausencia de configuración de PostgreSQL de pruebas permitirá omitir las pruebas de integración durante el desarrollo ordinario.
+
+Para considerar validada la persistencia será obligatorio ejecutar las pruebas de integración sin omisiones.
+
 Utilizar PostgreSQL real en un entorno de pruebas.
 
 Inspeccionar las tablas:

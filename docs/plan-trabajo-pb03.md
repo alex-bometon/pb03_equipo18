@@ -75,24 +75,46 @@ La actualización de README.md se realizará en la fase 12.
 
 **Referencia:** especificaciones 11 y 16.
 
+
 ### Fase 02 — Persistencia relacional
 
 **Rama:** feature/postgresql-persistence.
 
 **Dependencia:** fase 01.
 
-- [ ] Seleccionar la versión de PostgreSQL y preparar el entorno local.
-- [ ] Implementar los enumerados y cuatro modelos relacionales.
-- [ ] Configurar engine, sesiones e inicialización de tablas.
-- [ ] Implementar las operaciones de persistencia y consulta.
-- [ ] Implementar transacciones de turnos y eliminación lógica.
-- [ ] Verificar restricciones, concurrencia relacional y rollback mediante PostgreSQL aislado.
+- [x] Seleccionar la versión de PostgreSQL y preparar el entorno local.
+- [x] Implementar los enumerados y cuatro modelos relacionales.
+- [x] Configurar engine, sesiones e inicialización de tablas.
+- [x] Implementar las operaciones de persistencia y consulta.
+- [x] Implementar transacciones de turnos y eliminación lógica.
+- [x] Verificar restricciones, concurrencia relacional y rollback mediante PostgreSQL aislado.
 
-**Archivos:** src/enums.py, src/models.py, src/db.py.
+**Archivos:**
+
+- src/enums.py
+- src/models.py
+- src/db.py
+- api/config.py
+- api/main.py
+- .env.example
+- pytest.ini
+- tests/conftest.py
+- tests/test_api_main.py
+- tests/test_db.py
+- tests/test_db_integrity.py
+- tests/test_db_concurrency.py
+
+**Decisiones:** D13–D28.
+
+**Infraestructura:** PostgreSQL 18.7 mediante Docker.
+
+**Validación:** 424 pruebas superadas, incluidas 25 pruebas de integración con PostgreSQL real.
+
+**Evidencias:** [Validación de la fase 02](../entregables/evidencias/fase-02-persistencia.md).
 
 **Finalización:** almacenamiento relacional validado.
 
-**Referencia:** especificación 13.
+**Referencia:** especificaciones 13, 14 y 16.
 
 ### Fase 03 — Contratos HTTP y errores
 
@@ -336,7 +358,7 @@ Los procedimientos de Git e integración se establecen en [flujo-desarrollo.md](
 
 ## 5. Decisiones técnicas
 
-Las decisiones D01–D12 se encuentran resueltas en las especificaciones.
+Las decisiones D01–D28 se encuentran resueltas en las especificaciones.
 
 | ID | Decisión | Referencia |
 |---|---|---|
@@ -352,12 +374,28 @@ Las decisiones D01–D12 se encuentran resueltas en las especificaciones.
 | D10 | GeografiaOut | 12 |
 | D11 | Gestión de API keys | 12, 14 |
 | D12 | Respuestas HTTP perdidas | 07 |
+| D13 | Definición de modelos mediante Field de SQLModel, utilizando Column cuando sea imprescindible | 13 |
+| D14 | Claves foráneas explícitas sin Relationship | 13 |
+| D15 | Generación de fechas desde Python en UTC | 13 |
+| D16 | Identificadores BIGINT mediante Identity | 13 |
+| D17 | Nombres descriptivos de restricciones e índices | 13 |
+| D18 | Engine gestionado mediante lifespan | 13, 16 |
+| D19 | Sesiones y transacciones controladas por la capa de servicios | 13 |
+| D20 | Pool limitado y timeouts SQL configurables | 13, 16 |
+| D21 | Arranque estricto respecto a PostgreSQL y recuperación controlada durante la ejecución | 16 |
+| D22 | Funciones independientes de persistencia sin clases Repository | 13 |
+| D23 | Retorno de objetos SQLModel desde persistencia | 13 |
+| D24 | Utilización de flush cuando sea necesario | 13 |
+| D25 | Bloqueo de registros mediante el parámetro opcional for_update | 13 |
+| D26 | Base de datos y usuario independientes para pruebas | Plan de pruebas |
+| D27 | Limpieza mediante TRUNCATE con comprobaciones de aislamiento | Plan de pruebas |
+| D28 | Separación de pruebas relacionales y marcador integration | Plan de pruebas |
 
 Su contenido no se reproducirá en este plan.
 
 Quedan pendientes de concreción durante la implementación:
 
-- Versiones definitivas de dependencias y PostgreSQL.
+- Versiones definitivas de las dependencias de Python utilizadas en la entrega.
 - Procedimiento interno de aprovisionamiento administrativo.
 - Organización final del cliente HTTP.
 - Calibración de presupuestos y timeouts.

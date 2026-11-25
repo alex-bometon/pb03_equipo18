@@ -87,9 +87,18 @@ No se regenerarán los embeddings durante cada instalación o despliegue.
 
 ### 2.1. Configuración
 
-Seleccionar una versión de PostgreSQL compatible con la infraestructura prevista en Render.
-
-No se utilizará latest como etiqueta definitiva.
+| Parámetro | Valor |
+|---|---|
+| PostgreSQL | 18.7 |
+| Imagen Docker | postgres:18.7 |
+| Contenedor | reciclatia-postgres |
+| Red | reciclatia-network |
+| Volumen | reciclatia-postgres-data |
+| Directorio de montaje | /var/lib/postgresql |
+| Host local | 127.0.0.1 |
+| Puerto | 5432 |
+| Base de datos | reciclatia |
+| Usuario de desarrollo | reciclatia |
 
 Preparar .env.postgres:
 
@@ -99,9 +108,24 @@ POSTGRES_USER=reciclatia
 POSTGRES_PASSWORD=CONTRASENA_LOCAL
 ```
 
-Sustituir CONTRASENA_LOCAL por una contraseña adecuada.
+Generar una contraseña segura y sustituir el valor de ejemplo.
 
-Definir POSTGRES_IMAGE con la imagen seleccionada y POSTGRES_DATA_DIR con la ruta de montaje correspondiente a dicha versión.
+Definir los parámetros de infraestructura en la terminal:
+
+```bash
+POSTGRES_IMAGE=postgres:18.7
+POSTGRES_DATA_DIR=/var/lib/postgresql
+```
+
+En Apple Silicon se descargará la imagen correspondiente a ARM64:
+
+```bash
+docker pull --platform linux/arm64 postgres:18.7
+```
+
+No se utilizará latest como etiqueta definitiva.
+
+Los archivos que contengan credenciales reales deberán permanecer excluidos de Git.
 
 ### 2.2. Creación
 
@@ -180,6 +204,77 @@ SELECT COUNT(*) FROM message;
 ```
 
 No se realizarán modificaciones destructivas para comprobar el estado de la base de datos.
+
+### 2.5. Base de datos de pruebas
+
+Las pruebas relacionales utilizarán una base de datos independiente dentro del mismo contenedor PostgreSQL.
+
+| Parámetro | Valor |
+|---|---|
+| Base de datos | reciclatia_test |
+| Usuario | reciclatia_test |
+| Archivo de configuración | .env.test |
+| Variable de conexión | TEST_DATABASE_URL |
+
+Acceder a PostgreSQL como administrador:
+
+```bash
+docker exec -it reciclatia-postgres \
+  psql -U reciclatia -d postgres
+```
+
+Crear el rol si no existe:
+
+```sql
+CREATE ROLE reciclatia_test LOGIN
+    NOSUPERUSER NOCREATEDB NOCREATEROLE;
+```
+
+Establecer su contraseña mediante el metacomando:
+
+```text
+\password reciclatia_test
+```
+
+Ejecutar este metacomando por separado y completar la introducción de la contraseña antes de continuar.
+
+Crear la base de datos si no existe:
+
+```sql
+CREATE DATABASE reciclatia_test
+    OWNER reciclatia_test;
+```
+
+Restringir los permisos de conexión:
+
+```sql
+REVOKE CONNECT ON DATABASE reciclatia_test FROM PUBLIC;
+REVOKE CONNECT ON DATABASE reciclatia FROM PUBLIC;
+```
+
+Verificar el aislamiento:
+
+```sql
+SELECT has_database_privilege(
+    'reciclatia_test',
+    'reciclatia',
+    'CONNECT'
+);
+```
+
+El resultado deberá ser false.
+
+Configurar .env.test:
+
+```dotenv
+TEST_DATABASE_URL=postgresql://reciclatia_test:CONTRASENA@127.0.0.1:5432/reciclatia_test
+```
+
+La contraseña será independiente de las credenciales de desarrollo.
+
+No se reutilizará DATABASE_URL para ejecutar pruebas de integración.
+
+La limpieza de datos y ejecución de las pruebas se realizará conforme a [plan-pruebas.md](plan-pruebas.md).
 
 ## 3. Ejecución local
 
