@@ -2,19 +2,24 @@
 
 import pytest
 from pydantic import ValidationError
+from datetime import datetime, timedelta, timezone
 
 from api.schemas import (
     ApiSchema,
     ApproveIn,
     AskIn,
     AskOut,
+    ConversationOut,
     FuenteOut,
     GeografiaOut,
+    HealthOut,
+    MessageOut,
     PuntoLimpioOut,
     UbicacionIn,
 )
 
 from config import MAX_PREGUNTA_CARACTERES
+from src.enums import MessageRole
 from src.input_validation import (
     PreguntaDemasiadoLargaError,
     PreguntaVaciaError,
@@ -973,3 +978,325 @@ def test_ask_out_rechaza_campos_internos(
 
     with pytest.raises(ValidationError):
         AskOut(**ask_out_pendiente)
+
+
+# =========================================================
+# MESSAGE OUT
+# =========================================================
+
+@pytest.fixture
+def mensaje_valido() -> dict[str, object]:
+    """Proporciona los datos válidos de un mensaje."""
+
+    return {
+        "role": "user",
+        "content": "¿Dónde debo reciclar una pila?",
+        "created_at": datetime(
+            2026, 11, 25, 15, 30, tzinfo=timezone.utc
+        ),
+    }
+
+
+@pytest.mark.parametrize("role", list(MessageRole))
+def test_message_out_acepta_roles_validos(
+    mensaje_valido: dict[str, object],
+    role: MessageRole,
+) -> None:
+    mensaje_valido["role"] = role.value
+
+    mensaje = MessageOut(**mensaje_valido)
+
+    assert mensaje.role == role
+    assert isinstance(mensaje.role, MessageRole)
+
+
+@pytest.mark.parametrize(
+    "role",
+    ["system", "admin", "tool", "", None, True],
+)
+def test_message_out_rechaza_roles_invalidos(
+    mensaje_valido: dict[str, object],
+    role: object,
+) -> None:
+    mensaje_valido["role"] = role
+
+    with pytest.raises(ValidationError):
+        MessageOut(**mensaje_valido)
+
+
+@pytest.mark.parametrize(
+    "content",
+    ["", "   ", "\t\n", None, True, 123],
+)
+def test_message_out_rechaza_contenido_invalido(
+    mensaje_valido: dict[str, object],
+    content: object,
+) -> None:
+    mensaje_valido["content"] = content
+
+    with pytest.raises(ValidationError):
+        MessageOut(**mensaje_valido)
+
+
+def test_message_out_conserva_contenido(
+    mensaje_valido: dict[str, object],
+) -> None:
+    contenido = "  Primera línea.\nSegunda línea.  "
+    mensaje_valido["content"] = contenido
+
+    mensaje = MessageOut(**mensaje_valido)
+
+    assert mensaje.content == contenido
+
+
+def test_message_out_normaliza_fecha_utc(
+    mensaje_valido: dict[str, object],
+) -> None:
+    mensaje_valido["created_at"] = datetime(
+        2026,
+        11,
+        25,
+        16,
+        30,
+        tzinfo=timezone(timedelta(hours=1)),
+    )
+
+    mensaje = MessageOut(**mensaje_valido)
+
+    assert mensaje.created_at.hour == 15
+    assert mensaje.created_at.utcoffset() == timedelta(0)
+
+
+def test_message_out_rechaza_fecha_sin_zona(
+    mensaje_valido: dict[str, object],
+) -> None:
+    mensaje_valido["created_at"] = datetime(2026, 11, 25)
+
+    with pytest.raises(ValidationError):
+        MessageOut(**mensaje_valido)
+
+
+@pytest.mark.parametrize(
+    "campo",
+    ["id", "thread_id", "turn_number"],
+)
+def test_message_out_rechaza_campos_internos(
+    mensaje_valido: dict[str, object],
+    campo: str,
+) -> None:
+    mensaje_valido[campo] = "dato interno"
+
+    with pytest.raises(ValidationError):
+        MessageOut(**mensaje_valido)
+
+
+@pytest.mark.parametrize(
+    "campo",
+    list(MessageOut.model_fields),
+)
+def test_message_out_requiere_todos_los_campos(
+    mensaje_valido: dict[str, object],
+    campo: str,
+) -> None:
+    del mensaje_valido[campo]
+
+    with pytest.raises(ValidationError):
+        MessageOut(**mensaje_valido)
+
+
+def test_message_out_serializacion_publica(
+    mensaje_valido: dict[str, object],
+) -> None:
+    mensaje = MessageOut(**mensaje_valido)
+    resultado = mensaje.model_dump(mode="json")
+
+    assert resultado == {
+        "role": "user",
+        "content": "¿Dónde debo reciclar una pila?",
+        "created_at": "2026-11-25T15:30:00Z",
+    }
+
+
+# =========================================================
+# CONVERSATION OUT
+# =========================================================
+
+@pytest.fixture
+def conversacion_valida() -> dict[str, object]:
+    """Proporciona los datos válidos de una conversación."""
+
+    return {
+        "thread_id": THREAD_ID,
+        "api_key_id": "550e8400-e29b-41d4-a716-446655440002",
+        "created_at": datetime(
+            2026, 11, 25, 15, 30, tzinfo=timezone.utc
+        ),
+    }
+
+
+def test_conversation_out_valida(
+    conversacion_valida: dict[str, object],
+) -> None:
+    conversacion = ConversationOut(**conversacion_valida)
+
+    assert conversacion.thread_id == THREAD_ID
+    assert conversacion.api_key_id == conversacion_valida["api_key_id"]
+
+
+@pytest.mark.parametrize("campo", ["thread_id", "api_key_id"])
+def test_conversation_out_normaliza_uuid(
+    conversacion_valida: dict[str, object],
+    campo: str,
+) -> None:
+    identificador = str(conversacion_valida[campo])
+    conversacion_valida[campo] = identificador.upper()
+
+    conversacion = ConversationOut(**conversacion_valida)
+
+    assert getattr(conversacion, campo) == identificador
+
+
+@pytest.mark.parametrize("campo", ["thread_id", "api_key_id"])
+@pytest.mark.parametrize(
+    "valor",
+    ["", "invalido", None, True, 123],
+)
+def test_conversation_out_rechaza_uuid_invalido(
+    conversacion_valida: dict[str, object],
+    campo: str,
+    valor: object,
+) -> None:
+    conversacion_valida[campo] = valor
+
+    with pytest.raises(ValidationError):
+        ConversationOut(**conversacion_valida)
+
+
+def test_conversation_out_rechaza_fecha_sin_zona(
+    conversacion_valida: dict[str, object],
+) -> None:
+    conversacion_valida["created_at"] = datetime(2026, 11, 25)
+
+    with pytest.raises(ValidationError):
+        ConversationOut(**conversacion_valida)
+
+
+@pytest.mark.parametrize(
+    "campo",
+    [
+        "id",
+        "checkpoint",
+        "approval_id",
+        "pendiente_hitl",
+        "plan",
+        "turnos_consumidos",
+        "api_key",
+        "key_hash",
+    ],
+)
+def test_conversation_out_rechaza_campos_internos(
+    conversacion_valida: dict[str, object],
+    campo: str,
+) -> None:
+    conversacion_valida[campo] = "dato interno"
+
+    with pytest.raises(ValidationError):
+        ConversationOut(**conversacion_valida)
+
+
+@pytest.mark.parametrize(
+    "campo",
+    list(ConversationOut.model_fields),
+)
+def test_conversation_out_requiere_todos_los_campos(
+    conversacion_valida: dict[str, object],
+    campo: str,
+) -> None:
+    del conversacion_valida[campo]
+
+    with pytest.raises(ValidationError):
+        ConversationOut(**conversacion_valida)
+
+
+def test_conversation_out_serializacion_publica(
+    conversacion_valida: dict[str, object],
+) -> None:
+    conversacion = ConversationOut(**conversacion_valida)
+
+    assert conversacion.model_dump(mode="json") == {
+        "thread_id": THREAD_ID,
+        "api_key_id": conversacion_valida["api_key_id"],
+        "created_at": "2026-11-25T15:30:00Z",
+    }
+
+
+# =========================================================
+# HEALTH OUT
+# =========================================================
+
+def test_health_out_valido() -> None:
+    resultado = HealthOut(
+        status="ok",
+        storage="postgres",
+    )
+
+    assert resultado.model_dump(mode="json") == {
+        "status": "ok",
+        "storage": "postgres",
+    }
+
+
+@pytest.mark.parametrize(
+    "status, storage",
+    [
+        ("error", "postgres"),
+        ("degraded", "postgres"),
+        ("ok", "sqlite"),
+        ("ok", "mysql"),
+        ("ok", ""),
+        ("ok", None),
+        ("OK", "postgres"),
+        (True, "postgres"),
+    ],
+)
+def test_health_out_rechaza_estados_invalidos(
+    status: object,
+    storage: object,
+) -> None:
+    with pytest.raises(ValidationError):
+        HealthOut(
+            status=status,
+            storage=storage,
+        )
+
+
+@pytest.mark.parametrize(
+    "datos",
+    [
+        {},
+        {"status": "ok"},
+        {"storage": "postgres"},
+    ],
+)
+def test_health_out_requiere_todos_los_campos(
+    datos: dict[str, str],
+) -> None:
+    with pytest.raises(ValidationError):
+        HealthOut(**datos)
+
+
+@pytest.mark.parametrize(
+    "campo",
+    ["database_url", "error", "version", "gemini_api_key"],
+)
+def test_health_out_rechaza_campos_adicionales(
+    campo: str,
+) -> None:
+    datos = {
+        "status": "ok",
+        "storage": "postgres",
+        campo: "dato interno",
+    }
+
+    with pytest.raises(ValidationError):
+        HealthOut(**datos)

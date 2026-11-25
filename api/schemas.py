@@ -34,7 +34,7 @@ from config import (
     GEO_MIN_RADIUS_METERS,
     MAX_PREGUNTA_CARACTERES,
 )
-from src.enums import ApiKeyRole
+from src.enums import ApiKeyRole, MessageRole
 from src.input_validation import validar_pregunta
 
 
@@ -609,3 +609,34 @@ class ApiKeyCreatedOut(ApiKeyOut):
     role: IssuableApiKeyRole
 
     api_key: CredentialOutText
+
+
+# =========================================================
+# CONTRATOS DE HISTORIAL
+# =========================================================
+
+class MessageOut(ApiSchema):
+    """Representación pública de un mensaje persistido."""
+
+    role: MessageRole
+    content: NonBlankText
+    created_at: UTCDateTime
+
+
+class ConversationOut(ApiSchema):
+    """Representación pública de una conversación persistida."""
+
+    thread_id: UUIDText
+    api_key_id: UUIDText
+    created_at: UTCDateTime
+
+
+# =========================================================
+# CONTRATO DE DISPONIBILIDAD
+# =========================================================
+
+class HealthOut(ApiSchema):
+    """Representación del estado operativo satisfactorio."""
+
+    status: Literal["ok"]
+    storage: Literal["postgres"]
