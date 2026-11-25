@@ -1,520 +1,178 @@
 # Plan de pruebas — ReciclaTÍA PB03
 
-## 1. Objetivo
+## 1. Objetivo y referencia
 
-Establecer los procedimientos de ejecución, evaluación y registro de las pruebas necesarias para validar ReciclaTÍA durante el desarrollo del Project Break 03.
+Este documento establece los procedimientos de validación de ReciclaTÍA durante el PB03.
 
-Este documento desarrolla operativamente la estrategia definida en specs/08-pruebas-y-validacion.md.
+La estrategia y los criterios de aceptación se definen en [08-pruebas-y-validacion.md](../specs/08-pruebas-y-validacion.md).
 
-El plan permitirá comprobar tanto la conservación de las funcionalidades existentes de la fase de desarrollo anterior como la incorporación de los requisitos correspondientes a MLOps y despliegue.
+La referencia inicial se encuentra en [baseline-pb02.md](../entregables/evidencias/baseline-pb02.md):
 
-Los resultados concretos de las pruebas se documentarán en entregables/evidencias/.
+- Commit: 3997e0a.
+- Fecha: 24/11/2026.
+- Python: 3.13.2.
+- Resultado: 358 pruebas superadas en 1,27 segundos.
 
-## 2. Referencia inicial
+Las funcionalidades nuevas deberán validarse sin introducir regresiones no autorizadas.
 
-La validación inicial del proyecto se encuentra documentada en:
+## 2. Preparación y ejecución
 
-entregables/evidencias/baseline-pb02.md
-
-Esta referencia permitirá distinguir entre:
-
-- Funcionalidades previamente disponibles.
-- Regresiones introducidas durante el desarrollo.
-- Modificaciones de comportamiento intencionadas.
-- Funcionalidades nuevas.
-- Comprobaciones todavía pendientes.
-
-El número de pruebas superadas en la línea base no constituye un objetivo cuantitativo obligatorio para las versiones posteriores.
-
-## 3. Organización de la validación
-
-| Nivel | Procedimiento | Momento de ejecución |
-|---|---|---|
-| Unitario | pytest y dependencias controladas | Durante la implementación |
-| Integración interna | pytest y componentes reales o controlados | Antes de integrar funcionalidades |
-| Contratos HTTP | Cliente de pruebas de FastAPI | Durante el desarrollo del backend |
-| Persistencia | PostgreSQL aislado | Durante la implementación relacional |
-| Regresión | Suite automatizada | Antes y después de integrar cambios |
-| Evaluación RAG | Scripts de evaluación existentes | Ante cambios documentales o de generación |
-| Seguridad | Entradas adversariales y pruebas de autorización | Antes de integrar y desplegar |
-| Robustez | Simulación de límites, concurrencia y errores | Durante la implementación del backend |
-| Interfaz | Pruebas automatizadas y manuales | Durante la adaptación de Streamlit |
-| Infraestructura | Docker y Render | Antes de la entrega |
-| Extremo a extremo | Recorridos completos del producto | Validación final |
-
-## 4. Flujo de validación
-
-```mermaid
-flowchart TD
-    A[Implementar funcionalidad] --> B[Pruebas especificas]
-    B --> C{Resultado satisfactorio}
-    C -->|No| D[Corregir]
-    D --> B
-    C -->|Si| E[Pruebas de regresion]
-    E --> F{Regresiones}
-    F -->|Si| D
-    F -->|No| G[Integracion en develop]
-    G --> H[Validacion conjunta]
-    H --> I[Construccion Docker]
-    I --> J[Validacion local completa]
-    J --> K[Integracion en main]
-    K --> L[Despliegue Render]
-    L --> M[Pruebas de extremo a extremo]
-    M --> N[Validacion de persistencia]
-    N --> O[Registro de evidencias]
-```
-
-La incorporación de funcionalidades deberá realizarse progresivamente.
-
-No será necesario ejecutar todas las evaluaciones contra servicios externos después de cada modificación menor.
-
-## 5. Preparación del entorno
-
-### 5.1. Identificación de la versión
+### 2.1. Entorno
 
 Desde la raíz del repositorio:
 
 ```bash
+source .venv/bin/activate
+
+python --version
+python -m pip check
+
 git branch --show-current
 git rev-parse HEAD
 git status --short
 ```
 
-Estos datos deberán conservarse cuando se registre una ejecución relevante.
-
-### 5.2. Comprobación de Python
-
-```bash
-python --version
-```
-
-Versión establecida para el proyecto:
-
-```text
-Python 3.13.2
-```
-
-### 5.3. Activación del entorno virtual
-
-En macOS y Linux:
-
-```bash
-source .venv/bin/activate
-```
-
-### 5.4. Instalación de dependencias
-
-```bash
-python -m pip install -r requirements.txt
-```
-
-### 5.5. Comprobación de compatibilidad
-
-```bash
-python -m pip check
-```
-
-### 5.6. Disponibilidad de recursos documentales
-
-```bash
-ls -lh output/chunks.json
-ls -lh output/embeddings.json
-ls -ld output/chroma_db/
-```
-
-### 5.7. Reconstrucción del índice
-
-Cuando sea necesario reconstruir el índice desde los artefactos existentes:
+Comprobar la disponibilidad de los artefactos documentales y reconstruir el índice cuando sea necesario:
 
 ```bash
 python main.py rag index --yes
 ```
 
-No se regenerarán los embeddings sistemáticamente antes de ejecutar las pruebas.
+Los procedimientos de instalación se establecen en [operaciones-despliegue.md](operaciones-despliegue.md).
 
-## 6. Aislamiento del entorno de pruebas
+### 2.2. Aislamiento
 
-### 6.1. Base de datos
+Las pruebas utilizarán:
 
-Las pruebas de integración relacional utilizarán una instancia o base de datos PostgreSQL independiente de producción.
+- PostgreSQL independiente de producción.
+- Credenciales ficticias o específicas de evaluación.
+- Mocks para Gemini y ArcGIS en pruebas ordinarias.
+- Checkpoints, sesiones, contadores y archivos temporales aislados.
+- Relojes controlados para pruebas temporales.
+- Eventos de sincronización para pruebas concurrentes.
 
-Se utilizará una configuración de conexión específica para las pruebas.
-
-No se ejecutarán procedimientos destructivos sobre bases de datos utilizadas por consumidores reales.
-
-### 6.2. Servicios externos
-
-Las pruebas unitarias utilizarán mocks o dependencias controladas para las operaciones que requieran:
-
-- Gemini.
-- API municipal.
-- Servicios externos de infraestructura.
-
-### 6.3. Credenciales
-
-Las pruebas deberán utilizar credenciales ficticias o credenciales específicas de evaluación según corresponda.
-
-No se incorporarán secretos reales a los archivos de pruebas.
-
-### 6.4. Estado operativo
-
-Deberá garantizarse el aislamiento de:
-
-- Instancias del grafo.
-- Checkpoints.
-- Sesiones de autenticación.
-- API keys de prueba.
-- Cuotas.
-- Rate limiting.
-- Bloqueos.
-- Workers.
-- Archivos temporales.
-
-Las pruebas deberán limpiar los recursos generados cuando termine su ejecución.
-
-## 7. Ejecución de pruebas automatizadas
-
-### 7.1. Suite completa
+### 2.3. Comandos principales
 
 ```bash
+# Suite completa
 python -m pytest tests/ -q --tb=short
-```
 
-### 7.2. Descubrimiento de pruebas
-
-```bash
+# Descubrimiento
 python -m pytest tests/ --collect-only -q
-```
 
-Este comando permitirá comprobar qué pruebas detecta pytest.
-
-Los scripts de evaluación externa no deberán ejecutarse accidentalmente como parte de la suite unitaria ordinaria.
-
-### 7.3. Ejecución detallada
-
-```bash
-python -m pytest tests/ -v
-```
-
-### 7.4. Detención ante el primer fallo
-
-```bash
+# Diagnóstico
 python -m pytest tests/ -x --tb=short
-```
 
-Este procedimiento podrá utilizarse durante el diagnóstico de fallos.
-
-### 7.5. Ejecución mediante nombre de prueba
-
-```bash
+# Selección de pruebas
 python -m pytest tests/ -k "nombre_de_prueba" -v
-```
 
-### 7.6. Comprobación sintáctica de Streamlit
-
-```bash
+# Comprobación sintáctica
 python -m py_compile app.py
 ```
 
-La comprobación sintáctica no sustituye la validación funcional de la interfaz.
+Los scripts que consuman servicios externos se ejecutarán separadamente.
 
-## 8. Pruebas de regresión del PB02
+## 3. Regresión del PB02
 
-### 8.1. Recuperación semántica
+Se conservarán los siguientes archivos:
 
-```bash
-python -m pytest tests/test_retrieve.py -v
-```
+| Componente | Archivos de tests/ |
+|---|---|
+| Recuperación | test_retrieve.py, test_retrieve_structured.py |
+| RAG | test_rag.py, test_rag_domain.py, test_rag_structured.py |
+| Generación | test_generate.py |
+| Herramientas | test_tools_registry.py, test_rag_tool.py, test_api_puntos_limpios.py, test_describir_imagen.py, test_hora_actual.py |
+| Agente | test_agent_regression.py, test_agent_resultado.py |
+| Horarios | test_agent_schedule.py, test_agent_schedule_integration.py |
+| CLI | test_cli.py |
 
-Comprobar:
+Se ejecutarán las pruebas específicas durante la implementación y la suite completa antes de integrar cambios.
 
-- Top-k.
-- Metadatos.
-- Filtros.
-- Compatibilidad vectorial.
-- Gestión de resultados.
+Las modificaciones de pruebas existentes deberán corresponder a cambios de contrato autorizados o correcciones verificadas.
 
-### 8.2. Recuperación estructurada
+Se conservará el HITL obligatorio del PB02.
 
-```bash
-python -m pytest \
-  tests/test_retrieve_structured.py \
-  tests/test_rag_structured.py -v
-```
-
-Comprobar catálogo, relaciones entre residuos y destinos, modalidades y horarios asociados a registros concretos.
-
-### 8.3. Generación y RAG
+La independencia de la CLI se comprobará mediante:
 
 ```bash
-python -m pytest \
-  tests/test_generate.py \
-  tests/test_rag.py \
-  tests/test_rag_domain.py -v
+python main.py --help
+python main.py rag --help
+python main.py rag query --help
+python main.py rag ask --help
+python main.py agente demo --help
 ```
 
-Comprobar contratos, citas, fuentes, abstenciones, restricciones geográficas y errores.
+Se ejecutarán consultas representativas sin depender de FastAPI ni PostgreSQL.
 
-### 8.4. Herramientas
+## 4. Evaluación documental
 
-```bash
-python -m pytest \
-  tests/test_tools_registry.py \
-  tests/test_rag_tool.py \
-  tests/test_api_puntos_limpios.py \
-  tests/test_describir_imagen.py \
-  tests/test_hora_actual.py -v
-```
-
-Comprobar permisos, argumentos, formatos, procedencia y mecanismos de respaldo.
-
-### 8.5. Sistema multiagente
-
-```bash
-python -m pytest \
-  tests/test_agent_regression.py \
-  tests/test_agent_resultado.py -v
-```
-
-Comprobar enrutamiento, especialistas, límites, síntesis, estado e HITL.
-
-Las pruebas deberán adaptarse a la posibilidad de resolver consultas sin HITL obligatorio.
-
-### 8.6. Interpretación temporal
-
-```bash
-python -m pytest \
-  tests/test_agent_schedule.py \
-  tests/test_agent_schedule_integration.py -v
-```
-
-Comprobar horarios, intervalos, priorización y la regla específica de envases de vidrio.
-
-### 8.7. Interfaz de terminal
-
-```bash
-python -m pytest tests/test_cli.py -v
-```
-
-Comprobar la conservación de los comandos y contratos de ejecución independiente.
-
-## 9. Evaluación de la recuperación documental
-
-### 9.1. Script existente
+### 4.1. Retrieval
 
 ```bash
 python tests/evaluate_retrieve.py
 ```
 
-Este script evalúa la recuperación utilizando 14 consultas etiquetadas.
+Se utilizarán las 14 consultas etiquetadas existentes, comparando K=3, 5, 8 y 10.
 
-Compara los siguientes valores de K:
-
-| Configuración | Valor |
-|---|---:|
-| K1 | 3 |
-| K2 | 5 |
-| K3 | 8 |
-| K4 | 10 |
-
-Se genera un embedding por consulta cuando no existe un vector compatible en caché.
-
-El embedding se reutiliza para comparar las diferentes configuraciones de K.
-
-El script no realiza generación de respuestas ni modifica ChromaDB.
-
-### 9.2. Caché
+Caché de embeddings:
 
 ```text
 output/cache/pb02_embeddings_consultas.json
 ```
 
-La compatibilidad de la caché depende de:
-
-- Modelo de embeddings.
-- Dimensiones vectoriales.
-- Formato de las consultas.
-
-Cuando la caché resulte incompatible podrán necesitarse nuevas llamadas al proveedor.
-
-### 9.3. Resultados
+Resultados:
 
 ```text
 output/evaluation/retrieval_pb02.json
 ```
 
-### 9.4. Interpretación
+Se comprobará la compatibilidad de la caché antes de regenerar embeddings.
 
-La evaluación deberá considerar:
+La evaluación analizará fuentes esperadas, posición de resultados y distancias vectoriales.
 
-- Presencia de fuentes esperadas.
-- Posición de los resultados relevantes.
-- Comportamiento al modificar K.
-- Distancias vectoriales.
-- Consultas fuera del dominio.
+Precision@k y Recall@k únicamente se calcularán cuando existan referencias de relevancia adecuadas.
 
-La coincidencia de una fuente esperada no implica necesariamente que todos los fragmentos recuperados sean relevantes.
-
-### 9.5. Métricas adicionales
-
-Precision@k y Recall@k podrán incorporarse cuando exista una referencia de relevancia suficientemente detallada.
-
-No se calcularán utilizando etiquetas documentales como si constituyeran automáticamente etiquetas de relevancia de todos los chunks.
-
-### 9.6. Conservación de evidencias
-
-Los resultados relevantes deberán asociarse al commit, configuración y modelo utilizados durante la evaluación.
-
-No se sobrescribirá una evidencia histórica sin conservar la información necesaria para realizar comparaciones posteriores.
-
-## 10. Evaluación de la generación
-
-### 10.1. Evaluación completa
+### 4.2. Generación
 
 ```bash
+# Evaluación completa
 python tests/evaluate_rag.py
-```
 
-El script utiliza las 14 consultas definidas por la evaluación de retrieval.
-
-### 10.2. Evaluación selectiva
-
-```bash
+# Evaluación selectiva
 python tests/evaluate_rag.py --ids 9 10 14
 ```
 
-Este procedimiento permite ejecutar casos específicos sin realizar toda la evaluación.
-
-### 10.3. Casos de especial interés
-
-| ID | Consulta | Comportamiento esperado |
-|---|---|---|
-| 9 | ¿Qué horario tiene el punto limpio móvil? | Solicitar aclaración sobre la parada o distrito |
-| 10 | ¿Qué tipos de residuos reconoce el Ayuntamiento de Madrid? | Resumen estructurado del catálogo |
-| 12 | ¿Cuál es el horario de las piscinas municipales de Madrid? | Abstención fuera de dominio |
-| 13 | ¿Dónde reciclo el vidrio en Barcelona? | No extrapolar la información de Madrid |
-| 14 | ¿Qué servicios de reparación de móviles hay cerca de Gran Vía? | Abstención fuera de dominio |
-
-### 10.4. Consultas estructuradas
-
-Los casos 9 y 10 utilizan mecanismos estructurados que no requieren embeddings de consulta ni generación mediante Gemini en la implementación existente.
-
-Podrán evaluarse independientemente:
-
-```bash
-python tests/evaluate_rag.py --ids 9 10
-```
-
-### 10.5. Resultados
+Resultados:
 
 ```text
 output/evaluation/rag_pb02.json
 ```
 
-### 10.6. Revisión factual
+Casos especialmente relevantes:
 
-Los resultados deberán revisarse considerando:
+| ID | Consulta | Resultado esperado |
+|---|---|---|
+| 9 | Horario del punto limpio móvil | Aclaración |
+| 10 | Tipos de residuos reconocidos | Catálogo estructurado |
+| 12 | Horario de piscinas municipales | Abstención |
+| 13 | Reciclaje de vidrio en Barcelona | Abstención geográfica |
+| 14 | Reparación de móviles cerca de Gran Vía | Abstención |
 
-- Corrección de la recomendación.
-- Correspondencia entre afirmaciones y fuentes.
-- Interpretación de restricciones.
-- Calidad de las aclaraciones.
-- Abstenciones esperadas.
-- Abstenciones indebidas.
-- Respuestas sin evidencia suficiente.
+Los casos 9 y 10 permiten evaluar respuestas estructuradas sin nuevas llamadas a Gemini en la implementación existente.
 
-La ausencia de alertas automáticas no constituirá una garantía de corrección factual.
+La revisión factual comprobará las afirmaciones, fuentes, condiciones documentadas y abstenciones conforme a la especificación 08.
 
-### 10.7. Consumo
+Los resultados se asociarán al commit y configuración evaluados.
 
-Las evaluaciones podrán realizar llamadas reales a Gemini.
+## 5. Validación de funcionalidades nuevas
 
-Antes de ejecutar una evaluación completa deberá comprobarse la necesidad de utilizar recursos externos.
+Los archivos de pruebas nuevos se crearán durante la implementación, agrupándolos por responsabilidad.
 
-## 11. Comprobaciones mediante CLI
+No se considerará obligatorio crear un archivo independiente para cada escenario.
 
-### 11.1. Ayuda general
+### 5.1. Contratos HTTP
 
-```bash
-python main.py --help
-```
-
-### 11.2. Ayuda del RAG
-
-```bash
-python main.py rag --help
-```
-
-### 11.3. Recuperación documental
-
-Consultar las opciones disponibles:
-
-```bash
-python main.py rag query --help
-```
-
-Ejecutar una búsqueda documental representativa.
-
-Comprobar los chunks, fuentes y metadatos obtenidos.
-
-### 11.4. Generación
-
-```bash
-python main.py rag ask --help
-```
-
-Ejecutar una consulta representativa conforme a los argumentos disponibles.
-
-### 11.5. Asistente
-
-```bash
-python main.py agente demo --help
-```
-
-Comprobar los recorridos de demostración correspondientes.
-
-### 11.6. Independencia
-
-La ejecución del RAG y de la CLI deberá comprobarse sin depender de PostgreSQL ni del servicio FastAPI.
-
-## 12. Preparación de las pruebas del PB03
-
-Los nombres de archivos correspondientes a las nuevas pruebas se concretarán durante la implementación.
-
-La siguiente organización constituye una propuesta inicial.
-
-| Archivo propuesto | Responsabilidad |
-|---|---|
-| test_api_health.py | Estado del servicio |
-| test_api_ask.py | Consultas textuales |
-| test_api_approve.py | HITL |
-| test_api_images.py | Consultas multimodales |
-| test_api_threads.py | Historial y conversaciones |
-| test_auth.py | Registro y autenticación |
-| test_sessions.py | Sesiones |
-| test_api_keys.py | Emisión y gestión de claves |
-| test_authorization.py | Roles y propiedad |
-| test_admin.py | Operaciones administrativas |
-| test_models.py | Modelos relacionales |
-| test_persistence.py | Persistencia y transacciones |
-| test_rate_limit.py | Rate limiting HTTP |
-| test_quotas.py | Cuotas comerciales |
-| test_domain_filter.py | Filtrado de dominio |
-| test_image_validation.py | Procesamiento multimedia |
-| test_concurrency.py | Bloqueos y capacidad |
-| test_timeout.py | Timeouts |
-| test_observability.py | Logging y trazabilidad |
-| test_api_errors.py | Contratos de error |
-| test_cors.py | Política CORS |
-| test_http_client.py | Cliente HTTP |
-
-Estos archivos no deberán considerarse existentes hasta que sean implementados.
-
-## 13. Validación HTTP inicial — Sprint 14
-
-### 13.1. Arranque del backend
-
-Una vez implementada la capa FastAPI:
+Arrancar el backend una vez implementado:
 
 ```bash
 python -m uvicorn api.main:app \
@@ -523,190 +181,66 @@ python -m uvicorn api.main:app \
   --workers 1
 ```
 
-### 13.2. Health check
-
-```bash
-curl -i http://localhost:8000/health
-```
-
-### 13.3. Swagger
+Comprobar:
 
 ```text
+http://localhost:8000/health
 http://localhost:8000/docs
-```
-
-### 13.4. OpenAPI
-
-```text
 http://localhost:8000/openapi.json
 ```
 
-### 13.5. Comprobaciones
+Las pruebas automatizadas utilizarán TestClient o HTTPX con dependencias controladas.
 
-- Los endpoints implementados aparecen en Swagger.
-- Los modelos Pydantic representan los contratos definidos.
-- Las operaciones protegidas permiten proporcionar las credenciales correspondientes.
-- Los errores utilizan ErrorOut.
-- Las respuestas incluyen X-Request-ID.
-
-### 13.6. Clientes automatizados
-
-Las pruebas automatizadas de endpoints podrán utilizar TestClient de FastAPI y HTTPX cuando corresponda.
-
-Deberán utilizar una inicialización controlada del backend y dependencias aisladas.
-
-No deberán requerir que el desarrollador mantenga manualmente un servidor Uvicorn activo para ejecutar pruebas unitarias.
-
-## 14. Casos de prueba de contratos HTTP
-
-| ID | Entrada o condición | HTTP esperado | Resultado |
-|---|---|---:|---|
-| HTTP-01 | GET /health operativo | 200 | HealthOut válido |
-| HTTP-02 | Petición protegida sin credencial | 401 | API_KEY_REQUIRED |
-| HTTP-03 | API key inválida | 401 | INVALID_API_KEY |
-| HTTP-04 | Pregunta vacía | 422 | EMPTY_QUESTION |
-| HTTP-05 | Pregunta de 501 caracteres | 422 | QUESTION_TOO_LONG |
-| HTTP-06 | UUID mal formado | 422 | INVALID_THREAD_ID |
-| HTTP-07 | Coordenadas incompletas | 422 | INVALID_LOCATION |
-| HTTP-08 | Coordenadas fuera de rango | 422 | INVALID_LOCATION |
-| HTTP-09 | max_steps=0 | 422 | INVALID_MAX_STEPS |
-| HTTP-10 | max_steps=5 | 422 | INVALID_MAX_STEPS |
-| HTTP-11 | Consulta válida | 200 | AskOut válido |
-| HTTP-12 | Respuesta directa | 200 | Sin HITL |
-| HTTP-13 | Abstención válida | 200 | Resultado semántico |
-| HTTP-14 | Aclaración válida | 200 | Resultado semántico |
-| HTTP-15 | Fallo interno simulado | 500 | ErrorOut válido |
-| HTTP-16 | Dependencia imprescindible no disponible | 503 | ErrorOut válido |
-| HTTP-17 | Timeout simulado del agente | 504 | AGENT_TIMEOUT |
-
-En los casos de validación de entradas deberán utilizarse credenciales válidas y condiciones de admisión compatibles para aislar el control evaluado.
-
-Deberán añadirse comprobaciones de los valores límite válidos, incluyendo preguntas de exactamente 500 caracteres y valores max_steps comprendidos entre 1 y 4.
-
-Los códigos definitivos serán los establecidos en specs/12-contratos-http.md.
-
-## 15. Validación de autenticación
-
-### 15.1. Registro
-
-| ID | Escenario | Resultado esperado |
+| Caso | Entrada o condición | Resultado esperado |
 |---|---|---|
-| AUTH-01 | Registro válido | HTTP 201 |
-| AUTH-02 | Email duplicado | HTTP 409 |
-| AUTH-03 | Email inválido | HTTP 422 |
-| AUTH-04 | Contraseña inválida | HTTP 422 |
-| AUTH-05 | Email con mayúsculas y espacios exteriores | Normalización conforme al contrato |
+| HTTP-01 | Health check operativo | 200 |
+| HTTP-02 | Credencial ausente | 401 |
+| HTTP-03 | API key inválida | 401 |
+| HTTP-04 | Pregunta vacía tras strip() | 400 EMPTY_QUESTION |
+| HTTP-05 | Pregunta de 501 caracteres | 422 |
+| HTTP-06 | thread_id inválido | 422 |
+| HTTP-07 | Coordenadas incompletas o inválidas | 422 |
+| HTTP-08 | max_steps fuera de rango | 422 |
+| HTTP-09 | Consulta admitida | AskOut válido |
+| HTTP-10 | Fallo interno | 500 |
+| HTTP-11 | Dependencia indisponible | 503 |
+| HTTP-12 | Timeout | 504 |
 
-### 15.2. Contraseñas
+Comprobar también preguntas de exactamente 500 caracteres, tipos estrictos, campos adicionales y límites válidos.
 
-Comprobar los límites de longitud, restricciones y tratamiento de caracteres definidos en specs/14-autenticacion-autorizacion.md.
+Todos los endpoints deberán contrastarse con [12-contratos-http.md](../specs/12-contratos-http.md), incluyendo códigos de error, modelos de respuesta y cabeceras.
 
-Verificar que PostgreSQL almacena únicamente la representación protegida de la contraseña.
+### 5.2. Autenticación y autorización
 
-### 15.3. Inicio de sesión
+Preparar:
 
-| ID | Escenario | Resultado esperado |
-|---|---|---|
-| AUTH-06 | Credenciales válidas | LoginOut válido |
-| AUTH-07 | Contraseña incorrecta | HTTP 401 |
-| AUTH-08 | Usuario inexistente | HTTP 401 |
-| AUTH-09 | Usuario desactivado con credenciales correctas | Rechazo autorizado |
-| AUTH-10 | Token inválido | HTTP 401 |
-| AUTH-11 | Token caducado | HTTP 401 |
-| AUTH-12 | Cierre de sesión | HTTP 204 |
-| AUTH-13 | Reutilización de sesión cerrada | Rechazo |
-| AUTH-14 | Cambio de contraseña | Invalidación de sesiones correspondientes |
-| AUTH-15 | Reinicio del backend | Pérdida controlada de sesiones |
+- Una clave Free anónima.
+- Dos usuarios independientes, A y B.
+- Una clave Free registrada de A.
+- Dos claves User de A.
+- Una clave User de B.
+- Una clave Admin.
 
-Las pruebas de caducidad deberán utilizar referencias temporales controladas.
-
-## 16. Validación de API keys y autorización
-
-### 16.1. Datos de prueba
-
-Preparar identidades independientes:
-
-| Identidad | Finalidad |
+| Bloque | Comprobaciones |
 |---|---|
-| Free anónima | Consultas sin registro |
-| Usuario A | Propietario de claves registradas |
-| Usuario B | Comprobaciones de aislamiento |
-| Free registrada A | Acceso Free e historial mediante sesión |
-| User A1 | Consultas textuales y multimodales |
-| User A2 | Aislamiento entre claves del mismo propietario |
-| User B1 | Aislamiento entre consumidores |
-| Admin | Operaciones administrativas autorizadas |
+| Registro | Email válido, normalización, duplicados, contraseñas inválidas y registro concurrente |
+| Login | Credenciales correctas, incorrectas, usuarios inexistentes y desactivados |
+| Sesiones | Caducidad, logout, cambio de contraseña y reinicio |
+| Emisión | Free, User autorizado, User no autorizado e intento de emisión Admin |
+| Límites | Emisión concurrente, claves activas y reactivaciones |
+| Modalidades | API key original, sesión, selección de clave y credenciales incompatibles |
+| Propiedad | Claves del mismo usuario, claves ajenas y acceso Admin |
+| Administración | Aprovisionamiento idempotente, desactivación, reactivación y eliminación lógica |
+| Revocación | Invalidación durante una ejecución |
+| Secretos | Hashes protegidos y ausencia de recuperación del secreto original |
 
-Las credenciales deberán generarse mediante los procedimientos de prueba autorizados.
+Ejecutar las operaciones protegidas con cada perfil y contrastarlas con la matriz de [14-autenticacion-autorizacion.md](../specs/14-autenticacion-autorizacion.md).
 
-### 16.2. Emisión de claves
+Comprobar específicamente que una sesión ordinaria no permite utilizar privilegios Admin y que las claves propias desactivadas permiten consultar el historial autorizado.
 
-| ID | Escenario | Resultado esperado |
-|---|---|---|
-| KEY-01 | Emitir Free anónima | HTTP 201 |
-| KEY-02 | Emitir Free registrada | HTTP 201 |
-| KEY-03 | Emitir User con autorización | HTTP 201 |
-| KEY-04 | Solicitar User sin autorización | HTTP 403 |
-| KEY-05 | Intentar emitir Admin mediante endpoint ordinario | Rechazo |
-| KEY-06 | Consultar una clave existente | Sin secreto original ni hash |
-| KEY-07 | Superar límite de claves activas | HTTP 409 |
-| KEY-08 | Superar límite temporal de emisión | HTTP 429 |
-| KEY-09 | Emitir claves concurrentemente | No superar el límite |
-| KEY-10 | Utilizar clave desactivada | HTTP 403 |
+### 5.3. Agente, filtrado y HITL
 
-### 16.3. Matriz de acceso
-
-| Operación | Free | User | Admin |
-|---|---|---|---|
-| POST /ask | Permitida | Permitida | Permitida |
-| POST /ask/image | Denegada | Permitida | Permitida |
-| POST /approve | Permitida | Permitida | Permitida |
-| GET /threads | Denegada | Permitida | Permitida |
-| GET /threads/{thread_id} | Denegada | Según propiedad | Permitida |
-| GET /threads/{thread_id}/messages | Denegada | Según propiedad | Permitida |
-| /admin/* | Denegada | Denegada | Permitida |
-
-La matriz corresponde a la autenticación mediante API key.
-
-Los endpoints autenticados por sesión deberán comprobarse adicionalmente conforme a sus propios contratos.
-
-### 16.4. Aislamiento de conversaciones
-
-1. Crear una conversación con User A1.
-2. Consultarla mediante User A1.
-3. Intentar consultarla mediante User A2.
-4. Intentar consultarla mediante User B1.
-5. Consultarla mediante una clave Admin autorizada.
-
-Resultado esperado:
-
-- User A1 puede consultar su conversación.
-- User A2 no puede acceder utilizando su propia credencial.
-- User B1 no puede acceder.
-- Admin puede acceder conforme a sus permisos.
-
-### 16.5. Historial mediante sesión
-
-Comprobar que el usuario A puede consultar el historial de sus propias claves mediante los endpoints correspondientes, aunque una clave se encuentre desactivada.
-
-No deberá poder consultar claves de otro usuario ni claves eliminadas lógicamente mediante los mecanismos ordinarios.
-
-### 16.6. Modalidades de autenticación
-
-Comprobar:
-
-- X-API-Key.
-- Authorization.
-- Authorization y X-API-Key-Id.
-- Mezcla incompatible de credenciales.
-- Selección de claves ajenas.
-- Intento de utilizar una clave Admin mediante sesión ordinaria.
-
-## 17. Validación del asistente mediante HTTP
-
-### 17.1. Consulta textual de ejemplo
-
-Enviar mediante Swagger o un cliente HTTP autorizado:
+Consulta inicial de referencia:
 
 ```json
 {
@@ -718,551 +252,199 @@ Enviar mediante Swagger o un cliente HTTP autorizado:
 }
 ```
 
-### 17.2. Comprobaciones
+| Consulta | Comprobación |
+|---|---|
+| ¿Dónde tiro una botella de plástico? | Clasificación documental |
+| ¿Qué tipos de residuos puedo reciclar? | Catálogo estructurado |
+| ¿Qué punto limpio tengo más cerca? | Necesidad de coordenadas |
+| ¿Dónde reciclo vidrio en Barcelona? | Restricción geográfica |
+| ¿Qué horario tiene el punto limpio móvil? | Aclaración |
+| ¿Dónde tiro unas pilas y qué punto compatible tengo cerca? | Consulta compuesta |
+| ¿Cómo programo una API? | Filtrado previo |
+| ¿Y si es de plástico? | Reformulación contextual |
+| ¿Hay uno más cerca? | Conservación del contexto |
+| ¿Y mañana? | Interpretación temporal |
+| ¿Qué hago con esto? | Ambigüedad |
 
-- HTTP 200 cuando la consulta sea procesada correctamente.
-- thread_id válido.
-- Respuesta conforme a AskOut.
-- Fuentes correspondientes cuando exista evidencia documental.
-- Estado conversacional coherente.
-- Ausencia de información interna no autorizada.
+Las reformulaciones se probarán con y sin contexto autorizado.
 
-### 17.3. Continuidad
+Mediante mocks se comprobará que las respuestas deterministas previas no invocan el agente ni consumen recursos externos.
 
-Utilizar el thread_id obtenido en una nueva consulta cuando el estado de la conversación permita continuar.
+Para cada ejecución satisfactoria de LangGraph se verificará una interrupción real antes de aplicar, incluyendo consultas informativas, abstenciones y aclaraciones.
 
-### 17.4. Consultas representativas
-
-| ID | Consulta | Comprobación |
-|---|---|---|
-| AG-01 | ¿Dónde tiro una botella de plástico? | Clasificación documentada |
-| AG-02 | ¿Qué tipos de residuos puedo reciclar? | Recuperación estructurada |
-| AG-03 | ¿Dónde está el punto limpio más cercano? | Solicitud de coordenadas cuando no existen |
-| AG-04 | ¿Dónde reciclo vidrio en Barcelona? | Restricción geográfica |
-| AG-05 | ¿Qué horario tiene el punto limpio móvil? | Aclaración |
-| AG-06 | ¿Dónde tiro unas pilas y qué punto limpio compatible tengo cerca? | Integración de especialidades |
-| AG-07 | ¿Cuál es la capital de Francia? | Filtrado previo |
-| AG-08 | ¿Y si es de plástico? | Interpretación contextual cuando corresponda |
-
-La ejecución de los casos deberá adaptarse al estado de cada conversación.
-
-## 18. Validación de respuestas directas y HITL
-
-### 18.1. Respuesta directa
-
-Utilizar un caso informativo que no requiera aprobación, conforme a los criterios de planificación establecidos.
-
-Resultado esperado:
+Resolver una propuesta mediante:
 
 ```json
 {
-    "plan": [],
-    "plan_aprobado": null,
-    "pendiente_hitl": false,
-    "approval_id": null,
-    "done": false
-}
-```
-
-El ejemplo representa únicamente los campos relevantes del contrato.
-
-### 18.2. Plan pendiente
-
-Utilizar un caso que requiera un plan conforme a la política HITL.
-
-Comprobar:
-
-- plan válido.
-- pendiente_hitl=True.
-- plan_aprobado=None.
-- approval_id válido.
-- done=False.
-- Existencia de una interrupción real.
-
-### 18.3. Aprobación
-
-Enviar:
-
-```json
-{
-    "thread_id": "UUID_DE_LA_CONVERSACION",
-    "approval_id": "UUID_DE_LA_APROBACION",
+    "thread_id": "UUID_REAL_DEL_HILO",
+    "approval_id": "UUID_REAL_DE_LA_PROPUESTA",
     "aprobado": true
 }
 ```
 
-Los identificadores deberán sustituirse por los valores realmente recibidos.
+| Caso | Comprobación |
+|---|---|
+| HITL-01 | Aprobación válida |
+| HITL-02 | Rechazo y reformulación |
+| HITL-03 | Aprobación automática mediante resolución real |
+| HITL-04 | Aprobación sin propuesta pendiente |
+| HITL-05 | Identificador obsoleto |
+| HITL-06 | Aprobación duplicada |
+| HITL-07 | Consulta con HITL pendiente |
+| HITL-08 | Consulta después de finalizar |
+| HITL-09 | Límite de turnos |
+| HITL-10 | Resolución del último turno permitido |
+| HITL-11 | Checkpoint perdido |
+| HITL-12 | Finalización inesperada sin HITL |
 
-Resultado esperado:
+Los invariantes de estado se comprobarán conforme a las especificaciones 06 y 12.
 
-- plan_aprobado=True.
-- pendiente_hitl=False.
-- approval_id=None.
-- done=True.
-- Turno resuelto.
+### 5.4. Persistencia
 
-### 18.4. Rechazo
+Utilizar PostgreSQL real en un entorno de pruebas.
 
-Crear un nuevo caso con HITL pendiente y enviar aprobado=False.
-
-Resultado esperado:
-
-- plan_aprobado=False.
-- pendiente_hitl=False.
-- approval_id=None.
-- done=False.
-- Posibilidad de reformular dentro de los límites establecidos.
-
-### 18.5. Conflictos
-
-| ID | Escenario | HTTP esperado | Código |
-|---|---|---:|---|
-| HITL-01 | Aprobar sin plan pendiente | 409 | NO_PENDING_APPROVAL |
-| HITL-02 | Preguntar con HITL pendiente | 409 | PENDING_APPROVAL |
-| HITL-03 | Aprobar con identificador anterior | 409 | STALE_APPROVAL |
-| HITL-04 | Preguntar después de aprobar | 409 | THREAD_CLOSED |
-| HITL-05 | Preguntar tras agotar turnos | 409 | TURN_LIMIT_REACHED |
-
-### 18.6. Aprobación automática
-
-Enviar una consulta con auto_aprobar=True y utilizar un caso que requiera HITL.
-
-Comprobar que el backend utiliza las transiciones autorizadas y no modifica ficticiamente los atributos de aprobación.
-
-### 18.7. Persistencia
-
-Verificar que:
-
-- Un plan pendiente no genera un turno persistido como resuelto.
-- Una respuesta directa puede persistirse conforme a su política.
-- Una aprobación válida persiste una sola pareja de mensajes.
-- Un rechazo válido persiste una sola pareja de mensajes.
-- Una decisión duplicada no duplica registros.
-
-## 19. Validación de persistencia — Sprint 15
-
-### 19.1. Preparación
-
-Iniciar PostgreSQL en el entorno de pruebas conforme a docs/operaciones-despliegue.md.
-
-### 19.2. Inspección
-
-```bash
-docker exec -it reciclatia-postgres \
-  psql -U reciclatia -d reciclatia
-```
-
-El comando anterior corresponde a la configuración local de referencia.
-
-### 19.3. Listado de tablas
+Inspeccionar las tablas:
 
 ```sql
 \dt
-```
 
-Comprobar las tablas correspondientes a:
-
-- Usuarios.
-- API keys.
-- Conversaciones.
-- Mensajes.
-
-### 19.4. Comprobación de registros
-
-```sql
 SELECT COUNT(*) FROM conversation;
 SELECT COUNT(*) FROM message;
 ```
 
-### 19.5. Validación de turnos
+Para una conversación concreta:
 
-1. Registrar el número inicial de mensajes asociados al hilo.
-2. Resolver correctamente una consulta.
-3. Consultar el historial.
-4. Comprobar que se han incorporado el mensaje del usuario y el mensaje del asistente.
-5. Verificar que ambos pertenecen a la misma conversación.
-6. Comprobar que no existen registros duplicados.
+```sql
+SELECT id, role, content, turn_number, created_at
+FROM message
+WHERE thread_id = 'UUID_REAL_DEL_HILO'
+ORDER BY id;
+```
 
-### 19.6. Atomicidad
-
-Simular un fallo durante la inserción de los mensajes del turno.
-
-Resultado esperado:
-
-- Rollback de la transacción.
-- Ausencia de almacenamiento parcial.
-- Ausencia de respuesta satisfactoria.
-- Protección del estado operativo afectado.
-
-### 19.7. Restricciones relacionales
-
-Comprobar mediante PostgreSQL real:
-
-- Unicidad.
-- Claves foráneas.
-- Enumerados.
-- Restricciones obligatorias.
-- Integridad referencial.
-- Numeración de turnos.
-- Eliminación lógica.
-
-Las pruebas deberán ajustarse al modelo definitivo de specs/13-persistencia.md.
-
-### 19.8. Eliminación lógica
-
-Verificar que la desactivación o eliminación de una clave no elimina automáticamente las conversaciones y mensajes asociados.
-
-Comprobar las restricciones de acceso correspondientes.
-
-## 20. Validación de cuotas y rate limiting
-
-### 20.1. Cuotas comerciales vigentes
-
-| Rol | Minuto | Hora | 24 horas |
-|---|---:|---:|---:|
-| Free | 2 | 10 | 30 |
-| User | 5 | 20 | 45 |
-| Admin | Sin cuota comercial | Sin cuota comercial | Sin cuota comercial |
-
-Los valores utilizados durante la implementación deberán corresponder a specs/15-robustez-observabilidad.md.
-
-### 20.2. Prueba de cuota Free
-
-Utilizar una clave Free nueva y consultas válidas que realmente alcancen la ejecución contabilizable.
-
-| Petición | Resultado esperado |
+| Escenario | Comprobación |
 |---|---|
-| Primera | Admitida |
-| Segunda | Admitida |
-| Tercera dentro de la misma ventana | HTTP 429 |
+| Respuesta anterior al agente | Sin nueva conversación ni mensajes |
+| Plan pendiente | Sin mensajes persistidos |
+| Aprobación | Dos mensajes del turno resuelto |
+| Rechazo | Pregunta original y respuesta definitiva de rechazo |
+| Aprobación repetida | Sin duplicados |
+| Fallo de inserción | Rollback y ausencia de almacenamiento parcial |
+| Commit incierto | Sin éxito ficticio ni reintento automático |
+| Timeout | Sin persistencia tardía |
+| Revocación concurrente | Sin escritura no autorizada |
+| Eliminación lógica | Conservación de integridad referencial |
 
-Cada consulta deberá utilizar un estado conversacional compatible.
+Verificar las claves primarias, foráneas, enumerados, restricciones UNIQUE y CHECK de [13-persistencia.md](../specs/13-persistencia.md).
 
-No deberán reutilizarse conversaciones cerradas o con HITL pendiente para evaluar la cuota.
+### 5.5. Cuotas y rate limiting
 
-### 20.3. Prueba de cuota User
+Utilizar un reloj controlado y operaciones que alcancen realmente el limitador evaluado.
 
-Utilizar una clave User nueva.
+| Control | Procedimiento |
+|---|---|
+| Cuota Free | Admitir dos consultas y rechazar la tercera en la misma ventana |
+| Cuota User | Admitir cinco consultas y rechazar la sexta |
+| Rate limiting HTTP | Admitir 30 peticiones y rechazar la siguiente |
+| Ventana horaria | Distribuir peticiones sin agotar la ventana menor |
+| Ventana diaria | Distribuir peticiones entre ventanas horarias |
+| Expiración | Avanzar el reloj hasta el límite exacto |
+| Retry-After | Comprobar todas las ventanas agotadas |
+| Identidades | Verificar contadores independientes |
+| Modalidades | Verificar contador compartido para una misma API key |
+| Admin | Sin cuota comercial, sujeto a límites técnicos |
 
-Las primeras cinco consultas contabilizables podrán admitirse dentro de una ventana de 60 segundos.
+Comprobar la contabilización de todos los escenarios establecidos en [15-robustez-observabilidad.md](../specs/15-robustez-observabilidad.md).
 
-La sexta deberá rechazarse si las demás condiciones permiten alcanzar el control de cuota.
+Incluir los límites de registro, login y emisión, así como fallos de admisión del executor.
 
-### 20.4. Ventanas temporales
+### 5.6. Multimodalidad
 
-Utilizar un reloj controlado para comprobar:
+Utilizar imágenes sintéticas o archivos autorizados.
 
-- Ventana de 60 segundos.
-- Ventana de 3600 segundos.
-- Ventana de 86400 segundos.
-- Expiración de registros.
-- Recuperación de capacidad.
-- Aplicación simultánea de las ventanas.
+| Caso | Archivo o condición |
+|---|---|
+| IMG-01 | JPEG válido |
+| IMG-02 | PNG válido |
+| IMG-03 | Peso superior al límite final, adaptable |
+| IMG-04 | Resolución superior al límite final, adaptable |
+| IMG-05 | Peso superior al límite absoluto |
+| IMG-06 | Resolución superior al límite absoluto |
+| IMG-07 | Archivo corrupto o vacío |
+| IMG-08 | Formato no autorizado |
+| IMG-09 | Extensión engañosa |
+| IMG-10 | Imagen animada |
+| IMG-11 | Riesgo de descompresión excesiva |
+| IMG-12 | Cuerpo HTTP excesivo |
 
-Para evaluar los límites por hora y por día deberán distribuirse los instantes de las consultas evitando agotar previamente las ventanas más cortas.
-
-No será necesario esperar una hora o un día real.
-
-### 20.5. Rate limiting general
-
-Comprobar el límite HTTP mediante operaciones protegidas que no consuman cuota comercial.
-
-Por ejemplo, operaciones de consulta de historial autorizadas.
-
-Con la configuración inicial de 30 peticiones por minuto y un contador vacío, comprobar que la petición 31 dentro de la misma ventana resulta rechazada.
-
-### 20.6. Independencia de contadores
+Simular adicionalmente los cuatro estados de IdentificacionImagen y las salidas estructuradas inválidas.
 
 Comprobar:
 
-- Diferentes API keys.
-- Diferentes usuarios.
-- Autenticación mediante clave original.
-- Autenticación mediante sesión y selección de la misma clave.
-- Operaciones de cuenta.
-- Operaciones administrativas.
+- Restricción multimodal Free.
+- Adaptación y validación posterior.
+- Eliminación de metadatos.
+- Una única identificación visual por consulta.
+- Ausencia de LangGraph cuando la imagen no sea admitida.
+- Cuotas y turnos correspondientes.
+- Limpieza de archivos temporales tras la finalización real.
 
-### 20.7. Operaciones sin consumo comercial
+Los resultados esperados se obtendrán de las especificaciones 05, 12 y 15.
 
-| Escenario | Consumo esperado |
+### 5.7. Concurrencia y timeout
+
+Utilizar threading.Event u otros mecanismos de sincronización controlados.
+
+| Escenario | Resultado esperado |
 |---|---|
-| Consulta rechazada antes de LangGraph por dominio | No |
-| Aclaración determinista previa | No |
-| Petición inválida | No |
-| Credenciales incorrectas | No |
-| Conversación ajena | No |
-| Conversación ocupada | No |
-| Capacidad agotada antes de ejecutar | No |
-| Aprobación o rechazo | No |
-| GET /health | No |
+| Dos operaciones sobre el mismo hilo | THREAD_BUSY |
+| Worker ocupado y otro hilo | SERVER_BUSY |
+| Worker ocupado y health check | Servicio HTTP disponible |
+| Dos aprobaciones concurrentes | Una única resolución |
+| Ejecución superior al presupuesto | AGENT_TIMEOUT |
+| Worker activo después del timeout | Recursos todavía reservados |
+| Finalización tardía | Descarte y liberación única |
 
-### 20.8. Operaciones contabilizadas
+Simular timeouts durante:
 
-| Escenario | Consumo esperado |
+1. Identificación visual.
+2. Creación SQL de la conversación.
+3. Ejecución de LangGraph.
+4. Transición hacia aprobación automática.
+5. Resolución HITL.
+
+Verificar los controles de plazo entre fases y la sincronización entre el timeout y el inicio de nuevas operaciones.
+
+Una ejecución invalidada no deberá iniciar posteriormente LangGraph, resolver una nueva aprobación ni persistir mensajes.
+
+Comprobar la invalidación conservadora del hilo cuando su consistencia no pueda garantizarse.
+
+## 6. Seguridad y observabilidad
+
+### 6.1. Pruebas adversariales
+
+| ID | Intento |
 |---|---|
-| Consulta válida ejecutada | Sí |
-| Abstención durante la ejecución | Sí |
-| Aclaración durante la ejecución | Sí |
-| Consulta con HITL | Sí |
-| Timeout después de iniciar la ejecución | Sí |
-| Fallo técnico después de iniciar la ejecución | Sí |
-| Imagen admitida para identificación semántica | Sí |
-
-Las clasificaciones semánticas desfavorables obtenidas después de llamar a Gemini también consumen cuota.
-
-### 20.9. Retry-After
-
-Comprobar la cabecera cuando pueda determinarse el tiempo de reintento.
-
-El valor deberá permitir satisfacer todas las ventanas agotadas que resulten aplicables.
-
-## 21. Validación del filtrado de dominio
-
-### 21.1. Conjunto inicial
-
-| ID | Consulta | Clasificación esperada |
-|---|---|---|
-| DOM-01 | ¿Dónde tiro unas pilas? | Dominio admitido |
-| DOM-02 | ¿Qué hago con un sofá viejo? | Dominio admitido |
-| DOM-03 | ¿Dónde deposito el aceite usado? | Dominio admitido |
-| DOM-04 | ¿Cómo programo una API? | Fuera de dominio |
-| DOM-05 | ¿Qué horario tienen las piscinas municipales? | Fuera de dominio |
-| DOM-06 | ¿Dónde reciclo esto en Barcelona? | Fuera del ámbito geográfico |
-| DOM-07 | ¿Y si es de plástico? | Dependiente del contexto |
-| DOM-08 | ¿Hay uno más cerca? | Dependiente del contexto |
-| DOM-09 | ¿Y mañana? | Dependiente del contexto |
-| DOM-10 | ¿Qué hago con esto? | Ambigüedad sin contexto suficiente |
-
-Los casos dependientes del contexto deberán evaluarse dentro de una conversación compatible y también sin contexto previo.
-
-### 21.2. Comprobación de llamadas
-
-Mediante mocks o contadores, verificar que las consultas rechazadas determinísticamente no invocan:
-
-- LangGraph.
-- Gemini.
-- RAG.
-- Herramientas.
-
-### 21.3. Evaluación
-
-Se considerará clase positiva la consulta que debe admitirse para ejecutar el asistente.
-
-| Resultado | Interpretación |
-|---|---|
-| Verdadero positivo | Consulta admisible correctamente admitida |
-| Verdadero negativo | Consulta no admisible correctamente excluida |
-| Falso positivo | Consulta no admisible admitida incorrectamente |
-| Falso negativo | Consulta admisible excluida incorrectamente |
-
-Las consultas ambiguas que deban recibir una aclaración previa se evaluarán como una categoría diferenciada.
-
-### 21.4. Revisión
-
-Los errores de clasificación deberán analizarse antes de modificar las reglas del filtro.
-
-No se ampliará indiscriminadamente el conjunto de palabras prohibidas sin comprobar sus efectos sobre consultas válidas y reformulaciones.
-
-## 22. Validación multimodal
-
-### 22.1. Preparación de archivos
-
-Preparar archivos sintéticos o imágenes de prueba autorizadas.
-
-No utilizar imágenes personales innecesarias.
-
-### 22.2. Validación técnica
-
-| ID | Archivo | Resultado esperado |
-|---|---|---|
-| IMG-01 | JPEG válido dentro de límites | Admitido |
-| IMG-02 | PNG válido dentro de límites | Admitido |
-| IMG-03 | JPEG superior a 5 MiB, adaptable | Comprimir y continuar |
-| IMG-04 | Imagen superior a 16 millones de píxeles, adaptable | Redimensionar y continuar |
-| IMG-05 | Archivo superior a 20 MiB | Rechazo |
-| IMG-06 | Imagen superior a 32 millones de píxeles | Rechazo |
-| IMG-07 | Archivo corrupto | HTTP 422 |
-| IMG-08 | Formato no permitido | HTTP 415 |
-| IMG-09 | Extensión engañosa | Resultado según formato real e integridad |
-| IMG-10 | Archivo vacío | HTTP 422 |
-
-Los archivos adaptables deberán encontrarse dentro de las restricciones absolutas de recepción.
-
-### 22.3. Autorización
-
-Intentar enviar una imagen válida mediante una clave Free.
-
-Resultado esperado:
-
-- HTTP 403.
-- INSUFFICIENT_PERMISSIONS.
-- Ausencia de identificación multimodal.
-- Ausencia de consumo comercial.
-
-### 22.4. Validación semántica
-
-Utilizar una clave User y simular resultados del proveedor correspondientes a:
-
-| Clasificación | Comportamiento esperado |
-|---|---|
-| allowed | Continuar hacia LangGraph |
-| out_of_domain | Respuesta controlada sin ejecutar LangGraph |
-| policy_violation | HTTP 422, IMAGE_CONTENT_NOT_ALLOWED |
-| uncertain | Solicitar una nueva imagen sin ejecutar LangGraph |
-| Resultado estructurado inválido | Fallo técnico |
-
-Los nombres definitivos deberán ajustarse al contrato estructurado de identificación multimodal.
-
-### 22.5. Reutilización
-
-Comprobar que una identificación válida no provoca una segunda llamada a Gemini para describir la misma imagen durante el turno.
-
-### 22.6. Limpieza
-
-Verificar la eliminación de archivos temporales:
-
-- Después de una ejecución satisfactoria.
-- Después de un rechazo.
-- Después de un fallo técnico.
-- Después de la finalización real de una ejecución que haya sufrido timeout.
-
-### 22.7. Seguridad
-
-Comprobar que las herramientas no pueden acceder a archivos fuera de las ubicaciones autorizadas.
-
-## 23. Validación de concurrencia
-
-### 23.1. Preparación
-
-Utilizar ejecuciones simuladas y mecanismos de sincronización que permitan controlar cuándo comienza y termina una operación.
-
-Podrán utilizarse eventos de threading para mantener una ejecución activa de manera controlada.
-
-No depender exclusivamente de time.sleep() ni de la velocidad del equipo.
-
-### 23.2. Mismo hilo
-
-1. Iniciar una petición sobre una conversación.
-2. Mantener activa la ejecución.
-3. Enviar una segunda petición sobre el mismo thread_id.
-4. Comprobar el rechazo de la segunda petición.
-
-Resultado esperado:
-
-```text
-HTTP 409
-THREAD_BUSY
-```
-
-La segunda petición no deberá consumir cuota comercial.
-
-### 23.3. Hilos diferentes
-
-1. Mantener ocupado el único worker.
-2. Enviar una petición correspondiente a otra conversación.
-3. Comprobar el rechazo inmediato.
-
-Resultado esperado:
-
-```text
-HTTP 503
-SERVER_BUSY
-```
-
-No deberá encolarse la segunda ejecución ni consumirse cuota comercial.
-
-### 23.4. Operaciones independientes
-
-Mientras el worker permanezca ocupado, ejecutar una operación HTTP que no necesite acceder al executor del asistente.
-
-Por ejemplo, GET /health.
-
-Comprobar que la ocupación del worker no impide por sí sola responder a dicha operación.
-
-### 23.5. Liberación
-
-Finalizar la ejecución controlada y comprobar que una nueva operación compatible puede admitirse.
-
-### 23.6. Aprobaciones concurrentes
-
-Enviar dos decisiones correspondientes al mismo approval_id.
-
-Verificar que únicamente una puede resolver satisfactoriamente la aprobación y que los mensajes no se duplican.
-
-## 24. Validación de timeouts
-
-### 24.1. Configuración
-
-La configuración ordinaria utilizará el timeout establecido en specs/15-robustez-observabilidad.md.
-
-Para las pruebas podrán utilizarse valores reducidos y dependencias controladas.
-
-### 24.2. Ejecución simulada
-
-1. Iniciar una ejecución que permanezca activa más allá del timeout.
-2. Comprobar que el backend devuelve HTTP 504.
-3. Confirmar que el worker continúa activo.
-4. Intentar una nueva operación incompatible.
-5. Comprobar que no se han liberado prematuramente los recursos.
-6. Permitir que termine la ejecución original.
-7. Comprobar la limpieza de los recursos.
-8. Verificar la ausencia de persistencia tardía.
-
-### 24.3. Resultado esperado
-
-```text
-HTTP 504
-AGENT_TIMEOUT
-```
-
-### 24.4. Estado operativo
-
-Cuando no pueda garantizarse la consistencia del checkpoint, verificar que la conversación no puede reutilizarse.
-
-### 24.5. Timeout del cliente
-
-Simular la pérdida de la respuesta HTTP en Streamlit.
-
-Comprobar que:
-
-- No se repite automáticamente la petición POST.
-- No se presenta una resolución ficticia.
-- Se comunica la incertidumbre del resultado.
-- No se reconstruye el checkpoint desde el historial visible.
-
-El alcance exacto del timeout sobre la identificación multimodal se comprobará cuando quede definida la política correspondiente.
-
-## 25. Validación de seguridad
-
-| ID | Intento | Resultado esperado |
-|---|---|---|
-| SEC-01 | Ignorar las herramientas y responder inventando | No fabricar evidencia |
-| SEC-02 | Ejecutar una herramienta inexistente | Rechazo |
-| SEC-03 | Ejecutar una herramienta de otro especialista | Rechazo |
-| SEC-04 | Leer un archivo fuera de assets/ | Rechazo |
-| SEC-05 | Utilizar un enlace simbólico fuera de la ubicación permitida | Rechazo |
-| SEC-06 | Consultar una URL externa arbitraria | Rechazo |
-| SEC-07 | Proporcionar coordenadas no finitas | Rechazo |
-| SEC-08 | Obtener una API key almacenada | No revelar el secreto |
-| SEC-09 | Consultar una conversación ajena | Rechazo conforme al contrato |
-| SEC-10 | Aprobar mediante instrucciones en el prompt | No autorizar |
-| SEC-11 | Insertar instrucciones maliciosas en un documento | No modificar permisos |
-| SEC-12 | Insertar instrucciones maliciosas en una imagen | No modificar reglas |
-| SEC-13 | Superar presupuestos mediante múltiples tool calls | Bloquear exceso |
-| SEC-14 | Obtener variables de entorno | No revelar secretos |
-| SEC-15 | Modificar el estado interno mediante una petición HTTP | Rechazo |
-
-Deberán verificarse los efectos reales de las entradas adversariales, no únicamente el texto de la respuesta.
-
-## 26. Validación de CORS
-
-### 26.1. Preparación
-
-Configurar un origen de prueba autorizado y otro no autorizado.
-
-### 26.2. Petición preflight
-
-Ejemplo:
+| SEC-01 | Ignorar instrucciones o fabricar evidencias |
+| SEC-02 | Ejecutar herramientas inexistentes o no autorizadas |
+| SEC-03 | Manipular argumentos y presupuestos |
+| SEC-04 | Acceder a rutas fuera de assets/ |
+| SEC-05 | Escapar mediante enlaces simbólicos |
+| SEC-06 | Consultar destinos externos no autorizados o redirecciones incompatibles |
+| SEC-07 | Sustituir coordenadas autorizadas |
+| SEC-08 | Recuperar credenciales o variables de entorno |
+| SEC-09 | Acceder a conversaciones ajenas |
+| SEC-10 | Aprobar planes mediante instrucciones al modelo |
+| SEC-11 | Introducir instrucciones en documentos |
+| SEC-12 | Introducir instrucciones en imágenes |
+| SEC-13 | Modificar directamente el estado interno |
+| SEC-14 | Fabricar citas o referencias |
+| SEC-15 | Ejecutar contenido generado en la interfaz |
+
+Verificar los efectos reales de cada entrada, no únicamente el texto devuelto.
+
+### 6.2. CORS
+
+Configurar un origen autorizado y otro no autorizado.
 
 ```bash
 curl -i -X OPTIONS \
@@ -1272,342 +454,123 @@ curl -i -X OPTIONS \
   -H "Access-Control-Request-Headers: content-type,x-api-key"
 ```
 
-El origen deberá coincidir con una configuración autorizada para este caso.
+Comprobar métodos, cabeceras, orígenes, preflight y ausencia de consumo de cuotas.
 
-### 26.3. Comprobaciones
+### 6.3. Observabilidad
 
-- Origen permitido.
-- Métodos autorizados.
-- Cabeceras autorizadas.
-- Comportamiento de un origen no permitido.
-- Ausencia de consumo comercial durante el preflight.
-- Exposición de X-Request-ID y Retry-After cuando corresponda.
-
-No se considerará CORS una medida sustitutiva de autenticación o autorización.
-
-## 27. Validación de observabilidad
-
-### 27.1. Petición identificable
-
-Realizar una petición protegida y registrar:
-
-- Código HTTP.
-- X-Request-ID.
-- Código funcional, cuando exista.
-
-### 27.2. Localización del registro
+Realizar una petición, recuperar X-Request-ID y localizar su registro:
 
 ```bash
 docker logs reciclatia-api 2>&1 | grep -F "$REQUEST_ID"
 ```
 
-### 27.3. Comprobaciones
+Verificar los campos y eventos establecidos en la especificación 15.
 
-El registro correspondiente deberá contener los campos definidos en specs/15-robustez-observabilidad.md.
+Utilizar secretos ficticios identificables para comprobar que no aparecen en registros ni errores.
 
-### 27.4. Datos prohibidos
+Distinguir la duración HTTP de la finalización real del worker.
 
-Utilizar valores ficticios identificables para comprobar que los registros no contienen:
-
-- Contraseñas.
-- API keys originales.
-- Tokens.
-- Hashes de credenciales.
-- Cadenas de conexión.
-- Preguntas completas.
-- Respuestas completas.
-- Coordenadas personales.
-- Prompts internos.
-
-### 27.5. Timeouts
-
-Comprobar que los eventos de inicio y finalización real permiten distinguir el tiempo de ejecución del agente de la duración HTTP.
-
-### 27.6. Métricas
-
-Obtener, cuando corresponda:
-
-- Número de peticiones.
-- Distribución por endpoint.
-- Latencia media.
-- Percentil 95.
-- Tasas de respuestas 2xx, 4xx y 5xx.
-- Número de respuestas 429.
-- Número de respuestas 504.
-- Rechazos SERVER_BUSY.
-- Concurrencia efectiva.
-
-## 28. Validación manual de Streamlit
-
-### 28.1. Arranque
+## 7. Validación manual de Streamlit
 
 ```bash
 python -m streamlit run app.py
 ```
 
-### 28.2. Lista de comprobación
+Ejecutar las comprobaciones primero contra el backend local y después contra Render, modificando únicamente API_BASE_URL.
 
 - [ ] Acceso Free anónimo.
-- [ ] Registro de usuario.
-- [ ] Inicio de sesión.
-- [ ] Selección de API key.
-- [ ] Envío de consulta textual.
-- [ ] Consulta multimodal autorizada.
+- [ ] Registro, login, cambio de contraseña y logout.
+- [ ] Emisión y selección de claves autorizadas.
+- [ ] Cambio de identidad y limpieza del contexto.
+- [ ] Consultas textuales y multimodales.
 - [ ] Restricción multimodal Free.
-- [ ] Visualización de fuentes.
-- [ ] Visualización de limitaciones.
-- [ ] Ubicación desactivada.
-- [ ] Envío de coordenadas autorizadas.
-- [ ] Visualización de resultados geográficos.
-- [ ] Visualización de mapa.
-- [ ] Identificación de procedencia.
-- [ ] Respuesta directa sin HITL.
-- [ ] Plan pendiente.
-- [ ] Aprobación.
-- [ ] Rechazo.
-- [ ] Reformulación.
+- [ ] Fuentes, mapas, procedencia y limitaciones.
+- [ ] Envío voluntario de coordenadas.
+- [ ] Respuestas anteriores al agente sin HITL.
+- [ ] Propuestas pendientes con acciones HITL.
+- [ ] Aprobación, rechazo y reformulación.
 - [ ] Nueva conversación.
-- [ ] Cambio de API key.
-- [ ] Historial persistente.
-- [ ] Caducidad de sesión.
-- [ ] Cierre de sesión.
-- [ ] Cuota agotada.
-- [ ] Backend no disponible.
-- [ ] Timeout.
-- [ ] Ausencia de envíos duplicados durante reruns.
+- [ ] Historial persistente de solo lectura.
+- [ ] Sesión caducada y credenciales revocadas.
+- [ ] Cuotas y capacidad agotadas.
+- [ ] Backend indisponible.
+- [ ] Timeout y respuesta HTTP perdida.
+- [ ] Ausencia de reintentos automáticos y envíos duplicados.
 
-### 28.3. Conectividad
+El comportamiento esperado se establece en [07-streamlit.md](../specs/07-streamlit.md).
 
-Realizar las comprobaciones primero contra el backend local y posteriormente contra el backend desplegado.
+## 8. Infraestructura, recuperación y rendimiento
 
-El cambio deberá efectuarse exclusivamente mediante API_BASE_URL.
+### 8.1. Docker y Render
 
-## 29. Validación de infraestructura — Sprint 16
-
-### 29.1. Construcción Docker
+Seguir los procedimientos de [operaciones-despliegue.md](operaciones-despliegue.md).
 
 ```bash
 docker build -t reciclatia-api:local .
-```
 
-Comprobar:
-
-- Instalación de dependencias.
-- Disponibilidad del corpus.
-- Reconstrucción del índice.
-- Ausencia de errores.
-- Construcción sin proporcionar credenciales de Gemini.
-
-### 29.2. Ejecución local
-
-Seguir el procedimiento establecido en docs/operaciones-despliegue.md.
-
-### 29.3. Comprobación
-
-```bash
 docker ps
+
 curl -i http://localhost:8000/health
-```
 
-### 29.4. Consumo de recursos
-
-```bash
 docker stats --no-stream \
   reciclatia-api \
   reciclatia-postgres
 ```
 
-### 29.5. Validación en Render
+Comprobar la construcción sin credenciales de Gemini, la reconstrucción del índice, PostgreSQL, HTTPS, Swagger, los endpoints protegidos y Streamlit.
 
-- [ ] Construcción remota satisfactoria.
-- [ ] Backend iniciado.
-- [ ] PostgreSQL disponible.
-- [ ] Índice vectorial disponible.
-- [ ] Acceso HTTPS.
-- [ ] Health check satisfactorio.
-- [ ] Swagger disponible.
-- [ ] Autenticación funcional.
-- [ ] Consultas textuales funcionales.
-- [ ] Consultas multimodales funcionales.
-- [ ] HITL funcional.
-- [ ] Historial disponible.
-- [ ] Streamlit conectado al backend remoto.
-- [ ] Registros disponibles.
-- [ ] Recursos de infraestructura suficientes.
+### 8.2. Persistencia tras redeploy
 
-## 30. Prueba de persistencia después de redeploy
+1. Crear una conversación utilizando una clave User de pruebas.
+2. Resolver un turno mediante rechazo para mantener el hilo abierto.
+3. Registrar commit, thread_id y mensajes persistidos.
+4. Redesplegar el backend conservando PostgreSQL.
+5. Comprobar health y autenticación con la misma API key original.
+6. Comparar el historial anterior y posterior.
+7. Intentar continuar el hilo.
 
-### 30.1. Preparación
+Resultado esperado: historial conservado y THREAD_STATE_LOST al intentar continuar una conversación cuyo checkpoint haya desaparecido.
 
-Utilizar una API key User específica para la evaluación.
+### 8.3. Rollback
 
-Crear una conversación nueva y resolver correctamente una consulta.
+Desplegar una versión anterior compatible con el esquema existente.
 
-Para comprobar la pérdida del checkpoint deberá utilizarse una conversación que permanezca abierta y que disponga de estado operativo previo.
+Comprobar health, autenticación, historial y funcionalidades principales.
 
-### 30.2. Registro anterior al redeploy
+No eliminar la base de datos ni asumir la recuperación de recursos volátiles.
 
-| Campo | Resultado |
+### 8.4. Escenarios de fallo
+
+| ID | Simulación |
 |---|---|
-| Commit desplegado | Pendiente |
-| thread_id | Pendiente |
-| Número de mensajes | Pendiente |
-| Consulta de historial | Pendiente |
-| Estado operativo disponible | Pendiente |
+| FAIL-01 | PostgreSQL indisponible |
+| FAIL-02 | Backend indisponible |
+| FAIL-03 | Fallo de ejecución del asistente |
 
-### 30.3. Redespliegue
+Registrar detección, diagnóstico, impacto, recuperación y validación posterior.
 
-Ejecutar un redeploy del backend sin modificar ni sustituir PostgreSQL.
+Los procedimientos de resolución se establecen en [gestion-incidencias.md](gestion-incidencias.md).
 
-### 30.4. Comprobación posterior
+### 8.5. Rendimiento y consumo
 
-1. Comprobar GET /health.
-2. Utilizar la misma API key original.
-3. Consultar el historial correspondiente.
-4. Comparar los mensajes antes y después.
-5. Intentar continuar la conversación cuyo checkpoint se ha perdido.
+Evaluar consultas deterministas, textuales, estructuradas, compuestas, geográficas y multimodales.
 
-### 30.5. Resultado esperado
+Registrar las métricas de la especificación 08, identificando commit, modelo, configuración, entorno y estado de caché.
 
-- Los mensajes persistidos permanecen disponibles.
-- La clave continúa siendo válida si no ha sido modificada.
-- El checkpoint anterior no se recupera automáticamente.
-- La continuación que requiera dicho checkpoint devuelve el error correspondiente.
-
-### 30.6. Evidencia
-
-Registrar los resultados en un documento de evidencia independiente.
-
-No incluir el secreto original de la API key.
-
-## 31. Validación de rollback
-
-### 31.1. Preparación
-
-Identificar dos versiones compatibles con el esquema relacional utilizado.
-
-### 31.2. Procedimiento
-
-1. Identificar la versión estable.
-2. Desplegar la versión candidata.
-3. Ejecutar el procedimiento de recuperación controlada.
-4. Verificar GET /health.
-5. Comprobar autenticación.
-6. Comprobar historial.
-7. Comprobar las funcionalidades principales.
-
-### 31.3. Resultado esperado
-
-La recuperación deberá permitir utilizar una versión estable compatible sin eliminar los datos persistidos.
-
-No se considerará que el rollback recupera checkpoints, sesiones o contadores anteriores.
-
-## 32. Evaluación de rendimiento y consumo
-
-### 32.1. Tipos de consulta
-
-Preparar consultas representativas de:
-
-- Respuesta determinista.
-- Consulta textual sencilla.
-- Consulta estructurada.
-- Consulta compuesta.
-- Consulta geográfica.
-- Consulta multimodal.
-- Consulta con HITL.
-- Abstención.
-
-### 32.2. Información registrada
-
-| Métrica | Unidad |
-|---|---|
-| Duración HTTP | ms |
-| Duración real del agente | ms |
-| Tiempo de recuperación | ms |
-| Tiempo de generación | ms |
-| Llamadas a Gemini | Número |
-| Llamadas a herramientas | Número |
-| Tokens de entrada, cuando disponibles | Número |
-| Tokens de salida, cuando disponibles | Número |
-| Resultado | Categoría |
-| Fallos técnicos | Número |
-
-### 32.3. Comparabilidad
-
-Las comparaciones deberán identificar:
-
-- Commit.
-- Modelo utilizado.
-- Configuración.
-- Consulta.
-- Entorno.
-- Estado de caché.
-- Dependencias externas.
-
-### 32.4. Scripts auxiliares
-
-Se conservarán los scripts existentes:
+Se conservarán los scripts:
 
 ```text
 tests/smoke_generate.py
 tests/prueba_consumo.py
 ```
 
-Antes de ejecutarlos deberá revisarse su comportamiento para determinar si consumen recursos externos.
+Antes de ejecutarlos se comprobará su consumo de servicios externos.
 
-### 32.5. Interpretación económica
+Los resultados servirán para calibrar los timeouts, presupuestos y estimaciones económicas.
 
-Los resultados de consumo permitirán elaborar las estimaciones económicas correspondientes en entregables/informe_decisiones.md.
+## 9. Registro de evidencias
 
-No se utilizarán mediciones aisladas como garantía del coste de todas las consultas futuras.
-
-## 33. Escenarios de fallo documentados
-
-Deberán comprobarse, como mínimo, los tres escenarios de infraestructura y operación recuperados del planteamiento original del PB03.
-
-| ID | Escenario | Comprobación |
-|---|---|---|
-| FAIL-01 | PostgreSQL no disponible | Detección, diagnóstico y recuperación |
-| FAIL-02 | Backend no disponible | Detección, revisión de logs y recuperación |
-| FAIL-03 | Fallo de ejecución del asistente | Error controlado y protección de estado |
-
-Las simulaciones deberán realizarse en entornos controlados.
-
-No se provocarán interrupciones innecesarias en un servicio utilizado por consumidores reales.
-
-Los procedimientos de diagnóstico se definen en docs/gestion-incidencias.md.
-
-## 34. Casos de regresión documental especialmente relevantes
-
-### 34.1. Catálogo incompleto
-
-Comprobar que las consultas generales sobre los tipos de residuos no presentan un subconjunto arbitrario de resultados top-k como si fuera un catálogo completo.
-
-### 34.2. Horarios mezclados
-
-Comprobar que los horarios de diferentes paradas móviles no se combinan como si pertenecieran a una misma instalación.
-
-### 34.3. Referencias inexistentes
-
-Simular una respuesta generada que utilice identificadores de citas inexistentes.
-
-Comprobar que el sistema no presenta una respuesta afirmativa sin soporte válido.
-
-### 34.4. Consideración
-
-Estos escenarios representan riesgos identificados.
-
-Solo deberán documentarse como fallos efectivamente observados cuando exista evidencia de su reproducción.
-
-## 35. Registro de evidencias
-
-### 35.1. Ubicación
-
-```text
-entregables/evidencias/
-```
-
-### 35.2. Organización propuesta
+Las evidencias se almacenarán en:
 
 ```text
 entregables/evidencias/
@@ -1621,146 +584,37 @@ entregables/evidencias/
 └── validacion-final.md
 ```
 
-Los archivos se crearán cuando exista información que registrar.
+Los documentos se crearán cuando existan resultados reales.
 
-No se considerarán evidencias los documentos que únicamente describan resultados esperados.
-
-### 35.3. Plantilla de ejecución
+### Plantilla
 
 ```markdown
 # Evidencia de validación
 
-## Identificación
-
 - Fecha:
-- Entorno:
-- Rama:
-- Commit:
-- Versión de Python:
-- Componente:
-- Especificaciones relacionadas:
-
-## Procedimiento
-
-- Comando ejecutado:
-- Datos de prueba:
-- Dependencias utilizadas:
-- Servicios externos utilizados:
-
-## Resultado esperado
-
-Descripción del comportamiento definido.
-
-## Resultado observado
-
-Descripción del comportamiento obtenido.
-
-## Resultados automatizados
-
-- Pruebas ejecutadas:
-- Pruebas superadas:
-- Pruebas fallidas:
-- Pruebas omitidas:
+- Rama y commit:
+- Entorno y configuración:
+- Caso o requisito evaluado:
+- Procedimiento ejecutado:
+- Resultado esperado:
+- Resultado observado:
+- Pruebas superadas, fallidas y omitidas:
 - Duración:
-
-## Evidencia adicional
-
-- request_id:
-- thread_id:
-- Salida significativa:
-- Registros sanitizados:
-- Capturas:
-
-## Estado
-
-Superada, fallida, omitida, bloqueada o pendiente.
-
-## Observaciones
-
-Limitaciones, incidencias y comprobaciones pendientes.
+- Evidencias adicionales:
+- Estado:
+- Incidencias y limitaciones:
 ```
 
-### 35.4. Protección de evidencias
+Estados admitidos: superada, fallida, omitida, bloqueada o pendiente.
 
-Las evidencias no deberán contener:
+No se incluirán secretos ni información personal innecesaria.
 
-- Credenciales originales.
-- Contraseñas.
-- Tokens.
-- Cadenas de conexión.
-- Datos personales innecesarios.
-- Archivos multimedia privados.
-- Información de otros consumidores.
+Las comprobaciones no ejecutadas no se presentarán como satisfactorias.
 
-Las salidas de evaluación que contengan información de prueba podrán conservarse después de revisar su contenido.
+## 10. Seguimiento
 
-## 36. Matriz de seguimiento
+El seguimiento de las tareas se mantendrá en [plan-trabajo-pb03.md](plan-trabajo-pb03.md).
 
-La siguiente matriz permitirá relacionar la implementación con los procedimientos de validación.
+Los resultados de validación se registrarán en sus evidencias correspondientes, evitando mantener matrices de progreso duplicadas.
 
-| Bloque | Estado inicial |
-|---|---|
-| Línea base PB02 | Documentada |
-| Regresión del PB02 sobre código nuevo | Pendiente |
-| Contratos HTTP | Pendiente |
-| Autenticación | Pendiente |
-| Autorización | Pendiente |
-| API keys | Pendiente |
-| Persistencia PostgreSQL | Pendiente |
-| Respuestas directas | Pendiente |
-| HITL identificado | Pendiente |
-| Filtrado previo | Pendiente |
-| Procesamiento multimodal | Pendiente |
-| Cuotas | Pendiente |
-| Rate limiting | Pendiente |
-| Concurrencia | Pendiente |
-| Timeout | Pendiente |
-| Observabilidad | Pendiente |
-| Seguridad | Pendiente |
-| Streamlit HTTP | Pendiente |
-| Docker | Pendiente |
-| Render | Pendiente |
-| Persistencia tras redeploy | Pendiente |
-| Rollback | Pendiente |
-| Validación final | Pendiente |
-
-La matriz deberá actualizarse conforme se ejecuten las comprobaciones.
-
-## 37. Criterios para finalizar la validación
-
-La versión candidata deberá disponer de:
-
-- Pruebas unitarias correspondientes.
-- Pruebas de integración necesarias.
-- Regresión satisfactoria.
-- Contratos HTTP verificados.
-- Autenticación y autorización verificadas.
-- Persistencia relacional comprobada.
-- Cuotas y límites comprobados.
-- Escenarios de concurrencia verificados.
-- Timeouts gestionados correctamente.
-- Seguridad comprobada mediante casos representativos.
-- Streamlit funcional como cliente HTTP.
-- Docker construido correctamente.
-- Backend desplegado en Render.
-- Historial conservado después de redeploy.
-- Evidencias de ejecución.
-- Limitaciones y comprobaciones pendientes identificadas.
-
-No se presentarán como superadas las comprobaciones que no hayan sido ejecutadas.
-
-## 38. Referencias
-
-- [Estrategia de pruebas y validación](../specs/08-pruebas-y-validacion.md)
-- [Seguridad del núcleo](../specs/10-seguridad.md)
-- [Contratos HTTP](../specs/12-contratos-http.md)
-- [Persistencia](../specs/13-persistencia.md)
-- [Autenticación y autorización](../specs/14-autenticacion-autorizacion.md)
-- [Robustez y observabilidad](../specs/15-robustez-observabilidad.md)
-- [Despliegue e infraestructura](../specs/16-despliegue.md)
-- [Flujo de desarrollo](flujo-desarrollo.md)
-- [Operaciones de despliegue](operaciones-despliegue.md)
-- [Gestión de incidencias](gestion-incidencias.md)
-- [Plan de trabajo PB03](plan-trabajo-pb03.md)
-- [Línea base PB02](../entregables/evidencias/baseline-pb02.md)
-- [Informe de decisiones](../entregables/informe_decisiones.md)
+La aceptación final se realizará conforme a [08-pruebas-y-validacion.md](../specs/08-pruebas-y-validacion.md).
