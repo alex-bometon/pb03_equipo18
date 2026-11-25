@@ -2,342 +2,261 @@
 
 ## 1. Objetivo
 
-Definir los mecanismos complementarios de recuperación que permiten obtener evidencia documental ajustada a las características de cada consulta.
+Complementar la recuperación semántica mediante filtros sobre metadatos y consultas estructuradas, mejorando la pertinencia de las evidencias sin modificar el contrato público del RAG.
 
-La recuperación semántica deberá complementarse con filtros sobre metadatos y consultas estructuradas cuando la naturaleza de la petición lo requiera.
+Se conservará ChromaDB y no se incorporarán nuevos motores de búsqueda ni mecanismos de reranking.
 
-El objetivo es mejorar la pertinencia de los resultados sin comprometer la trazabilidad, la integridad documental ni el contrato público del RAG.
+Las reglas generales de recuperación se establecen en [01-retrieval.md](01-retrieval.md).
 
-## 2. Principios
+## 2. Responsabilidades
 
-- Conservación de ChromaDB como sistema de almacenamiento vectorial.
-- Utilización de los metadatos existentes.
-- Separación entre recuperación semántica y recuperación estructurada.
-- Aplicación de filtros fundamentados en la consulta.
-- Preservación de la procedencia documental.
-- Ausencia de sustituciones silenciosas de resultados.
-- Independencia respecto a la interfaz y la capa HTTP.
-- Prevención de llamadas innecesarias a servicios externos.
+| Archivo | Responsabilidad |
+|---|---|
+| src/retrieve.py | Recuperación semántica, filtros y contratos públicos |
+| src/retrieve_structured.py | Consultas estructuradas y agregaciones |
+| src/rag_intents.py | Identificación de intenciones documentales |
+| src/rag.py | Selección de estrategias y construcción de respuestas RAG |
 
-La similitud semántica no garantiza por sí sola que un documento corresponda a la modalidad, distrito o contexto solicitado.
+Los criterios de interpretación de consultas se establecen en [04-consultas-generales.md](04-consultas-generales.md).
 
-## 3. Estrategias de recuperación
+## 3. Recuperación filtrada
 
-```mermaid
-flowchart TD
-    Q[Consulta admitida] --> I{Tipo de consulta}
-    I -->|Residuo concreto| V[Top-k semantico]
-    I -->|Modalidad o distrito explicito| F[Filtros sobre metadatos]
-    I -->|Resumen del catalogo| C[Consulta estructurada]
-    I -->|Horario de parada identificable| H[Registros de paradas moviles]
-    I -->|Informacion insuficiente| A[Solicitud de aclaracion]
-    F --> V
-    V --> O[Evidencia con fuentes]
-    C --> O
-    H --> O
-```
+### 3.1. Metadatos
 
-La estrategia de recuperación deberá seleccionarse según las características de la consulta.
-
-Las consultas estructuradas no requerirán necesariamente una búsqueda vectorial.
-
-No se sustituirá ChromaDB por un motor de búsqueda léxico ni se introducirá un nuevo sistema de ranking durante esta fase del desarrollo.
-
-Los criterios de interpretación de las consultas se definen en [04-consultas-generales.md](04-consultas-generales.md).
-
-## 4. Recuperación filtrada
-
-### 4.1. Metadatos
-
-La recuperación podrá restringirse mediante los metadatos existentes en ChromaDB.
-
-Los principales campos utilizados serán:
-
-- document_type.
-- district.
-- source.
-
-| Petición | Metadato |
+| Petición | Filtro |
 |---|---|
 | Punto limpio fijo | document_type=punto_limpio_fijo |
 | Punto limpio móvil | document_type=punto_limpio_movil |
 | Punto limpio móvil de 24 horas | document_type=punto_limpio_movil_24h |
 | Punto limpio de proximidad | document_type=punto_limpio_proximidad |
-| Distrito municipal reconocido | district |
-| Relaciones residuo-destino | source=tipos_residuos.csv |
+| Distrito identificado | district |
+| Catálogo de residuos | source=tipos_residuos.csv |
 
-La procedencia y estructura de los metadatos se definen en [09-datos-y-fuentes.md](09-datos-y-fuentes.md).
+La estructura y procedencia de los metadatos se definen en [09-datos-y-fuentes.md](09-datos-y-fuentes.md).
 
-### 4.2. Identificación de modalidad
+### 3.2. Aplicación de filtros
 
-El sistema deberá reconocer las modalidades de recogida expresadas inequívocamente en la consulta.
+Los filtros se aplicarán únicamente cuando las restricciones puedan identificarse de forma inequívoca.
 
-Las expresiones específicas deberán evaluarse antes que las expresiones genéricas.
+Se conservarán las siguientes reglas:
 
-Por ejemplo, una consulta sobre un punto limpio móvil de 24 horas no deberá interpretarse automáticamente como una consulta sobre cualquier punto limpio móvil.
+- Diferenciar modalidades ordinarias y móviles de 24 horas.
+- Reconocer distritos mediante los metadatos del índice.
+- Conservar las variantes documentadas de un mismo distrito.
+- Combinar modalidad y distrito mediante $and cuando corresponda.
+- Utilizar $in para variantes equivalentes.
+- Evitar filtros restrictivos cuando existan varias interpretaciones incompatibles.
 
-Las modalidades de recogida no se considerarán intercambiables.
+No se deducirán distritos a partir de ubicaciones ambiguas ni se aplicarán restricciones arbitrarias.
 
-### 4.3. Identificación de distrito
+### 3.3. Ausencia de coincidencias
 
-Los filtros por distrito se aplicarán cuando la consulta permita identificar inequívocamente un distrito municipal reconocido.
+Un filtro válido sin registros devolverá una lista vacía sin generar embeddings.
 
-No se deducirá automáticamente un distrito a partir de un barrio, una dirección ambigua o una ubicación que no haya sido identificada correctamente.
+No se eliminarán silenciosamente las restricciones para obtener resultados de otras modalidades, distritos o fuentes incompatibles.
 
-Cuando la identificación resulte insuficiente para satisfacer la consulta, deberá solicitarse una aclaración o indicarse la limitación correspondiente.
+## 4. Recuperación estructurada
 
-### 4.4. Combinación de filtros
+Las consultas estructuradas utilizarán operaciones sobre los documentos y metadatos de ChromaDB sin generar embeddings ni ejecutar búsquedas vectoriales.
 
-Los filtros de modalidad y distrito podrán combinarse cuando ambos se encuentren identificados de forma inequívoca.
+Las agrupaciones y recuentos no estarán limitados por TOP_K.
 
-La combinación deberá conservar todas las restricciones aplicables a la consulta.
+Los resultados conservarán la procedencia de los registros utilizados.
 
-No se eliminará una restricción únicamente para aumentar el número de resultados recuperados.
+Las respuestas finales podrán limitar el número de elementos presentados, indicando su alcance conforme a [04-consultas-generales.md](04-consultas-generales.md).
 
-### 4.5. Ausencia de resultados
+## 5. Catálogo de residuos
 
-Una búsqueda filtrada puede no devolver resultados.
+### 5.1. Contratos públicos
 
-La ausencia de resultados no autoriza a sustituirlos silenciosamente por documentos correspondientes a:
+Se conservarán las funciones de src/retrieve.py:
 
-- Otra modalidad de recogida.
-- Otro distrito.
-- Otra instalación.
-- Otra fuente incompatible con la consulta.
+```python
+def listar_destinos_residuos() -> list[str]:
+    ...
 
-El sistema deberá conservar la distinción entre ausencia de resultados compatibles, evidencia insuficiente y fallo técnico.
 
-## 5. Consultas estructuradas
+def consultar_catalogo_residuos() -> dict:
+    ...
+```
 
-### 5.1. Finalidad
+Su implementación permanecerá delegada a src/retrieve_structured.py.
 
-Las consultas estructuradas permitirán recuperar información cuya interpretación no pueda resolverse adecuadamente mediante una selección arbitraria de los fragmentos semánticamente más próximos.
+### 5.2. Fuente
 
-Se utilizarán especialmente para:
+Se utilizará tipos_residuos.csv.
 
-- Consultas generales sobre el catálogo de residuos.
-- Relaciones entre residuos y destinos.
-- Agrupaciones por destinos documentados.
-- Recuentos de registros.
-- Consultas sobre paradas de puntos limpios móviles.
-- Horarios asociados a instalaciones identificables.
+El catálogo representa relaciones documentadas entre residuos y destinos de depósito, no una taxonomía universal ni necesariamente exhaustiva.
 
-### 5.2. Independencia de top-k
+### 5.3. Resultado
 
-Las consultas que requieran recorrer o agregar un conjunto de registros no deberán limitarse artificialmente al valor TOP_K de la recuperación semántica.
+| Campo | Tipo | Contenido |
+|---|---|---|
+| source | str | Documento de origen |
+| path | str o None | Ruta documental interna |
+| total_relaciones | int | Relaciones válidas recuperadas |
+| total_destinos | int | Destinos diferentes |
+| destinos | list[dict] | Agrupaciones por destino |
+| registros_descartados | int | Registros inválidos descartados |
+| registros_duplicados | int | Registros duplicados descartados |
+| ejemplos_por_destino | int | Máximo de ejemplos por destino |
 
-Una selección parcial de documentos no podrá presentarse como una descripción exhaustiva del conjunto.
+Cada elemento de destinos conservará:
 
-Los resultados deberán corresponder a los registros pertinentes disponibles en el corpus.
+```python
+{
+    "destino": str,
+    "cantidad": int,
+    "ejemplos": list[dict],
+}
+```
 
-### 5.3. Procedencia
+Cada ejemplo contendrá residuo y, cuando esté disponible, source_row.
 
-Las consultas estructuradas deberán conservar la identificación de las fuentes y los registros utilizados.
+### 5.4. Agrupaciones y recuentos
 
-Las operaciones de filtrado, agrupación y agregación no deberán generar información que no pueda justificarse mediante los datos de origen.
+Las cantidades se calcularán a partir de los registros válidos.
 
-## 6. Catálogo de residuos
+Se comprobará la coherencia entre el destino indicado en los metadatos y el contenido documental.
 
-### 6.1. Fuente documental
+Los duplicados se identificarán mediante la combinación de destino normalizado y source_row, cuando el número de fila sea válido.
 
-El archivo tipos_residuos.csv contiene relaciones entre residuos y destinos de depósito.
+Una misma numeración de fila podrá pertenecer legítimamente a destinos diferentes.
 
-No constituye por sí mismo una taxonomía universal ni un inventario necesariamente exhaustivo de todos los residuos existentes.
+### 5.5. Ejemplos
 
-Las respuestas deberán reflejar el alcance real de los registros disponibles.
+Se conservará en config.py:
 
-### 6.2. Agrupaciones
+```python
+EJEMPLOS_POR_DESTINO = 2
+```
 
-Las consultas generales sobre categorías y destinos podrán resolverse mediante agrupaciones de los registros disponibles.
+Los ejemplos procederán literalmente de los registros recuperados.
 
-No se crearán categorías supuestamente oficiales basándose únicamente en similitudes lingüísticas o inferencias del modelo.
+No se modificarán los recuentos para adaptarlos al número de ejemplos presentados.
 
-Las agrupaciones deberán preservar las relaciones documentadas entre los residuos y sus destinos.
+## 6. Paradas móviles y horarios
 
-### 6.3. Recuentos
+### 6.1. Contrato público
 
-Las cantidades deberán calcularse a partir de los registros correspondientes.
+```python
+def consultar_paradas_moviles(
+    *,
+    distrito: str | None = None,
+    direccion: str | None = None,
+    dia: str | None = None,
+) -> list[dict]:
+    ...
+```
 
-No se establecerán recuentos como constantes independientes de los datos del corpus.
+Se requerirá al menos distrito o direccion.
 
-El resultado deberá indicar qué conjunto de registros se ha utilizado para realizar el cálculo.
+El día, por sí solo, no permitirá identificar una parada.
 
-### 6.4. Ejemplos
+Los criterios proporcionados deberán ser cadenas no vacías y respetar MAX_PREGUNTA_CARACTERES.
 
-Los ejemplos utilizados para describir categorías, residuos o destinos deberán estar respaldados por los registros disponibles.
+### 6.2. Fuente
 
-No se inventarán ejemplos para completar artificialmente una agrupación.
+Se utilizarán los registros correspondientes a:
 
-### 6.5. Consultas sobre residuos concretos
+- source=puntos_limpios_moviles.csv.
+- document_type=punto_limpio_movil.
 
-Las consultas relativas a un residuo individual deberán utilizar la estrategia que permita obtener evidencia adecuada para ese objeto.
+Los puntos limpios móviles de 24 horas quedarán excluidos de esta consulta.
 
-No se sustituirá una consulta específica por un resumen general del catálogo cuando este no permita responder correctamente.
+### 6.3. Resultado
 
-## 7. Paradas móviles y horarios
+Cada registro conservará los campos:
 
-### 7.1. Identificación de registros
-
-Los horarios de los puntos limpios móviles pertenecen a paradas concretas.
-
-La recuperación estructurada podrá utilizar los siguientes atributos cuando estén disponibles:
-
-- Dirección.
-- Distrito.
-- Día.
-- Modalidad.
-- Franja horaria.
-
-### 7.2. Asociación entre parada y horario
-
-Cada horario deberá mantenerse asociado a la parada de la que procede.
-
-No se combinarán horarios de instalaciones distintas como si correspondieran a una única instalación.
-
-La información recuperada deberá permitir identificar correctamente la procedencia de cada horario.
-
-### 7.3. Consultas ambiguas
-
-Cuando una consulta no permita identificar la parada o instalación necesaria, deberá solicitarse información adicional.
-
-La aclaración podrá requerir:
-
-- Calle.
-- Dirección.
-- Nombre de la parada.
-- Distrito.
-- Modalidad de recogida.
-
-No se seleccionará arbitrariamente una instalación para responder a una consulta ambigua.
-
-### 7.4. Interpretación temporal
-
-La recuperación de horarios documentados no constituye una comprobación de apertura física en tiempo real.
-
-La interpretación de los horarios y su comparación con la hora de Madrid se definen en [04-consultas-generales.md](04-consultas-generales.md).
-
-La búsqueda geográfica por coordenadas constituye una operación independiente, definida en [05-tools.md](05-tools.md).
-
-## 8. Separación de responsabilidades
-
-| Archivo | Responsabilidad |
+| Campo | Contenido |
 |---|---|
-| src/retrieve.py | Recuperación semántica y aplicación de filtros |
-| src/retrieve_structured.py | Consultas estructuradas, agrupaciones y recuperación de registros |
-| src/rag_intents.py | Identificación de consultas que requieren estrategias específicas |
-| src/rag.py | Coordinación de las estrategias y construcción del resultado público |
-| src/generate.py | Generación de respuestas fundamentadas cuando corresponda |
+| direccion | Dirección de la parada |
+| distrito | Distrito municipal |
+| dia | Día documentado |
+| turno | Turno, cuando esté disponible |
+| horario | Horario publicado |
+| source | Documento de origen |
+| path | Ruta documental interna |
+| text | Contenido documental |
+| metadata | Metadatos originales |
+| source_row | Número de fila, cuando sea válido |
 
-La capa de generación no consultará directamente ChromaDB.
+### 6.4. Selección de registros
 
-La capa de recuperación no determinará por sí sola la suficiencia factual de una respuesta.
+Se conservarán los mecanismos existentes de:
 
-La presencia de una fuente recuperada no garantiza automáticamente que una recomendación sea correcta.
+- Normalización de distritos.
+- Comparación de variantes documentadas.
+- Coincidencia de direcciones respetando límites de palabras.
+- Filtrado por día.
+- Comprobación de coherencia entre texto y metadatos.
+- Eliminación de duplicados mediante source_row válido.
+- Ordenación por distrito, dirección, día y fila.
 
-## 9. Integración con la arquitectura MLOps
+No se seleccionará arbitrariamente una parada cuando existan varias coincidencias.
 
-Los mecanismos de recuperación filtrada y estructurada permanecerán dentro del núcleo RAG.
+Cada horario permanecerá asociado a su registro original.
 
-FastAPI utilizará las funciones públicas del asistente sin implementar una segunda estrategia de recuperación.
+La interpretación temporal y las solicitudes de aclaración se regulan en [04-consultas-generales.md](04-consultas-generales.md).
 
-Streamlit no realizará consultas directas a ChromaDB ni interpretará independientemente los metadatos del corpus para construir recomendaciones.
+## 7. Recuperación geográfica local
 
-Las reglas de autenticación, autorización y consumo se aplicarán en la capa correspondiente antes de admitir las operaciones del asistente.
+Se conservará la función interna de src/retrieve_structured.py:
 
-El funcionamiento independiente del RAG no requerirá una conexión a PostgreSQL ni una sesión de usuario.
+```python
+def consultar_puntos_limpios_locales(
+    abrir_coleccion: Callable,
+) -> list[dict]:
+    ...
+```
 
-## 10. Gestión de resultados y errores
+Recuperará registros georreferenciados correspondientes a las cuatro modalidades de puntos limpios documentadas.
 
-| Situación | Comportamiento esperado |
-|---|---|
-| Resultados compatibles con los filtros | Devolver evidencia y metadatos |
-| Ausencia de resultados compatibles | Comunicar ausencia de evidencia adecuada |
-| Modalidad ambigua | Solicitar aclaración cuando sea necesaria |
-| Distrito no identificable | No aplicar restricciones geográficas arbitrarias |
-| Parada no identificable | Solicitar información adicional |
-| Catálogo parcialmente documentado | Indicar el alcance de los registros disponibles |
-| Fallo durante la recuperación | Comunicar un error técnico |
-| Colección vectorial no disponible | Comunicar un error técnico |
+Se comprobarán:
 
-Las respuestas vacías o la ausencia de evidencia suficiente no deberán confundirse con un fallo de infraestructura.
+- Correspondencia entre modalidad y fuente.
+- Coordenadas numéricas, finitas y dentro de rango.
+- Presencia de dirección y distrito.
+- Coherencia de los metadatos.
 
-La transformación de errores técnicos al contrato HTTP será responsabilidad de FastAPI.
+Los registros conservarán fuente=corpus_local y documento_origen.
 
-El núcleo RAG conservará sus propios contratos de entrada y salida.
+Esta función no realizará búsquedas vectoriales, calculará distancias ni determinará compatibilidades.
 
-## 11. Eficiencia
+Las condiciones de activación del respaldo y su contrato geográfico se establecen en [05-tools.md](05-tools.md).
 
-El sistema deberá seleccionar la estrategia de recuperación adecuada evitando operaciones innecesarias.
+## 8. Validación y errores
 
-En particular:
+Las reglas generales se establecen en [01-retrieval.md](01-retrieval.md).
 
-- No se realizará una búsqueda semántica cuando una consulta estructurada sea suficiente.
-- No se generarán embeddings de consulta cuando la estrategia seleccionada no los necesite.
-- No se ejecutarán búsquedas incompatibles con las restricciones identificadas.
-- No se repetirán consultas sin una justificación funcional.
-- No se utilizarán llamadas al modelo de lenguaje para sustituir operaciones deterministas de filtrado, agrupación o recuento.
-- No se ejecutarán mecanismos de recuperación después de que una consulta haya sido rechazada por los controles previos de admisión del servicio HTTP.
+En las consultas estructuradas deberá comprobarse adicionalmente:
 
-Las optimizaciones deberán conservar la calidad y la trazabilidad de la evidencia.
+- Correspondencia entre documentos y metadatos.
+- Coherencia de las fuentes.
+- Validez de los registros utilizados.
+- Correspondencia entre campos documentales y metadatos.
+- Consistencia de las rutas de procedencia del catálogo.
 
-## 12. Validación
+Se conservarán los mecanismos de descarte y contabilización de registros inválidos.
 
-Las pruebas deberán contemplar:
+Cuando existan descartes que afecten a la completitud del resultado, deberá comunicarse la limitación correspondiente.
 
-- Recuperación semántica sin filtros adicionales.
-- Recuperación filtrada por modalidad.
-- Recuperación filtrada por distrito.
-- Combinación de filtros compatibles.
-- Diferenciación entre puntos móviles ordinarios y móviles de 24 horas.
-- Consultas ambiguas.
-- Búsquedas sin resultados.
-- Consultas generales sobre el catálogo.
-- Agrupaciones y recuentos de residuos.
-- Recuperación de horarios asociados a paradas concretas.
-- Conservación de metadatos.
-- Ausencia de sustituciones silenciosas.
-- Preservación del contrato público del RAG.
+La ausencia legítima de coincidencias deberá distinguirse de un conjunto de registros inutilizables por problemas de integridad.
 
-La evaluación de recuperación deberá distinguir:
+Los fallos de ChromaDB no se transformarán en resultados vacíos.
 
-- Coincidencia de fuente mediante hit@k.
-- Correspondencia de modalidad.
-- Correspondencia de distrito.
-- Ausencia de resultados.
-- Pertinencia real de la evidencia.
+## 9. Criterios de aceptación
 
-La coincidencia de una fuente no se considerará por sí sola una garantía de corrección factual.
+- Los filtros respetan las restricciones identificadas.
+- Las modalidades permanecen diferenciadas.
+- Los filtros sin coincidencias no activan búsquedas incompatibles.
+- Las consultas estructuradas no requieren embeddings.
+- Los recuentos se calculan sobre registros válidos.
+- Los duplicados se identifican correctamente.
+- Los ejemplos conservan su contenido original.
+- Los horarios permanecen asociados a sus paradas.
+- El respaldo local conserva su procedencia.
+- Los fallos técnicos se distinguen de los resultados legítimamente vacíos.
+- Se conservan los contratos públicos y el funcionamiento independiente del RAG.
 
-Los mecanismos generales de evaluación se definen en [08-pruebas-y-validacion.md](08-pruebas-y-validacion.md).
-
-## 13. Criterios de aceptación
-
-- La recuperación utiliza los metadatos disponibles cuando la consulta lo requiere.
-- Los filtros se aplican únicamente cuando las restricciones son identificables.
-- Las modalidades de recogida se mantienen diferenciadas.
-- Los filtros de modalidad y distrito pueden combinarse correctamente.
-- No se sustituyen silenciosamente resultados de una modalidad o distrito por otros incompatibles.
-- Las consultas estructuradas no se limitan arbitrariamente al top-k semántico.
-- Las agrupaciones conservan la procedencia documental.
-- Los recuentos se calculan a partir de los registros disponibles.
-- Los ejemplos están respaldados por los datos del corpus.
-- Los horarios permanecen asociados a sus instalaciones correspondientes.
-- Las consultas ambiguas reciben aclaraciones cuando son necesarias.
-- La ausencia de resultados se distingue de un fallo técnico.
-- No se generan embeddings cuando la estrategia de recuperación no los necesita.
-- Se conserva el contrato público del RAG.
-- FastAPI y Streamlit no duplican la lógica de recuperación.
-- La incorporación de la capa MLOps no altera injustificadamente los mecanismos existentes.
-
-## 14. Especificaciones relacionadas
-
-| Documento | Responsabilidad |
-|---|---|
-| [01-retrieval.md](01-retrieval.md) | Pipeline documental y recuperación semántica |
-| [03-generacion.md](03-generacion.md) | Generación y fundamentación de respuestas |
-| [04-consultas-generales.md](04-consultas-generales.md) | Interpretación de intenciones y consultas |
-| [05-tools.md](05-tools.md) | Herramientas y operaciones autorizadas |
-| [08-pruebas-y-validacion.md](08-pruebas-y-validacion.md) | Evaluación y pruebas |
-| [09-datos-y-fuentes.md](09-datos-y-fuentes.md) | Corpus, metadatos y procedencia |
-| [11-arquitectura-mlops.md](11-arquitectura-mlops.md) | Separación arquitectónica |
-| [15-robustez-observabilidad.md](15-robustez-observabilidad.md) | Control de recursos y admisión de consultas |
+La estrategia de pruebas y evaluación se establece en [08-pruebas-y-validacion.md](08-pruebas-y-validacion.md).

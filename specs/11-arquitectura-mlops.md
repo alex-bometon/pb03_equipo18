@@ -3,86 +3,126 @@
 ## 1. Principios arquitectónicos
 
 - Separación de responsabilidades.
-- Independencia del núcleo del asistente respecto a sus clientes.
-- Validación de entradas y salidas mediante contratos Pydantic.
-- Centralización de las reglas de negocio en el backend.
-- Persistencia del historial mediante PostgreSQL.
-- Autenticación y autorización gestionadas por FastAPI.
-- Aislamiento de conversaciones mediante identificadores únicos.
-- Conservación de las herramientas y del pipeline RAG existentes.
-- Control determinista en Python de los límites y las decisiones de seguridad.
+- Independencia del núcleo respecto a las interfaces.
+- Validación de entradas y salidas mediante Pydantic.
+- Centralización de las reglas de negocio.
+- Control determinista de seguridad y ejecución.
+- Separación entre estado operativo y persistencia.
+- Conservación de las funcionalidades desarrolladas durante el PB02.
 
-## 2. Capas del sistema
+La incorporación de MLOps no implicará reescribir innecesariamente el asistente.
+
+## 2. Arquitectura general
+
+```mermaid
+flowchart TD
+    S[Streamlit] -->|HTTP| A[FastAPI]
+    W[Swagger y otros clientes] -->|HTTP| A
+    A --> C[Contratos y dependencias]
+    C --> B[Capa de servicios]
+    B --> G[LangGraph]
+    B --> P[SQLModel y PostgreSQL]
+    G --> M[MemorySaver]
+    G --> T[Herramientas]
+    T --> R[RAG y ChromaDB]
+    T --> E[ArcGIS municipal]
+    T --> H[Reloj del sistema]
+    B -->|Identificacion visual previa| L[Gemini]
+    G --> L
+    T --> L
+    R --> L
+    CLI[CLI] --> G
+    CLI --> R
+```
+
+## 3. Capas y responsabilidades
 
 | Capa | Tecnología | Responsabilidad |
 |---|---|---|
-| Presentación | Streamlit | Interacción con el usuario y representación de resultados |
-| Transporte | FastAPI | Exposición de endpoints HTTP |
-| Contratos | Pydantic | Validación y serialización de datos |
-| Servicios | Python | Seguridad, coordinación y reglas de negocio |
-| Orquestación | LangGraph | Ejecución del sistema multiagente |
-| Recuperación | RAG y ChromaDB | Recuperación de información documental |
-| Persistencia | SQLModel y PostgreSQL | Almacenamiento de datos del producto |
-| Inferencia | Gemini | Generación, embeddings y análisis multimodal |
-| Infraestructura | Docker y Render | Empaquetado y despliegue del servicio |
+| Presentación | Streamlit | Interacción y representación de resultados |
+| Transporte | FastAPI | Endpoints, dependencias y respuestas HTTP |
+| Contratos | Pydantic | Validación y serialización |
+| Servicios | Python | Autorización, admisión, coordinación y persistencia |
+| Orquestación | LangGraph | Especialistas, estado operativo y HITL |
+| Herramientas | Python | Operaciones documentales, geográficas, temporales y visuales |
+| Recuperación | RAG y ChromaDB | Recuperación y generación documental |
+| Persistencia | SQLModel y PostgreSQL | Almacenamiento relacional |
+| Inferencia | Gemini | Embeddings, razonamiento, generación y visión |
+| Infraestructura | Docker y Render | Empaquetado y despliegue |
 
-## 3. Restricciones arquitectónicas
+## 4. Dependencias y organización
 
-- Streamlit se comunica con el asistente exclusivamente mediante HTTP.
-- Streamlit no ejecuta el grafo ni invoca directamente las herramientas.
-- FastAPI utiliza las funciones públicas del orquestador existente.
-- Las decisiones HITL se validan contra el estado real de LangGraph.
-- Las conversaciones pertenecen a una API key concreta.
-- El historial persistente se obtiene desde PostgreSQL.
-- Los checkpoints de LangGraph permanecen en MemorySaver.
-- Las imágenes se reciben mediante HTTP y se procesan temporalmente en el backend.
-- Los secretos no se almacenan en el repositorio ni se exponen en los logs.
-- El RAG, el agente y FastAPI se despliegan dentro de un único contenedor Docker.
+- Streamlit utilizará exclusivamente los contratos HTTP del backend.
+- FastAPI coordinará las operaciones mediante la capa de servicios.
+- La capa de servicios utilizará los contratos públicos del orquestador y los mecanismos autorizados de persistencia.
+- LangGraph utilizará las herramientas y el núcleo RAG existentes.
+- El núcleo no dependerá de FastAPI, Streamlit ni PostgreSQL.
+- Los módulos de persistencia no ejecutarán el asistente.
+- La CLI conservará el acceso independiente al núcleo.
 
-## 4. Persistencia y estado
+La estructura objetivo del repositorio se establece en el apartado 24 de [plan-trabajo-pb03.md](../docs/plan-trabajo-pb03.md).
 
-PostgreSQL almacena los datos persistentes del producto: usuarios, API keys, conversaciones y mensajes.
+Se conservará src/ para los componentes existentes y los módulos relacionales previstos, api/ para el backend HTTP y app.py como punto de entrada de Streamlit.
 
-MemorySaver mantiene el estado operativo del grafo durante la vida del proceso.
+No se trasladarán archivos existentes únicamente para reproducir una estructura teórica.
 
-ChromaDB almacena el índice vectorial del corpus documental y puede reconstruirse a partir de los embeddings existentes.
+## 5. Estado y almacenamiento
 
-El historial SQL debe sobrevivir a los reinicios y redespliegues del backend. Los checkpoints de LangGraph y las aprobaciones pendientes pueden perderse al reiniciar el proceso.
+| Recurso | Almacenamiento | Supervivencia al redeploy |
+|---|---|---|
+| Usuarios y API keys | PostgreSQL | Sí |
+| Conversaciones y mensajes resueltos | PostgreSQL | Sí |
+| Checkpoints y HITL pendiente | MemorySaver | No |
+| Sesiones de autenticación | Memoria del backend | No |
+| Contadores de consumo | Memoria del backend | No |
+| Bloqueos y capacidad de ejecución | Memoria del backend | No |
+| Índice documental | ChromaDB | Reconstruible desde los artefactos |
+| Estado visual | Sesión de Streamlit | Independiente del backend |
 
-## 5. Concurrencia
+El historial persistente no sustituirá el estado operativo del agente.
 
-El backend debe admitir peticiones HTTP concurrentes de diferentes usuarios y conversaciones.
+No se reconstruirán automáticamente checkpoints perdidos utilizando mensajes SQL.
 
-Las operaciones que modifican una misma conversación deben ejecutarse de manera controlada, evitando modificaciones simultáneas del checkpoint.
+Las reglas correspondientes se establecen en [06-langgraph.md](06-langgraph.md), [13-persistencia.md](13-persistencia.md) y [14-autenticacion-autorizacion.md](14-autenticacion-autorizacion.md).
 
-El identificador thread_id representa una conversación de LangGraph y no un hilo de ejecución de Python.
+## 6. Concurrencia
 
-La primera versión utilizará un único proceso de Uvicorn y un único worker de ThreadPoolExecutor para la ejecución del asistente.
+La arquitectura inicial utilizará un único proceso de Uvicorn y un único worker de ThreadPoolExecutor para las operaciones costosas del asistente.
 
-La concurrencia de peticiones HTTP será independiente de la capacidad de ejecución simultánea del asistente.
+La concurrencia HTTP será independiente de la capacidad de ejecución del agente.
 
-Los mecanismos de admisión, bloqueo, concurrencia y timeout se definen en [15-robustez-observabilidad.md](15-robustez-observabilidad.md).
+thread_id identifica una conversación de LangGraph, no un hilo de ejecución de Python.
 
-## 6. Infraestructura
+Los mecanismos de exclusión mutua, admisión, timeout e invalidación de estados se establecen en [15-robustez-observabilidad.md](15-robustez-observabilidad.md).
 
-- FastAPI, LangGraph, RAG y ChromaDB: un contenedor Docker desplegado en Render.
-- PostgreSQL: servicio gestionado de Render.
-- Streamlit: cliente local configurado mediante API_BASE_URL.
-- Gemini y API municipal: servicios externos.
+No se incrementará el número de procesos o réplicas sin adaptar previamente los recursos compartidos en memoria.
 
-## 7. Compatibilidad y regresión
+## 7. Infraestructura
 
-La incorporación de la capa MLOps deberá preservar las funcionalidades existentes del asistente, del sistema RAG y de las herramientas, salvo aquellas modificaciones expresamente definidas en las especificaciones.
+| Componente | Entorno inicial |
+|---|---|
+| FastAPI, LangGraph, RAG y ChromaDB | Contenedor Docker en Render |
+| PostgreSQL | Servicio gestionado de Render |
+| Streamlit | Cliente local mediante API_BASE_URL |
+| Gemini y ArcGIS | Servicios externos autorizados |
 
-Las pruebas de regresión existentes constituirán la referencia para verificar dicha compatibilidad.
+La configuración de despliegue, secretos, CI/CD y recuperación operativa se establece en [16-despliegue.md](16-despliegue.md).
 
-## 8. Fuera de alcance inicial
+## 8. Compatibilidad y alcance
 
-- Kubernetes.
+Se conservarán los contratos y funcionalidades del PB02, salvo las modificaciones expresamente establecidas en las especificaciones.
+
+La estrategia de regresión y validación se define en [08-pruebas-y-validacion.md](08-pruebas-y-validacion.md).
+
+Quedan fuera del alcance inicial:
+
 - Microservicios independientes para el RAG.
+- Kubernetes.
 - Redis.
 - JWT y OAuth.
-- Checkpoints de LangGraph en PostgreSQL.
-- Despliegue de múltiples réplicas del backend.
+- Persistencia durable de checkpoints.
+- Múltiples réplicas del backend.
 
-La geolocalización automática del navegador y la implementación de CI/CD mediante GitHub Actions se consideran ampliaciones opcionales.
+La geolocalización automática, el despliegue independiente de Streamlit y la automatización de integración continua mediante GitHub Actions serán opcionales.
+
+La estrategia de CI/CD deberá documentarse independientemente de que se implemente su automatización.

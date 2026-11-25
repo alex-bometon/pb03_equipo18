@@ -2,111 +2,38 @@
 
 ## 1. Objetivo
 
-Definir la infraestructura necesaria para ejecutar, empaquetar, desplegar y mantener ReciclaTÍA como un servicio accesible mediante una API REST.
+Garantizar la ejecución reproducible, el despliegue y el mantenimiento de ReciclaTÍA mediante Docker, PostgreSQL y Render.
 
-El despliegue debe garantizar la reproducibilidad del entorno, la separación entre desarrollo y producción, la persistencia del historial, la protección de credenciales y la trazabilidad de las versiones desplegadas.
+Esta especificación define los requisitos de infraestructura.
 
-La infraestructura deberá permitir una futura evolución del producto sin introducir complejidad innecesaria durante esta fase del desarrollo.
+Los procedimientos operativos se desarrollan en [operaciones-despliegue.md](../docs/operaciones-despliegue.md).
 
-## 2. Tecnologías
+## 2. Entornos
 
-| Tecnología | Responsabilidad |
-|---|---|
-| Python 3.13.2 | Entorno de ejecución |
-| FastAPI | Exposición de la API REST |
-| Uvicorn | Servidor ASGI |
-| Docker | Empaquetado y ejecución del backend |
-| Docker Compose | Coordinación opcional de servicios locales |
-| PostgreSQL | Persistencia relacional |
-| SQLModel | Acceso a PostgreSQL |
-| ChromaDB | Almacenamiento vectorial |
-| Streamlit | Cliente del asistente |
-| Render | Infraestructura de despliegue |
-| GitHub | Control de versiones |
-| GitHub Actions | Automatización opcional de integración continua |
+| Componente | Desarrollo | Producción |
+|---|---|---|
+| Python | 3.13.2 mediante .venv | 3.13.2 mediante Docker |
+| FastAPI | Entorno virtual o Docker | Render Web Service |
+| PostgreSQL | Contenedor independiente | Render PostgreSQL |
+| ChromaDB | Índice local | Índice incluido en la imagen |
+| Streamlit | Ejecución local | Cliente local conectado a Render |
+| Configuración | Variables de entorno y .env | Variables de entorno de Render |
 
-## 3. Entornos
+Desarrollo, pruebas y producción utilizarán bases de datos, credenciales y configuraciones independientes.
 
-### 3.1. Desarrollo local
+No se utilizará PostgreSQL de producción para las pruebas ordinarias.
 
-El entorno local permitirá desarrollar y validar todas las funcionalidades antes de incorporarlas a producción.
+Se recomienda separar las credenciales de Gemini por entorno cuando resulte posible.
 
-Componentes:
+La arquitectura general se establece en [11-arquitectura-mlops.md](11-arquitectura-mlops.md).
 
-- Entorno virtual Python .venv.
-- Backend FastAPI ejecutado localmente o mediante Docker.
-- PostgreSQL ejecutado mediante Docker.
-- Streamlit ejecutado localmente.
-- Índice ChromaDB local.
-- Variables de entorno específicas de desarrollo.
+## 3. Dependencias
 
-### 3.2. Producción
+requirements.txt continuará siendo la referencia de dependencias del proyecto.
 
-El entorno de producción estará formado por:
+Se conservarán las dependencias existentes necesarias para el núcleo, la interfaz y las pruebas.
 
-- Un servicio web de Render.
-- Un contenedor Docker con FastAPI, LangGraph, RAG y ChromaDB.
-- Una base de datos PostgreSQL gestionada por Render.
-- Una URL pública HTTPS.
-- Variables de entorno configuradas en Render.
-- Una única instancia del backend.
-- Un único proceso de Uvicorn.
-- Un único worker de ThreadPoolExecutor.
-
-Streamlit podrá conectarse al backend desplegado sin modificar su código.
-
-### 3.3. Aislamiento
-
-Los entornos de desarrollo y producción no compartirán:
-
-- Bases de datos.
-- Credenciales administrativas.
-- API keys de consumidores.
-- Sesiones de autenticación.
-- Configuración de acceso.
-
-Se recomienda utilizar credenciales de Gemini independientes cuando sea posible para distinguir el consumo de cada entorno.
-
-Los datos utilizados durante las pruebas locales no se trasladarán automáticamente a producción.
-
-## 4. Arquitectura de infraestructura
-
-```mermaid
-flowchart TD
-    A[Navegador] --> B[Streamlit local]
-    B -->|HTTPS| C[Render Web Service]
-    C --> D[FastAPI y Uvicorn]
-    D --> E[ThreadPoolExecutor]
-    E --> F[LangGraph]
-    F --> G[MemorySaver]
-    F --> H[RAG y ChromaDB]
-    D -->|Red privada| I[Render PostgreSQL]
-    F --> J[Gemini API]
-    F --> K[API municipal de Madrid]
-```
-
-FastAPI, el núcleo del asistente y ChromaDB compartirán un único contenedor.
-
-PostgreSQL se ejecutará como un servicio independiente.
-
-No se desplegará una base de datos PostgreSQL dentro del contenedor del backend.
-
-## 5. Gestión de dependencias
-
-### 5.1. Dependencias existentes
-
-Se conservarán las dependencias de la fase de desarrollo anterior necesarias para:
-
-- Procesamiento documental.
-- Recuperación semántica.
-- Generación.
-- Orquestación multiagente.
-- Procesamiento de imágenes.
-- Validación.
-- Pruebas automatizadas.
-- Interfaz Streamlit.
-
-### 5.2. Dependencias adicionales
+Se declararán explícitamente las dependencias adicionales utilizadas:
 
 | Dependencia | Finalidad |
 |---|---|
@@ -114,147 +41,71 @@ Se conservarán las dependencias de la fase de desarrollo anterior necesarias pa
 | uvicorn | Servidor ASGI |
 | pydantic | Contratos HTTP |
 | sqlmodel | Modelos relacionales |
-| psycopg2-binary | Conexión con PostgreSQL |
-| python-multipart | Recepción de imágenes |
-| httpx | Cliente HTTP y pruebas de endpoints |
+| sqlalchemy | Motor, sesiones y transacciones |
+| psycopg2-binary | Driver PostgreSQL |
+| python-multipart | Recepción multimedia |
+| httpx | Cliente HTTP y pruebas |
 
-Las dependencias utilizadas directamente deberán declararse explícitamente, aunque ya se encuentren instaladas indirectamente.
+Se conservará bcrypt, ya presente en requirements.txt.
 
-Las versiones deberán ser compatibles con el entorno existente y con Python 3.13.2.
+Si los contratos utilizan EmailStr de Pydantic, deberá declararse también email-validator.
 
-### 5.3. Reproducibilidad
+Las versiones deberán ser compatibles con Python 3.13.2 y con las dependencias existentes.
 
-requirements.txt seguirá siendo la referencia de dependencias del proyecto.
+No se actualizarán indiscriminadamente las bibliotecas durante la integración.
 
-Una vez validada la implementación, se documentarán las versiones efectivamente utilizadas para facilitar la reproducción del entorno.
+Las versiones efectivamente utilizadas se documentarán después de validar la implementación.
 
-Las dependencias no se actualizarán indiscriminadamente durante la integración de la capa MLOps.
+## 4. Docker
 
-## 6. Docker
+### 4.1. Imagen base
 
-### 6.1. Objetivo
-
-Docker permitirá ejecutar el backend dentro de un entorno aislado y reproducible.
-
-La imagen contendrá las dependencias y los recursos necesarios para ejecutar ReciclaTÍA sin depender del entorno virtual del desarrollador.
-
-### 6.2. Imagen base
-
-Se propone utilizar:
+Se utilizará inicialmente:
 
 ```dockerfile
 FROM python:3.13.2-slim
 ```
 
-La imagen deberá contener únicamente las dependencias necesarias para ejecutar correctamente el servicio.
+Se comprobará la compatibilidad de las dependencias con las arquitecturas utilizadas en desarrollo y producción.
 
-Se evitarán herramientas y paquetes innecesarios.
+### 4.2. Construcción
 
-### 6.3. Contenido de la imagen
+El Dockerfile deberá:
 
-La imagen deberá incorporar:
+1. Configurar el entorno de ejecución.
+2. Instalar las dependencias.
+3. Incorporar el backend y el núcleo.
+4. Incorporar el corpus y los artefactos documentales.
+5. Reconstruir ChromaDB.
+6. Preparar los directorios temporales.
+7. Configurar el arranque de Uvicorn.
 
-- Código del backend FastAPI.
-- Núcleo del asistente.
-- Configuración no sensible.
-- Herramientas del agente.
-- Corpus documental necesario.
-- Chunks existentes.
-- Embeddings precalculados.
-- Índice ChromaDB reconstruido.
-- Dependencias necesarias.
+Se aprovechará la caché de construcción y, cuando resulte viable, se ejecutará el servicio con un usuario sin privilegios administrativos.
 
-Los archivos incluidos deberán corresponder a la versión del repositorio utilizada durante la construcción.
+### 4.3. Recursos documentales
 
-### 6.4. Exclusiones
+La imagen deberá incluir:
 
-No deberán incorporarse a la imagen:
+- data/raw/.
+- output/chunks.json.
+- output/embeddings.json.
+- El índice ChromaDB reconstruido.
 
-- Archivos .env con credenciales.
-- Entornos virtuales locales.
-- Historial de Git.
-- Cachés innecesarias.
-- Bases de datos locales.
-- Logs.
-- Imágenes temporales de usuarios.
-- Resultados de evaluación que no sean necesarios durante la ejecución.
-- Archivos de configuración privada del desarrollador.
-
-### 6.5. Dockerfile
-
-El Dockerfile deberá realizar las siguientes operaciones:
-
-1. Seleccionar la imagen base.
-2. Configurar el directorio de trabajo.
-3. Copiar requirements.txt.
-4. Instalar las dependencias.
-5. Copiar el código y los recursos necesarios.
-6. Reconstruir el índice vectorial.
-7. Preparar los directorios temporales.
-8. Configurar el comando de arranque del backend.
-
-Se priorizará el aprovechamiento de la caché de construcción de Docker.
-
-Cuando sea viable, el proceso se ejecutará mediante un usuario sin privilegios de administrador.
-
-### 6.6. Reconstrucción del índice vectorial
-
-Se utilizarán los artefactos existentes:
-
-- output/chunks.json
-- output/embeddings.json
-
-El índice podrá reconstruirse mediante:
+La reconstrucción se realizará preferentemente durante la construcción de la imagen:
 
 ```bash
 python main.py rag index --yes
 ```
 
-La reconstrucción deberá realizarse preferentemente durante la construcción de la imagen Docker.
+No se regenerarán los embeddings durante cada build o redeploy.
 
-No se ejecutará el pipeline completo de generación de embeddings durante cada build o redeploy.
+La construcción no deberá requerir GEMINI_API_KEY.
 
-La construcción de la imagen no deberá necesitar GEMINI_API_KEY.
+Las reglas de reconstrucción y actualización documental se establecen en [01-retrieval.md](01-retrieval.md) y [09-datos-y-fuentes.md](09-datos-y-fuentes.md).
 
-Si el corpus o el modelo de embeddings cambian, se realizará previamente el proceso correspondiente de actualización de artefactos.
+### 4.4. Exclusiones
 
-### 6.7. Arranque del backend
-
-Uvicorn deberá escuchar en:
-
-```text
-0.0.0.0
-```
-
-El puerto se obtendrá de la variable PORT.
-
-En ausencia de dicha variable se utilizará el puerto 8000.
-
-Comando de referencia:
-
-```dockerfile
-CMD ["sh", "-c", "exec uvicorn api.main:app --host 0.0.0.0 --port ${PORT:-8000} --workers 1"]
-```
-
-En producción no se utilizará la opción --reload.
-
-Se mantendrá un único proceso de Uvicorn para garantizar la coherencia de los recursos almacenados en memoria.
-
-### 6.8. Arquitecturas de hardware
-
-El entorno local puede utilizar ARM64, mientras que la infraestructura de despliegue puede utilizar una arquitectura diferente.
-
-La construcción de imágenes deberá comprobar la compatibilidad de las dependencias con la plataforma de destino.
-
-Render construirá la imagen a partir del Dockerfile del repositorio.
-
-No se asumirá que una imagen construida localmente en ARM64 puede ejecutarse directamente en cualquier infraestructura.
-
-## 7. Dockerignore
-
-Se creará un archivo .dockerignore para reducir el contexto de construcción y evitar incorporar archivos innecesarios o sensibles.
-
-Deberá excluir, como mínimo:
+.dockerignore deberá excluir:
 
 ```text
 .git
@@ -276,282 +127,51 @@ output/chroma_db/
 assets/.api_temporal/
 ```
 
-Los patrones deberán ajustarse a la estructura real del proyecto.
+Los patrones deberán adaptarse a la estructura real del repositorio.
 
-No deberán excluirse los documentos necesarios del corpus ni los artefactos:
+No se excluirán el corpus ni los artefactos necesarios para reconstruir el índice.
 
-```text
-output/chunks.json
-output/embeddings.json
+.dockerignore no sustituye a .gitignore.
+
+### 4.5. Arranque
+
+```dockerfile
+CMD ["sh", "-c", "exec uvicorn api.main:app --host 0.0.0.0 --port ${PORT:-8000} --workers 1"]
 ```
 
-El índice ChromaDB local se excluye porque se reconstruirá dentro de la imagen.
+En producción no se utilizará --reload.
 
-El archivo .dockerignore no sustituye a .gitignore.
+El número de procesos de Uvicorn será uno.
 
-## 8. PostgreSQL local
+## 5. PostgreSQL
 
-### 8.1. Ejecución
+### 5.1. Desarrollo
 
-PostgreSQL se ejecutará en un contenedor independiente durante el desarrollo local.
+PostgreSQL se ejecutará en un contenedor independiente con un volumen persistente.
 
-Se utilizará una versión estable de PostgreSQL compatible con la versión seleccionada en Render.
+Se utilizará una versión compatible con la seleccionada en Render.
 
-La versión concreta deberá fijarse antes de comenzar las pruebas de integración.
+La versión definitiva se fijará antes de las pruebas de integración.
 
-### 8.2. Configuración
+Docker Compose será opcional y podrá coordinar el backend, PostgreSQL, la red interna, el volumen y las comprobaciones de disponibilidad.
 
-El contenedor utilizará:
+### 5.2. Producción
 
-- POSTGRES_DB
-- POSTGRES_USER
-- POSTGRES_PASSWORD
+Se utilizará Render PostgreSQL.
 
-Las credenciales se obtendrán desde variables de entorno.
+El backend utilizará preferentemente la URL interna de conexión y ambos servicios estarán en la misma región.
 
-No se incluirán contraseñas reales en archivos versionados.
+El acceso externo se reservará para operaciones administrativas autorizadas.
 
-### 8.3. Persistencia
+### 5.3. Conexión
 
-Se utilizará un volumen Docker para conservar los datos de PostgreSQL.
+DATABASE_URL identificará la base de datos correspondiente al entorno.
 
-Eliminar o recrear el contenedor no deberá eliminar automáticamente la base de datos si se conserva el volumen.
+Las URL con esquema postgres:// se normalizarán a postgresql:// cuando corresponda.
 
-La eliminación del volumen constituirá una operación destructiva y deberá realizarse únicamente de manera intencionada.
+La configuración del host dependerá de si el backend se ejecuta directamente en el entorno virtual o dentro de una red Docker.
 
-### 8.4. Conexión desde el backend local
-
-Cuando FastAPI se ejecute directamente desde el entorno virtual:
-
-```text
-postgresql://usuario:password@localhost:5432/reciclatia
-```
-
-Cuando FastAPI se ejecute dentro de Docker Compose:
-
-```text
-postgresql://usuario:password@db:5432/reciclatia
-```
-
-En el segundo caso, db representa el nombre del servicio PostgreSQL dentro de la red de Docker Compose.
-
-localhost dentro de un contenedor hace referencia al propio contenedor, no a otros servicios.
-
-### 8.5. Comprobación de disponibilidad
-
-La base de datos deberá estar disponible antes de inicializar el backend.
-
-Podrá utilizarse pg_isready para comprobar el estado de PostgreSQL.
-
-Si se utiliza Docker Compose, se configurará un healthcheck y una dependencia de arranque basada en la disponibilidad del servicio.
-
-## 9. Docker Compose
-
-Docker Compose podrá utilizarse para simplificar la ejecución coordinada de los servicios locales.
-
-La configuración podrá incluir:
-
-- api: contenedor del backend.
-- db: contenedor PostgreSQL.
-- Red interna.
-- Volumen persistente de PostgreSQL.
-- Variables de entorno.
-- Healthchecks.
-
-Streamlit permanecerá inicialmente fuera de Docker Compose.
-
-Su incorporación como servicio independiente constituye una ampliación opcional.
-
-Docker Compose será una herramienta de desarrollo local y no un requisito para el despliegue en Render.
-
-## 10. Despliegue en Render
-
-### 10.1. Servicios necesarios
-
-| Servicio | Tipo |
-|---|---|
-| Backend ReciclaTÍA | Web Service |
-| Base de datos | Render PostgreSQL |
-
-Ambos servicios deberán encontrarse preferentemente en la misma región.
-
-### 10.2. Base de datos
-
-Se creará una instancia PostgreSQL gestionada por Render.
-
-El backend utilizará la URL interna de conexión proporcionada por Render.
-
-La conexión externa se reservará para operaciones administrativas autorizadas, cuando resulte necesaria.
-
-El acceso externo deberá restringirse cuando sea posible.
-
-### 10.3. Configuración del Web Service
-
-| Parámetro | Configuración |
-|---|---|
-| Repositorio | alex-bometon/pb03_equipo18 |
-| Rama | main |
-| Runtime | Docker |
-| Dockerfile | Dockerfile |
-| Health Check Path | /health |
-| Instancias | 1 |
-| Procesos Uvicorn | 1 |
-| Workers del asistente | 1 |
-
-La región y el tipo de instancia se determinarán según la disponibilidad, el coste y los requisitos de memoria del backend.
-
-### 10.4. Puerto
-
-El servicio utilizará el puerto proporcionado por Render mediante la variable PORT.
-
-No se fijará exclusivamente el puerto 8000 para producción.
-
-### 10.5. URL pública
-
-Render proporcionará una URL pública HTTPS.
-
-Los clientes utilizarán dicha URL como API_BASE_URL.
-
-Los endpoints protegidos seguirán exigiendo las credenciales definidas en la especificación HTTP.
-
-### 10.6. Health check
-
-Render comprobará la disponibilidad mediante:
-
-```http
-GET /health
-```
-
-El endpoint deberá verificar los recursos imprescindibles del backend sin ejecutar el asistente ni consumir servicios de inferencia.
-
-Un despliegue no se considerará validado únicamente porque el proceso de Uvicorn se haya iniciado.
-
-### 10.7. Plan de infraestructura
-
-Se priorizará una infraestructura de coste reducido adecuada para la evaluación académica.
-
-Podrá utilizarse un plan gratuito si la memoria, la disponibilidad y las restricciones del servicio permiten ejecutar correctamente el proyecto.
-
-No se asumirá que el plan gratuito constituye una infraestructura de producción comercial.
-
-## 11. Variables de entorno
-
-### 11.1. Configuración general
-
-| Variable | Responsabilidad |
-|---|---|
-| PORT | Puerto del backend |
-| API_BASE_URL | URL utilizada por Streamlit |
-| DATABASE_URL | Conexión PostgreSQL |
-| GEMINI_API_KEY | Autenticación con Gemini |
-| API_KEY | Credencial de aprovisionamiento administrativo |
-| CORS_ORIGINS | Orígenes web autorizados |
-| LOG_LEVEL | Nivel de logging |
-
-### 11.2. Autenticación y autorización
-
-Las variables de entorno relacionadas con la autenticación, la autorización, las sesiones y la emisión de credenciales se definen en [14-autenticacion-autorizacion.md](14-autenticacion-autorizacion.md).
-
-Las credenciales administrativas deberán obtenerse de un entorno seguro.
-
-No se utilizarán credenciales administrativas predeterminadas.
-
-### 11.3. Cuotas comerciales
-
-Las variables de entorno y los valores correspondientes a las cuotas comerciales del asistente se definen en [15-robustez-observabilidad.md](15-robustez-observabilidad.md).
-
-### 11.4. Robustez
-
-Las variables de entorno relacionadas con rate limiting, concurrencia, timeout, procesamiento de imágenes y observabilidad se definen en [15-robustez-observabilidad.md](15-robustez-observabilidad.md).
-
-### 11.5. Configuración local
-
-Las variables se obtendrán desde el entorno de ejecución y, durante el desarrollo, podrán cargarse desde un archivo .env.
-
-El archivo .env.example documentará los parámetros necesarios sin incluir secretos reales.
-
-### 11.6. Configuración en Render
-
-Las variables de producción se configurarán mediante el panel de administración de Render.
-
-No se utilizará un archivo .env de producción versionado en GitHub.
-
-Las variables proporcionadas por el entorno de ejecución deberán tener prioridad sobre los valores locales.
-
-### 11.7. Validación de configuración
-
-El backend comprobará durante su inicialización:
-
-- Variables imprescindibles.
-- Formato de DATABASE_URL.
-- Validez de los límites configurados.
-- Disponibilidad del índice vectorial.
-- Conectividad con PostgreSQL.
-
-Los parámetros necesarios exclusivamente para FastAPI no deberán impedir la ejecución independiente del núcleo RAG o de la CLI.
-
-## 12. Gestión de secretos
-
-Los siguientes valores se considerarán sensibles:
-
-- GEMINI_API_KEY
-- DATABASE_URL
-- API_KEY
-- Credenciales de PostgreSQL
-- Contraseñas administrativas
-- API keys de consumidores
-- Tokens de sesión
-
-### 12.1. Restricciones
-
-- No incorporar secretos al repositorio.
-- No incorporar secretos a la imagen Docker.
-- No introducir secretos mediante argumentos de construcción.
-- No registrar secretos en logs.
-- No mostrar secretos en capturas de pantalla.
-- No publicar credenciales en el informe técnico.
-- No proporcionar credenciales administrativas a consumidores ordinarios.
-
-### 12.2. Rotación
-
-Una credencial comprometida deberá revocarse o sustituirse.
-
-Eliminar una credencial de un archivo no garantiza que desaparezca del historial de Git.
-
-Si una credencial se publica accidentalmente, deberá considerarse comprometida.
-
-## 13. Inicialización del backend
-
-FastAPI gestionará la inicialización y el cierre de recursos mediante su ciclo de vida.
-
-### 13.1. Inicio
-
-1. Cargar y validar la configuración.
-2. Inicializar el engine de PostgreSQL.
-3. Comprobar la conexión.
-4. Crear las tablas inexistentes.
-5. Ejecutar el aprovisionamiento administrativo cuando corresponda.
-6. Verificar la disponibilidad de ChromaDB.
-7. Inicializar el grafo compartido.
-8. Inicializar los contadores, bloqueos y sesiones.
-9. Inicializar ThreadPoolExecutor.
-10. Habilitar el servicio HTTP.
-
-El aprovisionamiento deberá ser idempotente.
-
-### 13.2. Cierre
-
-Durante el cierre del servicio se gestionarán:
-
-- Las ejecuciones activas.
-- Los recursos del executor.
-- Las sesiones y conexiones de PostgreSQL.
-- Los archivos temporales.
-- Los recursos que requieran cierre explícito.
-
-No se asumirá que el proveedor de infraestructura permite finalizar indefinidamente todas las operaciones antes de terminar el contenedor.
-
-### 13.3. Creación de tablas
+### 5.4. Creación de tablas
 
 Se utilizará:
 
@@ -559,416 +179,249 @@ Se utilizará:
 SQLModel.metadata.create_all(engine)
 ```
 
-Este mecanismo crea las tablas inexistentes, pero no realiza migraciones de estructuras ya existentes.
+Este mecanismo creará las tablas inexistentes.
 
-No se eliminarán ni recrearán automáticamente las tablas durante el arranque.
+No realizará migraciones de estructuras existentes ni eliminará automáticamente tablas.
 
-Los cambios incompatibles en el esquema de PostgreSQL requerirán un procedimiento específico de migración.
+Los cambios incompatibles de esquema requerirán un procedimiento específico.
 
-Alembic queda fuera del alcance en esta fase del desarrollo.
+Alembic queda fuera del alcance inicial.
 
-## 14. Streamlit como cliente HTTP
+El modelo relacional se define en [13-persistencia.md](13-persistencia.md).
 
-### 14.1. Configuración
+## 6. Render
 
-Streamlit utilizará API_BASE_URL para identificar el backend.
-
-Ejemplo local:
-
-```dotenv
-API_BASE_URL=http://localhost:8000
-```
-
-Ejemplo de producción:
-
-```dotenv
-API_BASE_URL=https://nombre-del-servicio.onrender.com
-```
-
-La URL de producción será sustituida por la dirección real del servicio desplegado.
-
-### 14.2. Independencia
-
-La modificación de API_BASE_URL no deberá requerir cambios en el código de Streamlit.
-
-La interfaz no importará directamente:
-
-- El agente LangGraph.
-- Los nodos del grafo.
-- Las herramientas.
-- El sistema RAG.
-- Los modelos de persistencia.
-
-La comunicación con estos componentes se realizará exclusivamente mediante los endpoints de FastAPI.
-
-### 14.3. Funcionalidades
-
-La interfaz deberá permitir, según el perfil correspondiente:
-
-- Comprobar el estado del backend.
-- Iniciar una conversación.
-- Realizar consultas textuales.
-- Realizar consultas multimodales.
-- Mostrar las respuestas del asistente.
-- Mostrar fuentes y resultados geográficos.
-- Aprobar o rechazar planes.
-- Gestionar el thread_id.
-- Consultar el historial persistente autorizado.
-- Registrar usuarios e iniciar sesión.
-- Gestionar y seleccionar API keys propias.
-- Mostrar errores controlados.
-
-### 14.4. Timeout del cliente
-
-El timeout HTTP de Streamlit deberá ser superior al timeout configurado en el backend, con un margen suficiente para la transmisión y el procesamiento adicional de la petición.
-
-Se propone un valor inicial de 90 segundos para las consultas del asistente.
-
-Los endpoints que no requieren ejecución del agente podrán utilizar tiempos de espera inferiores.
-
-Los arranques en frío de Render pueden requerir un tratamiento específico.
-
-No se repetirán automáticamente peticiones POST que hayan terminado en timeout, ya que la ejecución anterior podría haber comenzado.
-
-## 15. Persistencia durante reinicios y redespliegues
-
-### 15.1. Recursos persistentes
-
-| Recurso | Conservación tras redeploy |
+| Parámetro | Configuración |
 |---|---|
-| Usuarios | Sí |
-| API keys | Sí |
-| Conversaciones | Sí |
-| Mensajes SQL | Sí |
-| Corpus documental versionado | Sí, mediante la imagen |
-| Embeddings precalculados | Sí, mediante la imagen |
-| Índice ChromaDB | Disponible en la nueva imagen |
+| Repositorio | alex-bometon/pb03_equipo18 |
+| Rama de despliegue | main |
+| Runtime | Docker |
+| Dockerfile | Dockerfile |
+| Health Check Path | /health |
+| Instancias | 1 |
+| Procesos de Uvicorn | 1 |
+| Workers del asistente | 1 |
+| Puerto | Variable PORT |
 
-La persistencia relacional depende de mantener la misma base de datos PostgreSQL.
+Render proporcionará la URL HTTPS utilizada por los clientes.
 
-### 15.2. Recursos no persistentes
+Streamlit cambiará de entorno mediante API_BASE_URL, sin modificar su código.
 
-| Recurso | Conservación tras redeploy |
+La selección de región, versión de PostgreSQL y tipo de instancia dependerá de la disponibilidad, memoria, CPU y coste.
+
+Podrá utilizarse un plan gratuito únicamente si satisface los requisitos técnicos y de persistencia durante el periodo de evaluación.
+
+No se asumirá que la infraestructura gratuita resulta suficiente para una explotación comercial.
+
+## 7. Configuración y secretos
+
+### 7.1. Variables generales
+
+| Variable | Responsabilidad |
 |---|---|
-| Checkpoints de MemorySaver | No |
-| Aprobaciones pendientes | No |
-| Sesiones de autenticación | No |
-| Contadores de rate limiting | No |
-| Contadores de cuotas comerciales | No |
-| Bloqueos de conversaciones | No |
-| Archivos temporales | No |
-| Ejecuciones activas | No garantizada |
+| PORT | Puerto del backend |
+| API_BASE_URL | Dirección del backend para Streamlit |
+| DATABASE_URL | Conexión PostgreSQL |
+| GEMINI_API_KEY | Credencial de Gemini |
+| API_KEY | Aprovisionamiento administrativo |
+| CORS_ORIGINS | Orígenes web autorizados |
+| LOG_LEVEL | Nivel de logging |
 
-Estas pérdidas constituyen limitaciones conocidas de la arquitectura inicial.
+Los parámetros de autenticación, incluyendo USER_TIER_ALLOWED_USER_IDS, se definen en [14-autenticacion-autorizacion.md](14-autenticacion-autorizacion.md).
 
-### 15.3. Conversaciones anteriores
+Los parámetros de robustez, incluyendo RATE_LIMIT_PER_MINUTE, ASK_TIMEOUT_SECONDS y AGENT_MAX_WORKERS, se definen en [15-robustez-observabilidad.md](15-robustez-observabilidad.md).
 
-Los usuarios podrán consultar el historial persistido después de un redeploy.
+.env.example documentará todos los parámetros necesarios sin incluir secretos reales.
 
-Las conversaciones cuyo checkpoint se haya perdido no podrán continuar automáticamente desde su estado anterior.
+### 7.2. Configuración por entorno
 
-El backend devolverá el error correspondiente cuando una operación necesite un estado no disponible.
+Las variables del entorno de ejecución tendrán prioridad sobre los valores cargados desde archivos locales.
 
-No se reconstruirán checkpoints a partir de los mensajes SQL durante esta fase del desarrollo.
+Los parámetros exclusivos de FastAPI se gestionarán mediante api/config.py.
 
-### 15.4. Validación de persistencia
+La ausencia de DATABASE_URL o de otras variables exclusivas del backend no impedirá ejecutar independientemente el RAG o la CLI.
 
-Se realizará una prueba de persistencia mediante:
+### 7.3. Protección
 
-1. Crear o utilizar una API key válida.
-2. Iniciar una conversación.
-3. Resolver un turno.
-4. Consultar el historial mediante la API.
-5. Registrar el thread_id y el número de mensajes.
-6. Ejecutar un redeploy del backend.
-7. Comprobar GET /health.
-8. Volver a consultar el historial con la misma API key.
-9. Verificar que los mensajes permanecen disponibles.
-10. Comprobar el comportamiento de una conversación que requiera un checkpoint perdido.
+Los secretos no se incorporarán a:
 
-La prueba deberá utilizar la misma base de datos antes y después del redeploy.
+- Repositorios.
+- Imágenes Docker.
+- Argumentos de construcción.
+- Logs.
+- Capturas de pantalla.
+- Documentación de entrega.
 
-## 16. Integración continua — CI
+Las credenciales comprometidas deberán revocarse o sustituirse.
 
-### 16.1. Requisitos de validación
+Eliminar un secreto del código no garantiza su desaparición del historial de Git.
 
-Toda versión candidata a despliegue deberá satisfacer los siguientes requisitos:
+## 8. Ciclo de vida del backend
 
-- Instalación correcta de dependencias.
-- Compatibilidad con Python 3.13.2.
-- Superación de las pruebas unitarias y de integración correspondientes.
-- Superación de las pruebas de regresión.
-- Construcción correcta de la imagen Docker.
-- Construcción de la imagen sin necesidad de credenciales de Gemini.
+FastAPI gestionará los recursos mediante su ciclo de vida.
 
-### 16.2. Independencia de las pruebas
+### 8.1. Inicialización
 
-Las pruebas automatizadas deberán utilizar mocks o dependencias controladas cuando intervengan servicios externos.
+1. Validar la configuración.
+2. Inicializar PostgreSQL y comprobar la conexión.
+3. Crear las tablas inexistentes.
+4. Ejecutar el aprovisionamiento administrativo idempotente.
+5. Comprobar el índice ChromaDB.
+6. Inicializar el grafo compartido.
+7. Inicializar sesiones, contadores y bloqueos.
+8. Inicializar el executor.
+9. Habilitar el servicio HTTP.
 
-Las pruebas unitarias no deberán depender de credenciales reales ni consumir recursos de Gemini.
+Una configuración imprescindible inválida impedirá inicializar correctamente el servicio.
 
-Las pruebas de integración con PostgreSQL deberán utilizar una base de datos aislada de producción.
+### 8.2. Disponibilidad
 
-### 16.3. Automatización
+GET /health comprobará los recursos imprescindibles conforme a [15-robustez-observabilidad.md](15-robustez-observabilidad.md).
 
-La automatización de las validaciones mediante GitHub Actions constituye una ampliación opcional de esta fase del desarrollo.
+No ejecutará el asistente ni realizará llamadas a Gemini o ArcGIS.
 
-Los requisitos de validación serán obligatorios independientemente de que su ejecución sea manual o automatizada.
+### 8.3. Cierre
 
-## 17. Entrega y despliegue continuo — CD
+Se gestionará el cierre del executor, conexiones, sesiones y archivos temporales.
 
-### 17.1. Origen del despliegue
+No se asumirá que la infraestructura permite finalizar indefinidamente las ejecuciones activas.
 
-Render construirá y desplegará el backend a partir de la rama main del repositorio GitHub.
+## 9. Timeouts
 
-Cada despliegue deberá estar asociado a una versión identificable del código fuente.
+ASK_TIMEOUT_SECONDS tendrá inicialmente un valor de 60 segundos.
 
-### 17.2. Despliegue automático
+El timeout HTTP del cliente Streamlit será inicialmente de 90 segundos.
 
-Los cambios integrados en main podrán desencadenar automáticamente una nueva construcción y despliegue.
+Ambos valores deberán calibrarse mediante pruebas de rendimiento.
 
-Cuando exista integración continua automatizada, el despliegue deberá estar condicionado a la superación de las comprobaciones requeridas.
+El timeout del cliente deberá contemplar el presupuesto de ejecución del asistente y un margen para la comunicación y las operaciones adicionales del backend.
 
-### 17.3. Despliegue manual
+Los timeouts HTTP no constituyen necesariamente límites absolutos de duración de toda la petición.
 
-La infraestructura deberá permitir realizar despliegues manuales para validar versiones, reproducir incidencias y recuperar el servicio.
+Los arranques en frío pueden incrementar los tiempos de espera.
 
-### 17.4. Trazabilidad
+Las reglas de ejecución, descarte de resultados tardíos y conservación de recursos se establecen en [15-robustez-observabilidad.md](15-robustez-observabilidad.md).
 
-Deberá ser posible identificar:
+El comportamiento del cliente se define en [07-streamlit.md](07-streamlit.md).
+
+## 10. Reinicios y redespliegues
+
+El historial SQL deberá conservarse después de reiniciar o redesplegar el backend, siempre que se mantenga la misma base de datos PostgreSQL.
+
+La conservación de los recursos documentales se garantizará mediante la imagen Docker.
+
+Los recursos almacenados exclusivamente en memoria se perderán con el proceso, conforme a [11-arquitectura-mlops.md](11-arquitectura-mlops.md).
+
+Durante un redeploy pueden coexistir temporalmente dos versiones del backend sin compartir checkpoints, sesiones, contadores ni bloqueos.
+
+No se garantizará la continuidad de operaciones activas durante un redeploy.
+
+La prueba de persistencia deberá comprobar:
+
+- Conservación de los mensajes previamente confirmados.
+- Acceso autorizado al historial.
+- Disponibilidad del servicio tras el redeploy.
+- Tratamiento controlado de checkpoints perdidos.
+
+El procedimiento se desarrolla en [operaciones-despliegue.md](../docs/operaciones-despliegue.md).
+
+## 11. CI/CD y rollback
+
+### 11.1. Integración continua
+
+Toda versión candidata a producción deberá superar:
+
+- Instalación y comprobación de dependencias.
+- Pruebas unitarias.
+- Pruebas de integración correspondientes.
+- Pruebas de regresión.
+- Construcción de Docker sin secretos.
+- Comprobaciones de disponibilidad.
+
+Las pruebas automatizadas ordinarias no consumirán recursos de Gemini.
+
+La automatización mediante GitHub Actions será opcional, pero las validaciones serán obligatorias.
+
+### 11.2. Despliegue continuo
+
+Render desplegará versiones identificables de main.
+
+Los despliegues automáticos deberán producirse únicamente a partir de versiones previamente validadas.
+
+Cuando no exista CI automatizada, las comprobaciones deberán realizarse antes de integrar los cambios en main.
+
+Se conservará información sobre:
 
 - Commit desplegado.
-- Fecha del despliegue.
-- Estado del despliegue.
+- Fecha y resultado del despliegue.
 - Resultado del health check.
-- Versión anterior disponible para recuperación.
+- Versión estable anterior.
 
-## 18. Rollback
+### 11.3. Rollback
 
-### 18.1. Requisitos de recuperación
+Deberá poder recuperarse una versión estable compatible con la base de datos existente.
 
-La infraestructura deberá permitir recuperar una versión estable del backend cuando un nuevo despliegue introduzca errores.
+Un rollback del backend no revertirá automáticamente cambios de esquema ni recuperará checkpoints, sesiones o contadores anteriores.
 
-La recuperación de una versión anterior no deberá eliminar los datos persistidos en PostgreSQL.
+La recuperación no deberá eliminar los datos persistidos.
 
-La versión recuperada deberá satisfacer los requisitos de disponibilidad, autenticación y acceso al historial.
+Los mecanismos disponibles dependerán de las capacidades del proveedor.
 
-### 18.2. Limitaciones
+El flujo de integración se establece en [flujo-desarrollo.md](../docs/flujo-desarrollo.md).
 
-Un rollback del backend no revierte automáticamente las modificaciones realizadas en PostgreSQL.
+## 12. Capacidad, costes y escalabilidad
 
-El código recuperado deberá ser compatible con la estructura actual de la base de datos.
+La infraestructura inicial utilizará una única instancia, un proceso de Uvicorn y un worker del asistente.
 
-El rollback no recuperará los checkpoints, las sesiones ni los contadores almacenados previamente en memoria.
+La selección de infraestructura deberá considerar:
 
-La recuperación de una versión anterior estará sujeta a las capacidades del proveedor de infraestructura.
-
-## 19. Eficiencia económica y consumo de recursos
-
-### 19.1. Objetivo
-
-La infraestructura y la arquitectura del asistente deberán minimizar el consumo innecesario de recursos computacionales y servicios externos, preservando los requisitos funcionales y de calidad.
-
-### 19.2. Medidas de control
-
-- Filtrado de dominio antes de ejecutar el asistente.
-- Reutilización de embeddings existentes.
-- Uso de rutas deterministas.
-- Límites de rondas y llamadas a herramientas.
-- Prevención de llamadas duplicadas.
-- Interrupción del flujo multimodal cuando la imagen no sea admisible.
-- Cuotas comerciales.
-- Rate limiting HTTP.
-- Restricción de ejecuciones simultáneas.
-- Control de emisión de API keys.
-- Reducción de contexto innecesario.
-- Configuración adecuada de timeouts y reintentos.
-
-Los mecanismos de control se definen en [15-robustez-observabilidad.md](15-robustez-observabilidad.md).
-
-### 19.3. Limitaciones económicas
-
-Las cuotas por API key no representan por sí solas un límite económico global.
-
-El número de consultas HTTP no equivale necesariamente al número de llamadas facturables a servicios externos.
-
-Los límites de consumo proporcionados por Gemini deberán utilizarse como protección adicional cuando estén disponibles.
-
-La selección de infraestructura deberá considerar los requisitos de CPU, memoria, almacenamiento, disponibilidad y coste.
-
-## 20. Escalabilidad
-
-### 20.1. Arquitectura inicial
-
-La primera versión utilizará:
-
-- Una instancia de Render.
-- Un proceso de Uvicorn.
-- Un worker del asistente.
-- PostgreSQL gestionado.
-- ChromaDB local.
-- MemorySaver.
-- Sesiones y cuotas almacenadas en memoria.
-
-Esta configuración prioriza la simplicidad, el control del consumo y la estabilidad.
-
-### 20.2. Escalado vertical
-
-Consiste en aumentar los recursos de la instancia existente.
-
-Puede incluir:
-
-- Mayor memoria RAM.
-- Mayor capacidad de CPU.
-- Mayor capacidad de almacenamiento.
-- Mayor capacidad de conexiones a PostgreSQL.
-
-El escalado vertical puede realizarse sin distribuir necesariamente los estados entre varias instancias.
-
-### 20.3. Incremento de workers
-
-El número de workers del asistente podrá aumentarse después de validar:
-
-- Consumo de memoria.
-- Latencia.
-- Consistencia de checkpoints.
-- Seguridad de los recursos compartidos.
-- Cuotas de Gemini.
-- Capacidad de PostgreSQL.
-
-No se aumentará el número de workers exclusivamente para reducir los tiempos de espera sin evaluar sus consecuencias.
-
-### 20.4. Escalado horizontal
-
-Consiste en ejecutar varias instancias del backend.
-
-La arquitectura actual no permite escalar horizontalmente de forma segura sin realizar modificaciones adicionales.
-
-Los siguientes recursos deberían externalizarse o coordinarse:
-
-| Recurso actual | Posible evolución |
-|---|---|
-| MemorySaver | Checkpoints persistentes compartidos |
-| Sesiones en memoria | Almacenamiento compartido de sesiones |
-| Rate limiting en memoria | Contadores distribuidos |
-| Cuotas comerciales | Registro persistente de consumo |
-| Bloqueos por conversación | Bloqueos distribuidos |
-| ChromaDB local | Estrategia de distribución o servicio vectorial compartido |
-
-La incorporación de Redis, checkpoints persistentes o servicios vectoriales externos queda fuera del alcance inicial.
-
-### 20.5. Redespliegues
-
-Aunque se configure una única instancia, el proveedor puede mantener temporalmente la versión anterior y la nueva durante un redeploy.
-
-Los recursos almacenados en memoria no se compartirán entre ambas ejecuciones.
-
-Los redeploys deberán considerarse puntos de pérdida del estado operativo del agente.
-
-## 21. Limitaciones de infraestructura
-
-La infraestructura seleccionada deberá satisfacer los requisitos técnicos del sistema teniendo en cuenta:
-
-- Memoria disponible.
-- Capacidad de CPU.
+- Memoria consumida por el núcleo y ChromaDB.
+- CPU y latencia.
+- Consumo de servicios externos.
 - Arranques en frío.
-- Suspensión por inactividad.
-- Disponibilidad del servicio.
-- Capacidad de almacenamiento.
-- Duración de la base de datos.
+- Disponibilidad.
+- Duración y capacidad de PostgreSQL.
 - Copias de seguridad.
-- Transferencia de datos.
+- Coste operativo.
 
-El backend deberá disponer de recursos suficientes para ejecutar FastAPI, LangGraph y ChromaDB conjuntamente.
+Las cuotas por API key no constituyen un límite económico global.
 
-La persistencia de PostgreSQL frente a un reinicio del backend no implica que la base de datos tenga una duración indefinida ni que disponga de copias de seguridad.
+Se utilizarán los límites disponibles del proveedor de inferencia como protección adicional.
 
-La infraestructura deberá permitir conservar los datos persistentes durante el periodo de utilización del servicio.
+Antes de incrementar workers deberán evaluarse memoria, latencia, consistencia de estados y capacidad de las dependencias.
 
-No se dependerá del almacenamiento local del contenedor para conservar información permanente del producto.
+El escalado horizontal requerirá coordinar o externalizar los recursos actualmente almacenados en memoria.
 
-## 22. Pruebas de despliegue
+No se dependerá del sistema de archivos del contenedor para almacenar datos permanentes del producto.
 
-### 22.1. Validación local
+## 13. Criterios de aceptación
 
-Las pruebas de despliegue local deberán verificar:
+- El entorno utiliza Python 3.13.2 y dependencias compatibles.
+- Docker puede construirse sin credenciales de Gemini.
+- La imagen contiene un índice ChromaDB utilizable.
+- PostgreSQL permanece independiente del backend.
+- Los secretos no se incorporan a la imagen ni al repositorio.
+- FastAPI funciona en Render mediante HTTPS.
+- El servicio utiliza PORT y responde a GET /health.
+- Swagger y los endpoints protegidos están disponibles.
+- Streamlit funciona con el backend local y desplegado.
+- Los entornos de desarrollo, pruebas y producción están aislados.
+- Se conserva el historial después de un redeploy.
+- La pérdida del estado operativo se gestiona correctamente.
+- Los despliegues son identificables mediante commits.
+- Existe un procedimiento de recuperación de versiones estables.
 
-- Instalación correcta de dependencias.
-- Construcción de la imagen Docker.
-- Arranque del contenedor.
-- Inicialización de PostgreSQL.
-- Disponibilidad del índice ChromaDB.
-- Disponibilidad de GET /health.
-- Acceso a Swagger.
-- Comunicación HTTP entre Streamlit y FastAPI.
+La estrategia de pruebas se establece en [08-pruebas-y-validacion.md](08-pruebas-y-validacion.md).
 
-### 22.2. Validación de seguridad y robustez
-
-El backend desplegado deberá respetar los contratos HTTP, las reglas de autenticación y autorización y los mecanismos de robustez establecidos en:
-
-- [12-contratos-http.md](12-contratos-http.md).
-- [14-autenticacion-autorizacion.md](14-autenticacion-autorizacion.md).
-- [15-robustez-observabilidad.md](15-robustez-observabilidad.md).
-
-### 22.3. Validación en Render
-
-Las pruebas de despliegue en Render deberán verificar:
-
-- Construcción correcta de la imagen.
-- Inicialización del backend.
-- Conexión con PostgreSQL.
-- Acceso mediante HTTPS.
-- Disponibilidad de GET /health.
-- Acceso a Swagger.
-- Funcionamiento de los endpoints protegidos.
-- Comunicación con Streamlit local.
-- Disponibilidad de los registros de observabilidad.
-- Persistencia del historial después de un redeploy.
-- Comportamiento controlado ante la pérdida de estados en memoria.
-
-### 22.4. Validación de recuperación
-
-Deberá verificarse que la recuperación de una versión estable del backend permite restablecer el servicio sin eliminar los datos persistidos en PostgreSQL.
-
-## 23. Criterios de aceptación
-
-- El entorno del proyecto es reproducible.
-- El entorno de ejecución utiliza Python 3.13.2.
-- El backend puede ejecutarse mediante Docker.
-- La imagen Docker no contiene credenciales.
-- La imagen incluye los recursos necesarios del RAG.
-- El índice ChromaDB puede reconstruirse sin generar nuevos embeddings.
-- La construcción de la imagen no requiere credenciales de Gemini.
-- PostgreSQL se ejecuta independientemente del backend.
-- FastAPI se despliega correctamente en Render.
-- El backend utiliza el puerto configurado por Render.
-- GET /health permite comprobar el estado del servicio.
-- Swagger está disponible mediante HTTPS.
-- Streamlit se comunica con el backend exclusivamente mediante HTTP.
-- El cambio de entorno no requiere modificar el código de Streamlit.
-- Se utiliza un único proceso de Uvicorn.
-- Se utiliza inicialmente un único worker del asistente.
-- El historial SQL sobrevive a un redeploy.
-- La pérdida de estados en memoria tras un redeploy se gestiona de forma controlada.
-- El aprovisionamiento administrativo es idempotente.
-- Los secretos se gestionan mediante variables de entorno.
-- Los entornos de desarrollo y producción están aislados.
-- Los despliegues pueden asociarse a una versión concreta del código fuente.
-- El rollback permite recuperar una versión estable sin eliminar los datos persistidos.
-- Los límites y mecanismos de protección se mantienen activos en producción.
-
-## 24. Fuera de alcance inicial
+## 14. Fuera de alcance
 
 - Kubernetes.
 - Redis.
 - Múltiples réplicas del backend.
-- Checkpoints de LangGraph en PostgreSQL.
+- Checkpoints persistentes.
 - Migraciones automatizadas mediante Alembic.
 - Infraestructura como código avanzada.
-- Balanceadores gestionados específicamente por el proyecto.
-- Sistemas externos avanzados de monitorización.
-- Base de datos vectorial en la nube.
-- Despliegue del RAG como servicio independiente.
-- Despliegue independiente de Streamlit.
-
-La incorporación de estas tecnologías deberá justificarse mediante necesidades reales del producto en futuras fases de desarrollo.
+- Monitorización externa avanzada.
+- Base vectorial en la nube.
+- Microservicios independientes para el RAG.
+- Despliegue independiente obligatorio de Streamlit.

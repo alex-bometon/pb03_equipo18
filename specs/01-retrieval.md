@@ -2,29 +2,13 @@
 
 ## 1. Objetivo
 
-Definir el funcionamiento del pipeline documental y del sistema de recuperación semántica de ReciclaTÍA.
+Definir el pipeline documental y el sistema de recuperación semántica de ReciclaTÍA.
 
-El sistema deberá recuperar evidencia documental relevante para las consultas del usuario, conservando la procedencia de la información y proporcionando resultados utilizables por la capa de generación y el sistema multiagente.
+El RAG deberá recuperar evidencia relevante, conservar su procedencia y permanecer independiente de LangGraph, FastAPI, Streamlit, PostgreSQL y los mecanismos de autenticación.
 
-## 2. Principios arquitectónicos
+La preparación del corpus se realizará fuera del flujo conversacional.
 
-El RAG funcionará de manera independiente de:
-
-- FastAPI.
-- Streamlit.
-- LangGraph.
-- PostgreSQL.
-- Los mecanismos de autenticación y autorización.
-- La gestión de sesiones de usuario.
-- Las cuotas comerciales del servicio HTTP.
-
-El corpus se preparará fuera del flujo conversacional.
-
-Durante una consulta únicamente se ejecutarán las operaciones de recuperación necesarias para obtener evidencia relevante.
-
-La incorporación de nuevas interfaces o mecanismos de persistencia no deberá modificar el comportamiento del pipeline documental ni del contrato de recuperación.
-
-## 3. Arquitectura
+## 2. Arquitectura
 
 ```mermaid
 flowchart TD
@@ -34,25 +18,36 @@ flowchart TD
         C --> D[chunks.json]
         D --> E[Gemini embeddings]
         E --> F[embeddings.json]
-        F --> G[Indice ChromaDB]
+        F --> G[ChromaDB]
     end
 
     subgraph Recuperacion
-        Q[Pregunta] --> V[Validacion]
+        Q[Pregunta] --> V[Validacion y filtros]
         V --> EQ[Embedding de consulta]
         EQ --> G
-        G --> K[Top-k, metadatos y distancia]
-        K --> R[Resultados de recuperacion]
+        G --> R[Top-k, metadatos y distancias]
     end
 ```
 
-La preparación documental y la recuperación semántica constituyen procesos diferenciados.
+### 2.1. Responsabilidades
 
-La generación de embeddings del corpus no formará parte de la ejecución ordinaria de las consultas del asistente.
+| Archivo | Responsabilidad |
+|---|---|
+| src/load.py | Carga documental |
+| src/clean.py | Limpieza y normalización |
+| src/chunk.py | Fragmentación |
+| src/ingest.py | Preparación de chunks |
+| src/embed.py | Generación de embeddings |
+| src/index.py | Construcción y gestión del índice |
+| src/retrieve.py | Recuperación semántica y filtros |
+| src/retrieve_structured.py | Recuperación estructurada |
+| src/input_validation.py | Validación compartida de consultas |
 
-## 4. Configuración
+La recuperación no será responsable de generar respuestas finales ni gestionar conversaciones.
 
-Los parámetros del pipeline documental y de recuperación se definirán en config.py.
+## 3. Configuración
+
+Los parámetros se centralizarán en config.py.
 
 | Parámetro | Valor |
 |---|---|
@@ -67,111 +62,77 @@ Los parámetros del pipeline documental y de recuperación se definirán en conf
 | MAX_PREGUNTA_CARACTERES | 500 |
 | MAX_CONTEXTO_CARACTERES | 12000 |
 
-Los parámetros deberán permanecer centralizados.
+FastAPI y Streamlit no mantendrán configuraciones alternativas de recuperación.
 
-No se introducirán configuraciones independientes de recuperación en FastAPI o Streamlit que puedan modificar de manera inconsistente el comportamiento del RAG.
+Los embeddings del corpus y de las consultas deberán utilizar configuraciones compatibles.
 
-### 4.1. Compatibilidad de embeddings
+Modificar el modelo o las dimensiones requerirá regenerar los embeddings y reconstruir el índice. Modificar la métrica de distancia requerirá reconstruir la colección.
 
-El modelo de embeddings, las dimensiones vectoriales y la configuración de la colección deberán ser compatibles con el índice existente.
+## 4. Preparación documental
 
-Los embeddings utilizados para representar las consultas deberán generarse mediante una configuración compatible con la utilizada para representar el corpus.
+### 4.1. Carga y fragmentación
 
-Un cambio del modelo de embeddings o de sus dimensiones requerirá actualizar los artefactos correspondientes y reconstruir el índice.
+Los documentos procederán exclusivamente del corpus autorizado en [09-datos-y-fuentes.md](09-datos-y-fuentes.md).
 
-La modificación de la métrica de distancia requerirá reconstruir la colección con la configuración correspondiente.
+La limpieza y fragmentación deberán conservar:
 
-## 5. Separación de responsabilidades
+- El significado de la información.
+- Las relaciones entre residuos y destinos.
+- Las condiciones y restricciones documentadas.
+- Los metadatos de procedencia.
 
-| Archivo | Responsabilidad |
-|---|---|
-| src/load.py | Lectura del corpus |
-| src/clean.py | Limpieza y normalización de HTML y CSV |
-| src/chunk.py | Fragmentación documental |
-| src/ingest.py | Orquestación de la preparación de chunks |
-| src/embed.py | Generación de vectores mediante Gemini |
-| src/index.py | Construcción y gestión del índice ChromaDB |
-| src/retrieve.py | Recuperación semántica top-k y filtros |
-| src/retrieve_structured.py | Recuperación estructurada del catálogo y las paradas |
+### 4.2. Embeddings
 
-La capa de recuperación no será responsable de generar respuestas finales, gestionar conversaciones ni determinar permisos de acceso.
+Los vectores se generarán mediante Gemini utilizando el modelo y las dimensiones configurados.
 
-## 6. Preparación documental
+No se mezclarán embeddings incompatibles ni se generarán vectores simulados para ocultar fallos del proveedor.
 
-### 6.1. Carga y limpieza
-
-El pipeline deberá cargar los documentos del corpus autorizado y aplicar los mecanismos de limpieza y normalización correspondientes.
-
-El procesamiento no deberá eliminar información necesaria para interpretar correctamente los residuos, sus destinos, las modalidades de recogida o los horarios publicados.
-
-La procedencia y las características del corpus se definen en [09-datos-y-fuentes.md](09-datos-y-fuentes.md).
-
-### 6.2. Fragmentación
-
-Los documentos se dividirán en fragmentos conforme a los parámetros establecidos.
-
-Los fragmentos deberán conservar los metadatos necesarios para identificar su procedencia.
-
-La fragmentación deberá permitir recuperar información relevante sin perder las relaciones documentales necesarias para interpretar correctamente el contenido.
-
-### 6.3. Generación de embeddings
-
-Los fragmentos documentales se representarán mediante embeddings generados con el modelo configurado.
-
-Los vectores deberán respetar las dimensiones establecidas.
-
-No se mezclarán embeddings incompatibles dentro de una misma colección.
-
-Los fallos durante la generación de embeddings deberán gestionarse como errores técnicos y no producir vectores simulados.
-
-### 6.4. Artefactos documentales
-
-El pipeline conservará los siguientes artefactos:
+### 4.3. Artefactos
 
 | Artefacto | Contenido |
 |---|---|
-| output/chunks.json | Fragmentos documentales y metadatos |
-| output/embeddings.json | Representaciones vectoriales del corpus |
-| output/chroma_db/ | Índice vectorial ChromaDB |
+| output/chunks.json | Fragmentos y metadatos |
+| output/embeddings.json | Vectores del corpus |
+| output/chroma_db/ | Índice vectorial |
 
-Los artefactos deberán ser coherentes entre sí.
+Los artefactos deberán mantener su coherencia documental y vectorial.
 
-El índice vectorial podrá reconstruirse utilizando los chunks y embeddings existentes, sin solicitar nuevamente la generación de embeddings al proveedor externo.
+Las consultas ordinarias no modificarán estos recursos.
 
-## 7. Recuperación semántica
+## 5. Recuperación semántica
 
-### 7.1. Flujo de recuperación
+### 5.1. Contrato público
 
-La recuperación semántica comprenderá:
-
-1. Validación de la pregunta.
-2. Validación de los parámetros de recuperación.
-3. Obtención del embedding de consulta, cuando no se haya proporcionado previamente.
-4. Consulta a la colección ChromaDB.
-5. Recuperación de los fragmentos relevantes.
-6. Conservación de sus metadatos y distancias.
-7. Aplicación de los filtros correspondientes.
-
-Los mecanismos adicionales de recuperación y selección de evidencia se definen en [02-mejoras-retrieval.md](02-mejoras-retrieval.md).
-
-### 7.2. Contrato público de búsqueda
+Se conservará la firma existente:
 
 ```python
-buscar_chunks_relevantes(
+def buscar_chunks_relevantes(
     pregunta: str,
     top_k: int = TOP_K,
     *,
     query_embedding: list[float] | None = None,
-) -> list[dict]
+) -> list[dict]:
+    ...
 ```
 
-La función deberá poder utilizarse independientemente de las interfaces del producto.
+query_embedding permitirá reutilizar un vector previamente calculado y evitar una nueva llamada a Gemini.
 
-El parámetro query_embedding permitirá utilizar un vector previamente calculado, evitando una nueva llamada al proveedor de embeddings.
+### 5.2. Flujo
 
-### 7.3. Contrato de resultados
+1. Validar la pregunta y top_k.
+2. Validar query_embedding cuando se proporcione.
+3. Abrir la colección existente.
+4. Construir los filtros correspondientes.
+5. Comprobar si los filtros tienen registros.
+6. Generar el embedding de consulta cuando sea necesario.
+7. Consultar ChromaDB.
+8. Validar y ordenar los resultados por distancia ascendente.
 
-Cada resultado conservará la siguiente estructura:
+Cuando un filtro válido no tenga coincidencias, se devolverá una lista vacía sin generar el embedding de consulta.
+
+Las estrategias adicionales se establecen en [02-mejoras-retrieval.md](02-mejoras-retrieval.md).
+
+### 5.3. Contrato de resultados
 
 ```python
 {
@@ -179,214 +140,125 @@ Cada resultado conservará la siguiente estructura:
     "distance": 0.0,
     "metadata": {
         "source": "...",
-        "path": "..."
+        "path": "...",
     },
 }
 ```
 
-Los metadatos podrán contener información adicional procedente del documento original.
+Se conservarán los metadatos adicionales del documento original.
 
-No se eliminarán ni modificarán indebidamente los metadatos necesarios para identificar la fuente.
+El número de resultados no superará top_k.
 
-La función devolverá como máximo el número de resultados solicitado mediante top_k.
+### 5.4. Interpretación de la distancia
 
-### 7.4. Interpretación de la distancia
+Con la métrica coseno, una distancia menor indica mayor similitud vectorial.
 
-La distancia representa la métrica utilizada por ChromaDB para comparar las representaciones vectoriales.
+La distancia no constituye una probabilidad de veracidad ni garantiza la suficiencia documental.
 
-Con la métrica coseno configurada, una distancia menor indica una mayor similitud vectorial.
+La evaluación de evidencia corresponde a [03-generacion.md](03-generacion.md).
 
-La distancia no representa:
+No se incorporarán nuevos umbrales de distancia ni mecanismos de reranking sin una evaluación previa que los justifique.
 
-- Una probabilidad de veracidad.
-- Una garantía de relevancia documental.
-- Una medida directa de confianza factual.
-- Una garantía de que el fragmento sea suficiente para responder a la consulta.
+### 5.5. Recuperación estructurada
 
-La suficiencia de la evidencia deberá evaluarse mediante los mecanismos de recuperación y generación correspondientes.
+La recuperación semántica y estructurada constituyen mecanismos complementarios.
 
-## 8. Reglas de validación
+Los contratos de recuperación estructurada se desarrollan en [02-mejoras-retrieval.md](02-mejoras-retrieval.md).
 
-### 8.1. Pregunta
+La selección de estrategias según la consulta corresponde a [04-consultas-generales.md](04-consultas-generales.md).
 
-La pregunta deberá:
+## 6. Validación y errores
 
-- Ser una cadena válida.
-- Contener información distinta de espacios en blanco.
-- Respetar la longitud máxima establecida.
+### 6.1. Entradas
 
-La validación deberá mantenerse aunque la pregunta haya sido previamente validada por FastAPI.
+La pregunta deberá ser una cadena no vacía de hasta 500 caracteres después de eliminar los espacios exteriores.
 
-### 8.2. Parámetros de recuperación
+top_k deberá ser un entero entre 1 y MAX_TOP_K_RETRIEVAL, sin admitir valores booleanos.
 
-top_k deberá ser un número entero comprendido entre 1 y MAX_TOP_K_RETRIEVAL.
+Los embeddings deberán contener:
 
-El cliente no podrá incrementar los límites de recuperación por encima de los máximos establecidos.
+- Una lista de exactamente EMBEDDING_DIMENSIONS elementos.
+- Valores numéricos finitos.
+- Ningún valor booleano.
 
-Modificar top_k no deberá alterar el contenido del índice vectorial.
+Las validaciones internas se conservarán independientemente de las realizadas por FastAPI.
 
-### 8.3. Embeddings
+### 6.2. Colección
 
-Cuando se proporcione un query_embedding, deberá comprobarse su compatibilidad con las dimensiones configuradas.
+La recuperación abrirá una colección existente.
 
-Los embeddings incompatibles o inválidos no deberán utilizarse para consultar la colección.
+No creará automáticamente una colección nueva cuando el índice no esté disponible.
 
-### 8.4. Colección vectorial
+Una colección inexistente, vacía o incompatible constituirá un fallo técnico de preparación o disponibilidad del índice.
 
-La colección deberá estar disponible y ser compatible con la configuración vigente.
+### 6.3. Resultados
 
-Los resultados devueltos por ChromaDB deberán respetar el contrato de recuperación.
+Se comprobará la correspondencia entre documentos, metadatos y distancias.
 
-No se fabricarán fragmentos, distancias ni metadatos cuando la recuperación no pueda ejecutarse correctamente.
+Los registros deberán contener texto utilizable, distancias numéricas finitas y metadatos compatibles con el contrato.
 
-## 9. Integración con el asistente
+Los resultados técnicamente inválidos no deberán transformarse silenciosamente en búsquedas vacías.
 
-El sistema multiagente utilizará el RAG mediante las herramientas y funciones públicas correspondientes.
+### 6.4. Clasificación de resultados
 
-LangGraph no implementará una segunda lógica de recuperación semántica.
+| Situación | Tratamiento |
+|---|---|
+| Pregunta o parámetros inválidos | Error de validación |
+| Embedding proporcionado inválido | Error de validación |
+| Embedding inválido devuelto por Gemini | Error técnico |
+| Colección inexistente o vacía | Error técnico |
+| Fallo de Gemini o ChromaDB | Error técnico |
+| Respuesta de recuperación inválida | Error técnico |
+| Filtro válido sin coincidencias | Lista vacía válida |
+| Búsqueda correctamente ejecutada sin resultados | Lista vacía válida |
+| Evidencia insuficiente | Resultado semántico evaluado por generación |
 
-FastAPI no consultará directamente ChromaDB para responder a las preguntas del asistente, evitando duplicar el flujo de recuperación.
+El núcleo no utilizará excepciones HTTP.
 
-Streamlit no tendrá acceso directo al índice vectorial.
+La transformación de errores corresponderá al backend conforme a [12-contratos-http.md](12-contratos-http.md).
 
-Los mecanismos de integración se definen en:
+## 7. Reconstrucción del índice
 
-- [05-tools.md](05-tools.md).
-- [06-langgraph.md](06-langgraph.md).
-- [11-arquitectura-mlops.md](11-arquitectura-mlops.md).
-
-## 10. Recuperación estructurada
-
-Las consultas que requieran información estructurada podrán utilizar los datos correspondientes del catálogo municipal y de las paradas documentadas.
-
-La recuperación estructurada y la recuperación semántica constituyen mecanismos complementarios.
-
-La información obtenida deberá conservar su procedencia y no podrá presentarse como exhaustiva cuando únicamente represente un subconjunto del corpus.
-
-Las reglas de selección e interpretación de consultas estructuradas se definen en [04-consultas-generales.md](04-consultas-generales.md).
-
-## 11. Reconstrucción y disponibilidad del índice
-
-### 11.1. Reconstrucción desde artefactos existentes
-
-El índice vectorial deberá poder reconstruirse a partir de:
-
-- output/chunks.json.
-- output/embeddings.json.
-
-El comando público correspondiente será:
+### 7.1. Desde artefactos existentes
 
 ```bash
 python main.py rag index --yes
 ```
 
-Esta operación no deberá requerir la generación de nuevos embeddings ni credenciales de Gemini.
+Reconstruirá el índice utilizando los chunks y embeddings disponibles, sin generar nuevos vectores ni requerir credenciales de Gemini.
 
-### 11.2. Reconstrucción completa
-
-El pipeline deberá conservar la posibilidad de realizar una reconstrucción completa del corpus mediante:
+### 7.2. Reconstrucción completa
 
 ```bash
 python main.py rag index --full --yes
 ```
 
-Esta operación incluirá la preparación documental y la generación de embeddings correspondientes.
+Ejecutará la preparación documental y generación de embeddings correspondientes.
 
-Podrá consumir recursos del proveedor externo.
+Esta operación podrá consumir recursos del proveedor.
 
-La reconstrucción completa no se ejecutará automáticamente durante las consultas ordinarias ni durante cada despliegue.
+### 7.3. Despliegue
 
-### 11.3. Actualización del índice
+La reconstrucción ordinaria durante la construcción de Docker utilizará los artefactos existentes.
 
-La actualización de los artefactos y del índice será una operación controlada.
+No se regenerarán los embeddings del corpus durante cada consulta o despliegue.
 
-La ejecución ordinaria del asistente utilizará un índice previamente preparado.
+La disponibilidad del índice se comprobará conforme a [15-robustez-observabilidad.md](15-robustez-observabilidad.md).
 
-Las consultas no deberán modificar la colección vectorial.
+La estrategia de construcción se establece en [16-despliegue.md](16-despliegue.md).
 
-### 11.4. Disponibilidad en producción
+## 8. Criterios de aceptación
 
-El índice ChromaDB deberá estar disponible en el entorno de ejecución del backend.
+- El pipeline y la recuperación funcionan independientemente de las interfaces.
+- Los chunks conservan su procedencia.
+- Los embeddings y la colección respetan la configuración.
+- La recuperación conserva su contrato público.
+- Los resultados respetan top_k y se ordenan por distancia.
+- Los embeddings proporcionados se reutilizan.
+- Los filtros sin coincidencias evitan llamadas innecesarias a Gemini.
+- Los fallos técnicos se distinguen de las búsquedas legítimamente vacías.
+- Las consultas no modifican el índice.
+- El índice puede reconstruirse sin generar nuevos embeddings.
+- No se introducen regresiones en el comportamiento del PB02.
 
-La imagen Docker incluirá los artefactos necesarios y un índice compatible reconstruido conforme a los requisitos de despliegue.
-
-La reconstrucción del índice durante la construcción de la imagen no deberá depender de PostgreSQL ni de credenciales de Gemini.
-
-La disponibilidad del índice será una condición necesaria para considerar operativo el servicio.
-
-Las reglas de construcción, inicialización y comprobación de disponibilidad se definen en [16-despliegue.md](16-despliegue.md) y [15-robustez-observabilidad.md](15-robustez-observabilidad.md).
-
-## 12. Gestión de errores
-
-El sistema deberá distinguir entre:
-
-| Situación | Naturaleza |
-|---|---|
-| Pregunta inválida | Error de validación |
-| Parámetros de recuperación inválidos | Error de validación |
-| Embedding incompatible | Error de validación |
-| Colección no disponible | Error técnico |
-| Fallo del proveedor de embeddings | Error técnico |
-| Fallo durante la consulta vectorial | Error técnico |
-| Respuesta de ChromaDB inválida | Error técnico |
-| Ausencia de fragmentos relevantes | Resultado válido |
-| Evidencia documental insuficiente | Resultado válido |
-
-La ausencia de resultados relevantes no deberá confundirse con la imposibilidad técnica de ejecutar la recuperación.
-
-Los errores del RAG deberán permitir que las capas superiores apliquen los mecanismos de recuperación o las respuestas controladas correspondientes.
-
-El núcleo RAG no dependerá de excepciones HTTP específicas de FastAPI.
-
-La transformación de los errores al contrato HTTP será responsabilidad del backend.
-
-## 13. Eficiencia
-
-La recuperación deberá evitar operaciones innecesarias.
-
-En particular:
-
-- No se generarán nuevamente los embeddings del corpus durante una consulta.
-- No se reconstruirá el índice para cada petición.
-- Se reutilizará el embedding de consulta cuando ya se encuentre disponible y sea compatible.
-- No se recuperarán más fragmentos de los permitidos.
-- No se realizarán consultas vectoriales adicionales cuando una ruta determinista pueda resolver correctamente la necesidad del usuario.
-- No se realizarán operaciones de recuperación después de que una consulta haya sido rechazada por los mecanismos previos de admisión.
-
-Las medidas de eficiencia no deberán comprometer la calidad de la evidencia recuperada.
-
-## 14. Criterios de aceptación
-
-- El pipeline documental puede ejecutarse independientemente del asistente multiagente.
-- El sistema de recuperación puede utilizarse sin FastAPI ni PostgreSQL.
-- Los documentos se procesan conforme a la configuración establecida.
-- Los chunks conservan sus metadatos de procedencia.
-- Los embeddings respetan el modelo y las dimensiones configurados.
-- La colección ChromaDB utiliza la métrica establecida.
-- Las consultas válidas devuelven fragmentos y fuentes utilizables cuando existe evidencia relevante.
-- El número de resultados no supera el top_k solicitado.
-- Los límites máximos de recuperación se respetan.
-- Un embedding de consulta previamente calculado evita una nueva llamada al proveedor.
-- Las consultas no modifican el índice vectorial.
-- Las preguntas inválidas no generan resultados simulados.
-- Los fallos técnicos no se presentan como ausencia de evidencia.
-- La distancia vectorial no se interpreta como una probabilidad de veracidad.
-- El índice puede reconstruirse a partir de los artefactos existentes.
-- La reconstrucción desde artefactos existentes no requiere generar nuevos embeddings.
-- El índice permanece disponible en el entorno desplegado.
-- FastAPI y Streamlit no duplican la lógica de recuperación.
-- La incorporación de la capa MLOps no altera injustificadamente el comportamiento del sistema RAG.
-
-## 15. Especificaciones relacionadas
-
-| Documento | Responsabilidad |
-|---|---|
-| [02-mejoras-retrieval.md](02-mejoras-retrieval.md) | Filtros, ranking y selección de evidencia |
-| [03-generacion.md](03-generacion.md) | Generación de respuestas fundamentadas |
-| [04-consultas-generales.md](04-consultas-generales.md) | Interpretación de consultas estructuradas |
-| [05-tools.md](05-tools.md) | Exposición de funcionalidades mediante herramientas |
-| [08-pruebas-y-validacion.md](08-pruebas-y-validacion.md) | Evaluación del sistema |
-| [09-datos-y-fuentes.md](09-datos-y-fuentes.md) | Corpus y procedencia documental |
-| [11-arquitectura-mlops.md](11-arquitectura-mlops.md) | Integración arquitectónica |
-| [15-robustez-observabilidad.md](15-robustez-observabilidad.md) | Control de recursos y disponibilidad |
-| [16-despliegue.md](16-despliegue.md) | Construcción y despliegue del índice |
+Las pruebas correspondientes se establecen en [08-pruebas-y-validacion.md](08-pruebas-y-validacion.md).

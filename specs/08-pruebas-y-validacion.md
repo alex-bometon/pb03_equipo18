@@ -2,1369 +2,391 @@
 
 ## 1. Objetivo
 
-Definir la estrategia de pruebas y validación de ReciclaTÍA para garantizar el cumplimiento de los requisitos funcionales, técnicos, arquitectónicos y de seguridad establecidos en las especificaciones.
+Verificar que ReciclaTÍA conserva las funcionalidades del PB02 y cumple los requisitos funcionales, técnicos, arquitectónicos y de seguridad del Project Break 03.
 
-La incorporación de la capa MLOps deberá verificarse tanto mediante nuevas pruebas como mediante la conservación de las comprobaciones correspondientes a las funcionalidades existentes de la fase de desarrollo anterior.
+Esta especificación establece la estrategia de validación y los criterios de aceptación.
+
+Los procedimientos, comandos y casos de prueba se desarrollan en [plan-pruebas.md](../docs/plan-pruebas.md).
 
 ## 2. Principios
 
-- Validación basada en los requisitos establecidos.
-- Conservación de las pruebas de regresión.
-- Independencia entre pruebas unitarias y servicios externos.
-- Separación entre validación estructural y evaluación factual.
-- Reproducibilidad de las pruebas.
-- Aislamiento de los entornos de desarrollo, pruebas y producción.
-- Protección de credenciales y datos personales.
-- Control del consumo de recursos durante la evaluación.
-- Verificación de situaciones satisfactorias y escenarios de fallo.
 - Trazabilidad entre requisitos y pruebas.
-
-La superación de una prueba automatizada no constituirá por sí sola una garantía de corrección factual de todas las respuestas del asistente.
+- Conservación de las comprobaciones de regresión.
+- Independencia y reproducibilidad de las pruebas.
+- Separación entre validación estructural y evaluación factual.
+- Utilización de dependencias controladas.
+- Aislamiento de los entornos.
+- Verificación de resultados satisfactorios y escenarios de fallo.
+- Control del consumo de servicios externos.
 
 No se considerarán verificadas funcionalidades que no hayan sido sometidas a las comprobaciones correspondientes.
 
-## 3. Niveles de validación
+## 3. Línea base del PB02
+
+La referencia inicial se encuentra en:
+
+[baseline-pb02.md](../entregables/evidencias/baseline-pb02.md)
+
+Corresponde al commit 3997e0a, validado el 24/11/2026 mediante Python 3.13.2.
+
+| Métrica | Resultado inicial |
+|---|---:|
+| Pruebas superadas | 358 |
+| Pruebas fallidas | 0 |
+| Tiempo de ejecución | 1,27 segundos |
+
+Estos resultados constituyen una referencia histórica de regresión, no una validación de las funcionalidades nuevas del PB03.
+
+El número de pruebas no constituye un objetivo cuantitativo obligatorio.
+
+Las pruebas existentes únicamente podrán modificarse cuando cambie un contrato autorizado o se corrija un comportamiento incorrecto.
+
+No se eliminarán comprobaciones ni se debilitarán sus condiciones para ocultar regresiones.
+
+## 4. Niveles de validación
 
 | Nivel | Finalidad |
 |---|---|
-| Pruebas unitarias | Verificar componentes y funciones de forma aislada |
-| Pruebas de integración interna | Verificar la comunicación entre componentes |
-| Pruebas de contrato | Comprobar estructuras, restricciones y comportamientos públicos |
-| Pruebas de regresión | Detectar modificaciones incompatibles con funcionalidades existentes |
-| Pruebas de seguridad | Comprobar autenticación, autorización y resistencia ante entradas adversariales |
-| Pruebas de robustez | Verificar límites, concurrencia, errores y recuperación |
-| Evaluación del RAG | Medir la pertinencia de la recuperación y la calidad de las respuestas |
-| Integración con servicios externos | Comprobar el funcionamiento con proveedores reales |
-| Pruebas de interfaz | Verificar los recorridos funcionales del consumidor |
-| Pruebas de despliegue | Comprobar el funcionamiento de la infraestructura |
-| Pruebas de extremo a extremo | Verificar recorridos completos del producto |
+| Unitario | Verificar funciones y componentes aislados |
+| Integración | Comprobar la interacción entre componentes |
+| Contratos HTTP | Verificar entradas, respuestas y códigos de estado |
+| Regresión | Detectar cambios incompatibles |
+| Evaluación RAG | Medir recuperación y calidad documental |
+| Seguridad | Verificar permisos y controles adversariales |
+| Robustez | Comprobar límites, concurrencia y recuperación |
+| Interfaz | Validar los recorridos del consumidor |
+| Infraestructura | Comprobar Docker, PostgreSQL y Render |
+| Extremo a extremo | Verificar recorridos completos del producto |
 
-Los diferentes niveles de validación deberán considerarse complementarios.
+Se conservará pytest como framework principal.
 
-## 4. Organización de las pruebas
+Los scripts de evaluación con proveedores reales permanecerán diferenciados de las pruebas unitarias ordinarias.
 
-### 4.1. Herramientas
+## 5. Aislamiento y reproducibilidad
 
-Se conservará pytest como framework principal de pruebas automatizadas.
+Las pruebas deberán ejecutarse sin depender de su orden ni de estados generados por otros casos.
 
-Las pruebas deberán organizarse dentro del directorio tests/.
+Se utilizarán fixtures, mocks, clientes de prueba y dependencias controladas cuando corresponda.
 
-Los scripts de evaluación que requieran recursos externos deberán mantenerse diferenciados de las pruebas unitarias ordinarias.
+Las pruebas unitarias no requerirán credenciales reales de Gemini, conexión a ArcGIS ni infraestructura de Render.
 
-### 4.2. Aislamiento
+Las pruebas relacionales utilizarán PostgreSQL en un entorno aislado de producción.
 
-Las pruebas deberán evitar dependencias no controladas entre casos.
+SQLite no sustituirá la validación de las restricciones reales de PostgreSQL.
 
-Cada prueba deberá disponer del estado necesario para ejecutarse de forma independiente.
+Se aislarán los checkpoints, sesiones, contadores, bloqueos, executors y archivos temporales entre pruebas.
 
-No se dependerá del orden de ejecución de las pruebas para obtener resultados satisfactorios.
+Las pruebas temporales utilizarán relojes controlados.
 
-### 4.3. Dependencias controladas
+Las pruebas de concurrencia utilizarán mecanismos de sincronización explícitos, evitando depender exclusivamente de pausas arbitrarias.
 
-Podrán utilizarse mocks, fixtures, clientes de prueba y otras dependencias controladas para verificar el comportamiento de los componentes.
+## 6. Evaluación del RAG
 
-Las pruebas unitarias no deberán requerir:
+### 6.1. Recuperación
 
-- Credenciales reales de Gemini.
-- Acceso al servicio municipal.
-- Una instancia de Render.
-- Conexión a PostgreSQL de producción.
-- Acceso a conversaciones reales de consumidores.
-
-### 4.4. Estado compartido
-
-Las pruebas que utilicen estructuras en memoria deberán garantizar el aislamiento de:
-
-- Checkpoints.
-- Sesiones.
-- Contadores de rate limiting.
-- Cuotas comerciales.
-- Bloqueos de conversaciones.
-- Capacidad de ejecución.
-- Registros de aprobaciones pendientes.
-- Archivos temporales.
-
-El estado generado durante una prueba no deberá modificar el resultado de otra.
-
-## 5. Regresión del PB02
-
-### 5.1. Conservación de funcionalidades
-
-La incorporación de MLOps no deberá eliminar funcionalidades previamente válidas del asistente, salvo aquellas modificaciones expresamente establecidas.
-
-Se conservarán las pruebas relacionadas con:
-
-- Pipeline documental.
-- Recuperación semántica.
-- Recuperación filtrada.
-- Consultas estructuradas.
-- Generación fundamentada.
-- Validación de fuentes.
-- Abstenciones.
-- Herramientas.
-- Interpretación temporal.
-- Orquestación multiagente.
-- Interfaz de terminal.
-
-### 5.2. Adaptación de pruebas
-
-Las pruebas existentes podrán modificarse cuando cambie expresamente un contrato o comportamiento del producto.
-
-En particular, deberán adaptarse aquellas que presupongan:
-
-- La existencia obligatoria de HITL en todos los turnos.
-- La generación sistemática de planes.
-- Los límites internos anteriores.
-- La identificación multimodal durante LangGraph.
-- La invocación directa del asistente desde Streamlit.
-
-Las modificaciones deberán conservar la finalidad de las comprobaciones que continúen siendo válidas.
-
-No se eliminarán pruebas ni se debilitarán sus condiciones únicamente para obtener una ejecución satisfactoria.
-
-### 5.3. Matriz de pruebas existentes
-
-| Componente | Archivos existentes |
-|---|---|
-| Recuperación semántica | test_retrieve.py |
-| Recuperación estructurada | test_retrieve_structured.py, test_rag_structured.py |
-| Generación | test_generate.py |
-| Integración RAG | test_rag.py |
-| Dominio geográfico | test_rag_domain.py |
-| Registro y permisos de herramientas | test_tools_registry.py |
-| Herramienta RAG | test_rag_tool.py |
-| Herramienta geográfica | test_api_puntos_limpios.py |
-| Herramienta multimodal | test_describir_imagen.py |
-| Herramienta temporal | test_hora_actual.py |
-| Sistema multiagente | test_agent_regression.py |
-| Interpretación temporal | test_agent_schedule.py |
-| Integración temporal | test_agent_schedule_integration.py |
-| Composición de resultados | test_agent_resultado.py |
-| Interfaz de terminal | test_cli.py |
-
-Los archivos deberán conservarse o adaptarse conforme a la evolución de sus componentes.
-
-## 6. Validación del pipeline documental
-
-Las pruebas deberán verificar:
-
-- Carga de los documentos autorizados.
-- Limpieza y normalización.
-- Fragmentación conforme a la configuración.
-- Conservación de metadatos.
-- Compatibilidad de embeddings.
-- Coherencia entre chunks y embeddings.
-- Reconstrucción del índice desde artefactos existentes.
-- Ausencia de generación innecesaria de embeddings.
-- Disponibilidad de la colección ChromaDB.
-- Independencia respecto a PostgreSQL y FastAPI.
-
-Las pruebas de reconstrucción desde embeddings existentes deberán verificar que no se realizan llamadas al proveedor de embeddings.
-
-Los requisitos correspondientes se definen en [01-retrieval.md](01-retrieval.md).
-
-## 7. Evaluación de la recuperación
-
-### 7.1. Recuperación semántica
+Se conservará tests/evaluate_retrieve.py.
 
 La evaluación deberá comprobar:
 
-- Pertinencia de los fragmentos recuperados.
-- Correspondencia con la consulta.
-- Conservación de metadatos.
-- Respeto del top-k.
-- Aplicación de los límites establecidos.
-- Comportamiento ante consultas sin evidencia relevante.
-- Diferenciación entre ausencia de resultados y fallo técnico.
+- Pertinencia de los fragmentos.
+- Correspondencia de fuentes y metadatos.
+- Aplicación de filtros.
+- Conservación de relaciones documentales.
+- Corrección de recuentos y agrupaciones.
+- Diferenciación entre búsquedas vacías y fallos técnicos.
 
-### 7.2. Recuperación filtrada
+Podrán utilizarse las métricas:
 
-Deberá verificarse:
-
-- Correspondencia de modalidad.
-- Correspondencia de distrito.
-- Combinación correcta de filtros.
-- Diferenciación de modalidades específicas.
-- Ausencia de sustituciones silenciosas.
-- Comportamiento ante restricciones ambiguas.
-- Ausencia de resultados incompatibles con la consulta.
-
-### 7.3. Recuperación estructurada
-
-Deberá verificarse:
-
-- Recuperación de registros pertinentes.
-- Agrupaciones correctas.
-- Recuentos calculados a partir de los datos.
-- Conservación de las relaciones entre residuos y destinos.
-- Asociación correcta entre paradas y horarios.
-- Ausencia de interpretaciones artificialmente exhaustivas.
-
-### 7.4. Métricas
-
-La evaluación podrá utilizar:
-
-- Hit@k.
-- Precision@k.
-- Recall@k.
-- Distribución de distancias vectoriales.
-- Posición del primer resultado relevante.
-- Proporción de consultas sin resultados.
-- Correspondencia de modalidad y distrito.
-
-Las métricas deberán interpretarse según la naturaleza de los casos evaluados.
-
-Precision@k y Recall@k únicamente se calcularán cuando se disponga de referencias de relevancia adecuadas.
-
-La coincidencia de una fuente documental no se considerará equivalente a la corrección factual de una respuesta.
-
-Se conservará tests/evaluate_retrieve.py como mecanismo de evaluación de la recuperación.
-
-## 8. Evaluación de la generación
-
-### 8.1. Validación estructural
-
-Las pruebas deberán verificar:
-
-- Cumplimiento del contrato de generación.
-- Respuestas no vacías cuando corresponda.
-- Estructura válida de las salidas.
-- Correspondencia de identificadores de citas.
-- Conservación de fuentes.
-- Gestión de respuestas estructuradas inválidas.
-- Ausencia de referencias inventadas.
-
-### 8.2. Evaluación factual
-
-La evaluación deberá comprobar:
-
-- Corrección de las recomendaciones.
-- Fundamentación de los destinos.
-- Conservación de condiciones y excepciones.
-- Correspondencia entre afirmaciones y fuentes.
-- Ausencia de extrapolaciones geográficas injustificadas.
-- Ausencia de información inventada.
-- Comunicación de limitaciones.
-
-### 8.3. Abstenciones
-
-Deberá distinguirse entre:
-
-| Resultado | Interpretación |
+| Métrica | Finalidad |
 |---|---|
-| Respuesta correcta cuando existe evidencia suficiente | Comportamiento satisfactorio |
-| Abstención cuando no existe evidencia suficiente | Comportamiento satisfactorio |
-| Respuesta cuando no existe evidencia suficiente | Respuesta indebida |
-| Abstención cuando existe evidencia suficiente | Abstención indebida |
+| Hit@k | Comprobar si aparece evidencia relevante entre los primeros k resultados |
+| Precision@k | Medir la proporción de resultados relevantes |
+| Recall@k | Medir la proporción de evidencias relevantes recuperadas |
+| MRR | Evaluar la posición del primer resultado relevante |
+| Distancia vectorial | Analizar la similitud de los resultados |
 
-Las aclaraciones deberán evaluarse separadamente cuando constituyan la respuesta esperada.
+Precision@k y Recall@k requerirán referencias de relevancia adecuadas.
 
-### 8.4. Consumo
+La coincidencia de una fuente documental no implica necesariamente que el fragmento recuperado permita responder correctamente.
 
-Las pruebas deberán comprobar que no se realizan llamadas al modelo cuando:
+Las comparaciones entre configuraciones utilizarán las mismas consultas y referencias de relevancia.
 
-- No existe contexto documental utilizable.
-- La consulta ha sido rechazada previamente.
-- Una respuesta determinista permite resolver correctamente la operación.
+### 6.2. Generación
 
-### 8.5. Scripts de evaluación
-
-Se conservarán los mecanismos existentes:
+Se conservarán:
 
 - tests/evaluate_rag.py.
 - tests/smoke_generate.py.
 - tests/prueba_consumo.py.
 
-Su ejecución podrá requerir recursos externos.
+La evaluación distinguirá:
 
-Estos scripts no deberán confundirse con las pruebas unitarias ordinarias.
-
-## 9. Validación de intenciones y herramientas
-
-### 9.1. Interpretación de consultas
-
-Las pruebas deberán verificar:
-
-- Consultas sobre residuos concretos.
-- Consultas generales sobre el catálogo.
-- Consultas estructuradas.
-- Consultas sobre modalidades de recogida.
-- Consultas geográficas.
-- Consultas temporales.
-- Consultas compuestas.
-- Reformulaciones.
-- Consultas ambiguas.
-- Consultas correspondientes a otros municipios.
-
-### 9.2. Registro y permisos
-
-Deberá comprobarse:
-
-- Existencia de las herramientas registradas.
-- Rechazo de herramientas inexistentes.
-- Rechazo de herramientas no autorizadas.
-- Validación de argumentos.
-- Aplicación de permisos por especialista.
-- Aplicación de presupuestos internos.
-- Ausencia de ejecuciones después de alcanzar los límites.
-
-### 9.3. Herramienta geográfica
-
-Las pruebas deberán verificar:
-
-- Validación de coordenadas.
-- Validación de radios.
-- Validación de modalidades.
-- Cálculo de distancias.
-- Ordenación de resultados.
-- Límite de instalaciones devueltas.
-- Conservación del total de coincidencias.
-- Procedencia de los resultados.
-- Activación del respaldo ante fallos técnicos.
-- Ausencia de respaldo ante respuestas válidas sin coincidencias.
-
-### 9.4. Herramienta temporal
-
-Deberá verificarse:
-
-- Utilización de Europe/Madrid.
-- Interpretación de horarios diarios y semanales.
-- Intervalos que atraviesan la medianoche.
-- Cambios horarios.
-- Diferenciación entre dentro, fuera y desconocido.
-- Priorización por distancia.
-- Priorización por horario.
-- Aplicación de la regla específica de envases de vidrio.
-
-### 9.5. Integración de resultados
-
-Deberá comprobarse que la integración conserva las evidencias documentales, geográficas y temporales correspondientes.
-
-No se considerará correcta una recomendación únicamente porque la instalación propuesta sea cercana.
-
-Los requisitos se definen en [04-consultas-generales.md] y [05-tools.md].
-
-## 10. Validación del sistema multiagente
-
-### 10.1. Enrutamiento
-
-Las pruebas deberán verificar:
-
-- Ejecución exclusiva del especialista residuos cuando sea suficiente.
-- Ejecución exclusiva del especialista puntos cuando sea suficiente.
-- Ejecución de ambas especialidades cuando la consulta lo requiera.
-- Fallback ante decisiones inválidas del supervisor.
-- Ausencia de ejecuciones innecesarias.
-- Respeto de las transiciones autorizadas.
-
-### 10.2. Estado
-
-Deberá comprobarse:
-
-- Creación de estados independientes.
-- Aislamiento mediante thread_id.
-- Limpieza de campos transitorios.
-- Conservación del contexto necesario.
-- Ausencia de evidencias obsoletas.
-- Prioridad del checkpoint real.
-- Gestión de ejecuciones incompletas.
-
-### 10.3. Respuestas directas
-
-Las pruebas deberán verificar que una respuesta directa válida:
-
-- Puede finalizar correctamente la ejecución.
-- No requiere una interrupción HITL.
-- No genera un plan artificial.
-- No genera una aprobación ficticia.
-- Permite continuar la conversación cuando corresponda.
-- Se distingue de un fallo técnico.
-
-### 10.4. Límites internos
-
-Deberán verificarse los límites de:
-
-- Iteraciones del supervisor.
-- Rondas por especialista.
-- Llamadas por especialista.
-- Llamadas por turno.
-- Turnos por conversación.
-- Historial interno.
-- Recursión del grafo.
-
-Los valores concretos se definen en [15-robustez-observabilidad.md](15-robustez-observabilidad.md).
-
-## 11. Validación de HITL
-
-### 11.1. Interrupción
-
-Las pruebas deberán verificar que una aprobación pendiente corresponde a una interrupción real antes del nodo aplicar.
-
-No será suficiente comprobar el valor del atributo pendiente_hitl.
-
-### 11.2. Identificador de aprobación
-
-Deberá comprobarse que:
-
-- Cada plan pendiente dispone de un approval_id válido.
-- El identificador corresponde al plan vigente.
-- No se reutilizan identificadores de aprobaciones anteriores.
-- El identificador se elimina al resolver la aprobación.
-
-### 11.3. Matriz de estados
-
-| Situación | pendiente_hitl | plan_aprobado | done | Turno resuelto |
-|---|---|---|---|---|
-| Respuesta directa válida | False | None | False | Sí |
-| Plan pendiente | True | None | False | No |
-| Plan aprobado | False | True | True | Sí |
-| Plan rechazado | False | False | False | Sí |
-
-La resolución de un turno no deberá confundirse con la finalización de una conversación.
-
-### 11.4. Escenarios de prueba
-
-| Escenario | Resultado esperado |
+| Dimensión | Comprobación |
 |---|---|
-| Aprobar un plan válido | Ejecutar aplicar y finalizar la conversación |
-| Rechazar un plan válido | Resolver el turno y permitir reformulación |
-| Aprobar sin HITL pendiente | Rechazar la operación |
-| Preguntar con HITL pendiente | Rechazar la operación |
-| Aprobar con un identificador obsoleto | Rechazar sin modificar el checkpoint |
-| Resolver dos veces la misma aprobación | Impedir una segunda resolución |
-| Resolver concurrentemente una aprobación | Permitir una única modificación válida |
-| Fallar durante la reanudación | No comunicar éxito ficticio |
-| Aprobar automáticamente mediante HTTP | Utilizar las mismas transiciones autorizadas |
-| Resolver una respuesta directa | No ejecutar aplicar |
-| Aprobar un plan del último turno permitido | Permitir resolver el plan pendiente |
+| Estructura | Cumplimiento del contrato de salida |
+| Referencias | Correspondencia entre citas y fuentes |
+| Exactitud factual | Corrección de las afirmaciones |
+| Fundamentación | Respaldo de las afirmaciones mediante evidencia |
+| Suficiencia | Cobertura de los aspectos solicitados |
+| Abstención | Capacidad de evitar respuestas no fundamentadas |
+| Consumo | Utilización justificada de modelos y herramientas |
 
-Los contratos y códigos de error se definen en [12-contratos-http.md](12-contratos-http.md).
+La validación estructural no constituye por sí sola una garantía de exactitud factual.
 
-## 12. Validación de los contratos HTTP
+### 6.3. Abstenciones
 
-### 12.1. Cobertura
+| Evidencia suficiente | El sistema responde | Evaluación |
+|---|---|---|
+| Sí | Sí | Respuesta esperada, pendiente de comprobar su calidad |
+| Sí | No | Abstención indebida |
+| No | Sí | Respuesta indebida |
+| No | No | Abstención correcta |
 
-Todos los endpoints públicos, protegidos y administrativos deberán disponer de las comprobaciones correspondientes a sus contratos.
+Las aclaraciones se evaluarán separadamente cuando constituyan el resultado esperado.
 
-Deberán verificarse:
+Los fallos técnicos no se contabilizarán como abstenciones semánticas correctas.
 
-- Métodos HTTP.
-- Rutas.
-- Cabeceras.
-- Campos obligatorios.
-- Campos opcionales.
-- Valores predeterminados.
-- Tipos de datos.
-- Restricciones de validación.
-- Códigos de estado.
-- Estructuras de respuesta.
+### 6.4. Consumo
 
-### 12.2. Modelos Pydantic
+Se comprobará la ausencia de llamadas innecesarias a proveedores cuando:
 
-Las pruebas deberán verificar los modelos establecidos en [12-contratos-http.md](12-contratos-http.md).
+- No exista contexto documental utilizable.
+- El filtrado previo resuelva la consulta.
+- La recuperación estructurada resulte suficiente.
+- Puedan reutilizarse respuestas o evidencias válidas.
+- Exista una identificación multimodal previamente admitida.
 
-Los datos inválidos no deberán provocar ejecuciones del asistente.
+Los procedimientos y conjuntos de evaluación se establecen en el plan de pruebas.
 
-### 12.3. Respuestas satisfactorias
+## 7. Cobertura por componente
 
-Deberán comprobarse las respuestas correspondientes a:
+| Componente | Ámbito mínimo de validación | Especificación |
+|---|---|---|
+| Pipeline y recuperación | Chunks, embeddings, índice, filtros e integridad | 01, 02 |
+| Generación | Contrato, citas, evidencia y abstenciones | 03 |
+| Interpretación | Intenciones, compatibilidad, horarios y contexto | 04 |
+| Herramientas | Permisos, argumentos, resultados y respaldo | 05 |
+| LangGraph | Enrutamiento, estado, límites y HITL | 06 |
+| Streamlit | Comunicación HTTP, sesión y presentación | 07 |
+| Fuentes | Procedencia, metadatos y referencias públicas | 09 |
+| Seguridad | Inyecciones, archivos, permisos y secretos | 10 |
+| Arquitectura | Independencia y dirección de dependencias | 11 |
+| API REST | Contratos, códigos HTTP y OpenAPI | 12 |
+| Persistencia | Restricciones, transacciones e historial | 13 |
+| Autenticación | Cuentas, sesiones, credenciales y propiedad | 14 |
+| Robustez | Cuotas, concurrencia, timeout y observabilidad | 15 |
+| Infraestructura | Docker, Render, persistencia y recuperación | 16 |
 
-- Consultas directas.
-- Abstenciones.
-- Aclaraciones.
-- Planes pendientes.
-- Planes aprobados.
-- Planes rechazados.
-- Consultas multimodales.
-- Registro de usuarios.
-- Autenticación.
-- Emisión de API keys.
-- Consulta de conversaciones.
-- Consulta de mensajes.
-- Operaciones administrativas.
+Los requisitos concretos permanecerán definidos en sus respectivas especificaciones.
 
-Las respuestas satisfactorias deberán respetar el contrato aplicable.
+El inventario de archivos de pruebas y los casos detallados se mantendrán en docs/plan-pruebas.md.
 
-### 12.4. Respuestas de error
+## 8. Validaciones críticas del PB03
 
-Deberán verificarse todas las categorías de error establecidas:
+### 8.1. Contratos HTTP
 
-| HTTP | Categoría |
-|---|---|
-| 401 | Autenticación |
-| 403 | Autorización |
-| 404 | Recursos inexistentes o inaccesibles |
-| 409 | Conflictos de estado |
-| 413 | Tamaño de archivo |
-| 415 | Formato multimedia |
-| 422 | Validación |
-| 429 | Límites de consumo |
-| 500 | Fallos internos |
-| 503 | Indisponibilidad o falta de capacidad |
-| 504 | Timeout |
+Cada endpoint deberá comprobar sus entradas válidas e inválidas, permisos, respuestas y códigos de estado.
 
-El catálogo completo de códigos y situaciones se define en el documento 12.
+Las respuestas AskOut satisfactorias deberán contener error=None y respetar los invariantes del estado correspondiente.
 
-### 12.5. Contrato ErrorOut
+Se comprobará especialmente:
 
-Deberá comprobarse:
-
-- Existencia de code.
-- Existencia de message.
-- Existencia de request_id.
-- Correspondencia entre el código HTTP y el código de error.
-- Ausencia de información sensible.
+- HTTP 400 EMPTY_QUESTION para preguntas vacías.
+- HTTP 422 para incumplimientos de validación.
+- Correspondencia entre ErrorOut y el código HTTP.
 - Correspondencia entre request_id y X-Request-ID.
+- Ausencia de ejecuciones no autorizadas.
+- Ausencia de falsos éxitos HTTP 200.
 
-### 12.6. OpenAPI
+Una respuesta técnicamente fallida no se considerará correcta por contener texto comprensible.
 
-La documentación OpenAPI deberá representar los contratos implementados.
+### 8.2. Estado, HITL y persistencia
 
-Swagger deberá permitir utilizar las operaciones conforme a sus mecanismos de autenticación y autorización.
+| Situación | HITL pendiente | Incrementa turnos | Persiste mensajes |
+|---|---|---|---|
+| Respuesta previa a LangGraph | No | No | No |
+| Propuesta válida del agente | Sí | Sí, al iniciar el turno | No |
+| Resolución mediante aprobación | No | No | Sí |
+| Resolución mediante rechazo | No | No | Sí |
+| Fallo técnico | No constituye propuesta válida | Según fase alcanzada | No |
+| Timeout | No constituye propuesta válida | Según fase alcanzada | No |
 
-## 13. Validación de autenticación y autorización
+Toda ejecución satisfactoria de LangGraph deberá alcanzar una interrupción real antes de aplicar.
 
-### 13.1. Registro de usuarios
+Se comprobará la resolución manual y automática, la validez de approval_id, las aprobaciones obsoletas, la exclusión mutua y la resolución del último turno permitido.
 
-Las pruebas deberán contemplar:
+Las respuestas anteriores al agente no deberán crear checkpoints ni nuevas conversaciones SQL.
 
-- Registro válido.
-- Email inválido.
-- Email duplicado.
-- Normalización del email.
-- Contraseña inválida.
-- Restricciones de longitud y composición.
-- Ausencia de contraseñas originales en PostgreSQL.
+Los mensajes de turnos resueltos deberán almacenarse atómicamente conforme a [13-persistencia.md](13-persistencia.md).
 
-### 13.2. Autenticación mediante sesión
+Se comprobará el tratamiento de fallos de persistencia y estados inconsistentes.
 
-Deberá verificarse:
+### 8.3. Autenticación y autorización
 
-- Inicio de sesión válido.
-- Credenciales incorrectas.
-- Usuario inexistente.
-- Usuario desactivado.
-- Usuario eliminado.
-- Token válido.
-- Token inválido.
-- Token caducado.
-- Cierre de sesión.
-- Invalidación después de modificar la contraseña.
-- Pérdida de sesiones después de reiniciar el backend.
+Se verificarán las modalidades de autenticación y los permisos establecidos en [14-autenticacion-autorizacion.md](14-autenticacion-autorizacion.md).
 
-### 13.3. API keys
+Las pruebas deberán comprobar especialmente:
 
-Deberá verificarse:
-
-- Emisión de claves Free anónimas.
-- Emisión de claves Free registradas.
-- Emisión autorizada de claves User.
-- Rechazo de solicitudes User no autorizadas.
-- Restricción de emisión de claves Admin.
-- Almacenamiento mediante hash.
-- Unicidad de las claves.
-- Ausencia del secreto original en consultas posteriores.
-- Límites de claves activas.
-- Límites temporales de emisión.
-- Emisión concurrente.
-- Desactivación.
-- Reactivación autorizada.
-- Eliminación lógica.
-
-### 13.4. Modalidades de autenticación
-
-Las pruebas deberán verificar:
-
-- Autenticación mediante X-API-Key.
-- Autenticación mediante Authorization.
-- Autenticación mediante sesión y X-API-Key-Id.
-- Rechazo de modalidades incompatibles.
-- Rechazo de selección de claves ajenas.
-- Rechazo del uso ordinario de claves Admin mediante sesión.
-
-### 13.5. Autorización por roles
-
-Deberán comprobarse los permisos de Free, User y Admin para cada operación protegida.
-
-Un usuario registrado no deberá adquirir automáticamente permisos User o Admin.
-
-### 13.6. Autorización por propiedad
-
-Las pruebas deberán verificar:
-
-- Acceso a conversaciones propias.
-- Rechazo de conversaciones ajenas.
-- Aislamiento entre API keys de un mismo usuario.
+- Aislamiento entre API keys, incluso cuando pertenezcan al mismo usuario.
 - Acceso administrativo autorizado.
-- Historial de claves propias desactivadas mediante sesión.
-- Restricción de acceso ordinario a claves eliminadas.
+- Emisión de claves User mediante autorización explícita.
+- Ausencia de elevaciones de privilegios.
+- Invalidación de sesiones y credenciales.
+- Revocación durante una ejecución.
+- Límites de emisión y reactivación.
+- Ausencia de exposición de secretos.
 
-Los requisitos detallados se definen en [14-autenticacion-autorizacion.md](14-autenticacion-autorizacion.md).
+### 8.4. Filtrado previo y multimodalidad
 
-## 14. Validación de persistencia
+Las pruebas comprobarán las decisiones de admisibilidad y las operaciones efectivamente ejecutadas.
 
-### 14.1. Base de datos de pruebas
+Una consulta textual resuelta antes del agente no deberá invocar Gemini, RAG ni LangGraph.
 
-Las pruebas de integración deberán utilizar una instancia o base de datos PostgreSQL aislada.
+Las imágenes técnicamente inválidas no deberán llegar a la identificación semántica.
 
-No deberán ejecutarse operaciones destructivas sobre la base de datos de producción.
+Las imágenes adaptables deberán procesarse conforme a los límites establecidos.
 
-### 14.2. Modelo relacional
+Las identificaciones visuales no admitidas no ejecutarán LangGraph.
 
-Deberán verificarse:
+Las identificaciones admitidas deberán reutilizarse sin una segunda llamada multimodal.
 
-- Creación de tablas.
-- Tipos de datos.
-- Claves primarias.
-- Claves foráneas.
-- Restricciones de unicidad.
-- Enumerados.
-- Valores obligatorios.
-- Valores predeterminados.
-- Integridad referencial.
+Se comprobará la contabilización correspondiente, la procedencia de las observaciones y la eliminación segura de archivos temporales.
 
-Las pruebas deberán comprobar las restricciones reales de PostgreSQL.
+### 8.5. Cuotas y concurrencia
 
-Una prueba realizada exclusivamente con SQLite no será suficiente para acreditar la compatibilidad con PostgreSQL.
-
-### 14.3. Entidades
-
-Deberá verificarse el almacenamiento y recuperación de:
-
-- Usuarios.
-- API keys.
-- Conversaciones.
-- Mensajes.
-
-### 14.4. Persistencia de turnos
-
-Las pruebas deberán comprobar que:
-
-- Los turnos resueltos se almacenan conforme a la política de persistencia.
-- Los turnos pendientes de HITL no se almacenan como resueltos.
-- Los fallos técnicos no generan respuestas satisfactorias persistidas.
-- Los timeouts no provocan almacenamiento de resultados tardíos.
-- Las aprobaciones duplicadas no duplican mensajes.
-- Los turnos rechazados pueden persistirse sin finalizar la conversación.
-
-La persistencia de respuestas generadas antes de LangGraph deberá verificarse conforme a la política conjunta que se establezca en los documentos 12, 13 y 15.
-
-### 14.5. Atomicidad
-
-El almacenamiento de los mensajes de un turno deberá comprobarse mediante pruebas de transacción.
-
-Si falla una de las inserciones, no deberá quedar un turno parcialmente almacenado.
-
-### 14.6. Fallo de persistencia
-
-Deberá simularse un fallo de PostgreSQL después de una ejecución satisfactoria del asistente.
-
-La prueba deberá verificar:
-
-- Ausencia de respuesta HTTP satisfactoria.
-- Rollback cuando corresponda.
-- Conservación del historial anterior.
-- Protección frente a la reutilización de un checkpoint inconsistente.
-
-### 14.7. Eliminación lógica
-
-Deberá comprobarse que la eliminación lógica conserva la integridad referencial e impide las operaciones ordinarias incompatibles con el estado del recurso.
-
-### 14.8. Reinicio y redeploy
-
-Deberá verificarse que los usuarios, API keys, conversaciones y mensajes permanecen disponibles cuando se conserva la misma base de datos PostgreSQL.
-
-Los checkpoints de MemorySaver no deberán confundirse con los mensajes persistidos.
-
-Los requisitos se definen en [13-persistencia.md](13-persistencia.md).
-
-## 15. Validación de límites y cuotas
-
-### 15.1. Independencia de controles
-
-Las pruebas deberán distinguir:
+Se verificarán de manera independiente:
 
 - Rate limiting HTTP.
 - Cuotas comerciales.
-- Límites temporales de emisión de API keys.
-- Límites de claves activas.
-- Límites internos del asistente.
-- Capacidad global de ejecución.
+- Contadores de turnos.
+- Límites de seguridad.
+- Presupuestos internos.
+- Capacidad global.
 
-### 15.2. Ventanas temporales
+Se comprobarán los límites exactos, la expiración de ventanas, el aislamiento de identidades y Retry-After.
 
-Los mecanismos de ventanas temporales deslizantes deberán probarse mediante referencias temporales controladas.
+Las operaciones concurrentes no podrán modificar simultáneamente un mismo checkpoint.
 
-No será necesario esperar intervalos reales de minutos, horas o días para verificar el funcionamiento de los contadores.
+Cuando se agote la capacidad global, no se admitirán ejecuciones adicionales ni se consumirán cuotas comerciales por una operación no admitida.
 
-### 15.3. Escenarios
+### 8.6. Timeouts
 
-Deberán verificarse:
+Se comprobará que una ejecución que exceda su presupuesto devuelve HTTP 504 AGENT_TIMEOUT.
 
-- Peticiones dentro del límite.
-- Peticiones que alcanzan exactamente el límite.
-- Peticiones que superan el límite.
-- Expiración de registros antiguos.
-- Recuperación de capacidad después de avanzar la ventana.
-- Aplicación simultánea de diferentes ventanas temporales.
-- Cálculo de Retry-After cuando corresponda.
-- Aislamiento de contadores por identidad.
-- Aplicación atómica ante peticiones concurrentes.
+La finalización de la petición HTTP deberá distinguirse de la finalización real del worker.
 
-### 15.4. Cuotas comerciales
+Las pruebas deberán verificar:
 
-Deberá comprobarse:
+- Conservación de bloqueos y recursos mientras continúe una ejecución activa.
+- Ausencia de persistencia de mensajes tardíos.
+- Comprobación del plazo antes de crear la conversación, iniciar LangGraph o resolver una aprobación automática.
+- Ausencia de inicio tardío del grafo después de comunicar un timeout.
+- Invalidación del hilo cuando no pueda garantizarse su consistencia.
+- Liberación de recursos una única vez.
+- Ausencia de reintentos automáticos de operaciones POST inciertas.
 
-- Aplicación de los límites Free.
-- Aplicación de los límites User.
-- Ausencia de cuota comercial para Admin.
-- Aplicación de límites técnicos al administrador.
-- Contadores compartidos entre POST /ask y POST /ask/image.
-- Ausencia de consumo adicional mediante POST /approve.
-- Ausencia de consumo ante rechazos previos no contabilizables.
-- Contabilización de operaciones que hayan iniciado una ejecución sujeta a cuota.
+Los mecanismos y límites se establecen en [15-robustez-observabilidad.md](15-robustez-observabilidad.md).
 
-### 15.5. Reinicio de contadores
+### 8.7. Seguridad y observabilidad
 
-Las pruebas deberán verificar el comportamiento de los contadores en memoria después de reiniciar el proceso.
+Se verificarán los controles frente a entradas adversariales, accesos indebidos, argumentos manipulados y referencias inventadas.
 
-No se atribuirá persistencia durable a mecanismos que no la proporcionan.
+Los registros deberán permitir identificar peticiones, resultados, errores y duraciones sin exponer información sensible.
 
-Los valores y reglas concretos se definen en [15-robustez-observabilidad.md](15-robustez-observabilidad.md).
+Se comprobará la política CORS mediante solicitudes de orígenes autorizados y no autorizados.
 
-## 16. Validación del filtrado previo de dominio
+### 8.8. Fallos de dependencias
 
-### 16.1. Casos de prueba
+Se simularán, como mínimo, los siguientes fallos:
 
-| Consulta | Comportamiento esperado |
+| Dependencia | Comprobación |
 |---|---|
-| Pregunta claramente perteneciente al dominio | Admitir la consulta |
-| Pregunta inequívocamente ajena al dominio | Respuesta controlada |
-| Pregunta ambigua identificable previamente | Solicitar aclaración |
-| Reformulación dependiente del contexto | Interpretar el contexto autorizado |
-| Pregunta sobre servicios municipales de otro municipio | No extrapolar información de Madrid |
-| Pregunta válida sin palabras explícitas de reciclaje | No rechazar únicamente por ausencia de palabras clave |
+| Gemini | Diferenciar indisponibilidad, salida inválida y timeout |
+| ArcGIS | Activar el respaldo autorizado cuando corresponda |
+| PostgreSQL | Impedir falsos éxitos y proteger la consistencia |
 
-### 16.2. Ausencia de ejecución
+También se comprobarán fallos de ChromaDB y de las herramientas imprescindibles.
 
-Las pruebas deberán comprobar que una consulta rechazada durante el filtrado previo no provoca llamadas a:
+Los fallos técnicos no recuperados deberán comunicarse conforme al catálogo HTTP.
 
-- LangGraph.
-- Gemini.
-- RAG.
-- Herramientas.
-- Síntesis.
-- HITL.
+## 9. Rendimiento y consumo
 
-### 16.3. Evaluación de clasificación
+Las evaluaciones deberán utilizar condiciones comparables e identificar la versión del código, configuración y entorno.
 
-Deberán evaluarse:
+Se registrarán, cuando corresponda:
 
-- Verdaderos positivos.
-- Verdaderos negativos.
-- Falsos positivos.
-- Falsos negativos.
-- Consultas ambiguas.
-- Reformulaciones contextuales.
-
-El conjunto de evaluación deberá permitir identificar tanto la admisión indebida de consultas ajenas al dominio como el rechazo incorrecto de consultas válidas.
-
-Las métricas de clasificación deberán utilizar una definición explícita de la clase positiva.
-
-## 17. Validación multimodal
-
-### 17.1. Formatos y archivos
-
-Las pruebas deberán contemplar:
-
-- JPEG válido.
-- PNG válido.
-- Formato no permitido.
-- Extensión engañosa.
-- Archivo vacío.
-- Archivo corrupto.
-- Imagen animada no admitida.
-- Archivo situado fuera de ubicaciones autorizadas.
-
-### 17.2. Peso y resolución
-
-Deberán verificarse los siguientes escenarios:
-
-| Situación | Resultado esperado |
-|---|---|
-| Imagen dentro de los límites finales | Admitir el procesamiento |
-| Imagen superior al peso final pero adaptable | Comprimir y continuar |
-| Imagen superior a la resolución final pero adaptable | Redimensionar y continuar |
-| Imagen que supera el límite absoluto de recepción | Rechazar |
-| Imagen que supera la resolución absoluta | Rechazar |
-| Imagen que no puede adaptarse de forma segura | Rechazar |
-| Imagen corrupta | Rechazar antes de la identificación |
-| Riesgo de descompresión excesiva | Impedir el procesamiento inseguro |
-
-La compresión o el redimensionamiento satisfactorios no deberán presentarse como errores.
-
-### 17.3. Validación semántica
-
-Deberá comprobarse:
-
-- Identificación perteneciente al dominio.
-- Identificación fuera del dominio.
-- Contenido no permitido.
-- Identificación incierta.
-- Resultado estructurado inválido.
-- Fallo técnico del proveedor.
-
-### 17.4. Interrupción del flujo
-
-Una imagen no admitida semánticamente no deberá provocar una ejecución posterior de LangGraph.
-
-Las pruebas deberán comprobar la ausencia de llamadas posteriores al RAG, las herramientas geográficas, la síntesis y HITL.
-
-### 17.5. Reutilización
-
-Las imágenes admitidas deberán utilizar la identificación previamente obtenida.
-
-Deberá comprobarse mediante mocks o contadores de llamadas que no se repite innecesariamente la identificación multimodal durante el mismo turno.
-
-### 17.6. Archivos temporales
-
-Deberá comprobarse:
-
-- Generación de nombres controlados.
-- Restricción de rutas.
-- Eliminación tras finalizar su utilización.
-- Conservación mientras una ejecución activa los necesite.
-- Limpieza posterior a excepciones.
-- Ausencia de referencias operativas a archivos eliminados.
-
-Los requisitos se definen en [05-tools.md](05-tools.md) y [15-robustez-observabilidad.md](15-robustez-observabilidad.md).
-
-## 18. Validación de concurrencia
-
-### 18.1. Bloqueo por conversación
-
-Se simularán peticiones que intenten modificar simultáneamente un mismo thread_id.
-
-Deberá verificarse que solamente una puede modificar el estado correspondiente.
-
-La petición incompatible deberá recibir THREAD_BUSY conforme al contrato HTTP.
-
-### 18.2. Capacidad global
-
-Con la configuración inicial de un único worker, se simulará una ejecución activa y una nueva petición correspondiente a otra conversación.
-
-Deberá verificarse:
-
-- Rechazo inmediato mediante SERVER_BUSY.
-- Ausencia de nueva ejecución.
-- Ausencia de consumo comercial.
-- Ausencia de acumulación de consultas pendientes.
-
-### 18.3. Independencia de operaciones HTTP
-
-La ocupación del worker del asistente no deberá impedir por sí sola la atención de operaciones HTTP que no requieran dicho worker.
-
-### 18.4. Liberación de recursos
-
-Deberá verificarse la liberación de los recursos después de:
-
-- Ejecuciones satisfactorias.
-- Excepciones.
-- Fallos de dependencias.
-- Operaciones rechazadas.
-- Finalización real de ejecuciones que hayan sufrido timeout.
-
-### 18.5. Reproducibilidad
-
-Las pruebas de concurrencia deberán utilizar mecanismos de sincronización controlados.
-
-No deberán depender exclusivamente de pausas arbitrarias ni de la velocidad del equipo donde se ejecuten.
-
-## 19. Validación de timeouts
-
-### 19.1. Timeout del backend
-
-Se simulará una ejecución que supere el tiempo de espera configurado.
-
-Deberá verificarse:
-
-- HTTP 504.
-- Código AGENT_TIMEOUT.
-- Ausencia de respuesta satisfactoria.
-- Ausencia de persistencia del turno como resuelto.
-
-### 19.2. Ejecución subyacente
-
-Las pruebas deberán distinguir entre la finalización de una petición HTTP y la finalización real del worker.
-
-Mientras la ejecución continúe activa, deberán conservarse los bloqueos, la capacidad ocupada y los archivos temporales necesarios.
-
-### 19.3. Resultado tardío
-
-Se simulará la finalización satisfactoria de una ejecución después de haber devuelto un timeout.
-
-El resultado tardío no deberá persistirse automáticamente ni presentarse como una resolución HTTP satisfactoria.
-
-### 19.4. Consistencia posterior
-
-Cuando no pueda garantizarse la consistencia del checkpoint, deberá impedirse su reutilización.
-
-### 19.5. Timeout del cliente
-
-Las pruebas del cliente HTTP deberán verificar que Streamlit no repite automáticamente una petición POST cuyo resultado no haya podido confirmar.
-
-Los mecanismos y valores de timeout se definen en los documentos 15 y 16.
-
-## 20. Validación de observabilidad
-
-### 20.1. Registros HTTP
-
-Las pruebas deberán verificar la generación de registros estructurados conforme a [15-robustez-observabilidad.md](15-robustez-observabilidad.md).
-
-### 20.2. Trazabilidad
-
-Deberá comprobarse:
-
-- Generación de request_id.
-- Devolución de X-Request-ID.
-- Correspondencia con ErrorOut.
-- Identificación de operaciones.
-- Asociación con thread_id cuando corresponda.
-- Medición de duración.
-- Registro del estado HTTP.
-- Registro de errores controlados.
-
-### 20.3. Eventos técnicos
-
-Deberán verificarse los eventos asociados a:
-
-- Inicio de ejecución.
-- Finalización real.
-- Falta de capacidad.
-- Timeouts.
-- Fallos técnicos.
-- Fallos de persistencia.
-- Conflictos de estado.
-
-### 20.4. Protección de información
-
-Las pruebas deberán comprobar la ausencia de:
-
-- Contraseñas.
-- API keys originales.
-- Tokens de sesión.
-- Hashes de credenciales.
-- Contenido íntegro de imágenes.
-- Prompts privados.
-- Cadenas de conexión.
-- Datos personales innecesarios.
-
-### 20.5. Métricas operativas
-
-Los mecanismos de observabilidad deberán permitir obtener las métricas correspondientes a los requisitos establecidos.
-
-La duración de una petición HTTP no deberá confundirse automáticamente con la duración real de la ejecución del asistente.
-
-## 21. Validación de seguridad
-
-### 21.1. Entradas adversariales
-
-Deberán comprobarse entradas que intenten:
-
-- Modificar las instrucciones del asistente.
-- Obtener respuestas sin evidencia.
-- Ejecutar herramientas no autorizadas.
-- Ampliar los presupuestos internos.
-- Obtener credenciales.
-- Acceder a archivos arbitrarios.
-- Modificar identificadores de conversación.
-- Obtener información perteneciente a otros consumidores.
-- Resolver aprobaciones no autorizadas.
-
-### 21.2. Seguridad de la API
-
-Deberá verificarse:
-
-- Rechazo de credenciales inválidas.
-- Rechazo de operaciones no autorizadas.
-- Prevención de elevaciones de privilegios.
-- Prevención de acceso a conversaciones ajenas.
-- Validación de entradas antes de ejecutar el asistente.
-- Protección de recursos administrativos.
-- Ausencia de información sensible en respuestas de error.
-
-### 21.3. Seguridad del núcleo
-
-Las pruebas deberán conservar los controles adversariales correspondientes a:
-
-- Inyección de instrucciones.
-- Documentos recuperados no confiables.
-- Argumentos maliciosos.
-- Herramientas fuera de la allowlist.
-- Rutas de archivos no autorizadas.
-- Referencias documentales inexistentes.
-- Resultados de proveedores externos inválidos.
-
-### 21.4. CORS
-
-Deberá verificarse:
-
-- Configuración de orígenes autorizados.
-- Restricción de orígenes no autorizados.
-- Métodos y cabeceras correspondientes.
-- Exposición de las cabeceras previstas.
-- Comportamiento de las peticiones preflight.
-- Ausencia de consumo comercial durante el preflight.
-
-CORS no se considerará un mecanismo de autenticación.
-
-Los requisitos se definen en los documentos 10, 14 y 15.
-
-## 22. Validación de Streamlit
-
-### 22.1. Conectividad
-
-Las pruebas deberán comprobar la comunicación con FastAPI mediante HTTP y la configuración de API_BASE_URL.
-
-### 22.2. Acceso y autenticación
-
-Deberán verificarse los recorridos de:
-
-- Acceso Free anónimo.
-- Registro.
-- Inicio de sesión.
-- Cierre de sesión.
-- Modificación de contraseña.
-- Selección de API keys.
-- Cambio de identidad.
-- Caducidad de sesión.
-
-### 22.3. Conversaciones
-
-Deberá comprobarse:
-
-- Creación de conversaciones.
-- Recepción de thread_id.
-- Continuidad.
-- Nueva conversación.
-- Cambio de API key.
-- Limpieza del contexto visual.
-- Presentación de respuestas directas.
-- Conversaciones finalizadas.
-- Pérdida del estado operativo.
-
-### 22.4. Presentación
-
-Deberá verificarse:
-
-- Chat.
-- Fuentes.
-- Evidencias.
-- Limitaciones.
-- Abstenciones.
-- Planes.
-- Resultados geográficos.
-- Mapas.
-- Procedencia de los datos.
-- Horarios publicados.
-
-### 22.5. HITL
-
-Deberá comprobarse:
-
-- Presentación de planes pendientes.
-- Habilitación correcta de botones.
-- Envío de approval_id.
-- Aprobación.
-- Rechazo.
-- Reformulación.
-- Ausencia de acciones HITL en respuestas directas.
-- Prevención de envíos duplicados.
-
-### 22.6. Historial
-
-Deberá verificarse:
-
-- Historial visual de la sesión actual.
-- Historial persistente autorizado.
-- Historial de claves desactivadas.
-- Restricción de acceso a recursos ajenos.
-- Diferenciación entre historial y estado operativo.
-
-### 22.7. Robustez de la interfaz
-
-Deberán comprobarse:
-
-- Backend no disponible.
-- Credenciales inválidas.
-- Cuotas agotadas.
-- Falta de capacidad.
-- Conflictos de conversación.
-- Timeouts.
-- Respuestas incompatibles con el contrato.
-- Ausencia de reintentos automáticos indebidos.
-- Ausencia de duplicación de peticiones durante reruns.
-
-### 22.8. Independencia
-
-Deberá comprobarse que Streamlit no accede directamente a:
-
-- LangGraph.
-- RAG.
-- Herramientas.
-- Gemini.
-- PostgreSQL.
-- Checkpoints.
-
-La interfaz deberá respetar [07-streamlit.md](07-streamlit.md).
-
-## 23. Pruebas de integración externa
-
-### 23.1. Separación
-
-Las pruebas con servicios externos reales deberán mantenerse diferenciadas de las pruebas unitarias.
-
-### 23.2. Servicios
-
-Podrán comprobarse las integraciones con:
-
-- Gemini para embeddings.
-- Gemini para generación.
-- Gemini para identificación multimodal.
-- API municipal de puntos limpios.
-
-### 23.3. Consumo
-
-Las pruebas deberán limitar el consumo innecesario de recursos.
-
-No se ejecutará sistemáticamente una evaluación completa contra proveedores reales cuando las modificaciones puedan verificarse mediante dependencias controladas.
-
-### 23.4. Disponibilidad
-
-La superación de pruebas con mocks no acredita por sí sola la disponibilidad actual de un proveedor externo.
-
-Las pruebas reales deberán permitir diferenciar fallos del producto y fallos atribuibles a dependencias externas.
-
-## 24. Escenarios de extremo a extremo
-
-| Escenario | Resultado esperado |
-|---|---|
-| Consulta textual Free anónima | Respuesta conforme al contrato sin exigir registro |
-| Consulta documental sobre un residuo | Recomendación fundamentada |
-| Consulta general sobre catálogo | Información estructurada y alcance identificado |
-| Consulta fuera del dominio | Respuesta controlada sin ejecución innecesaria |
-| Consulta geográfica sin coordenadas | Aclaración o limitación explícita |
-| Consulta geográfica con coordenadas | Resultados autorizados con procedencia |
-| Consulta compuesta | Integración de las evidencias necesarias |
-| Consulta de imagen mediante Free | Rechazo por falta de autorización |
-| Consulta de imagen mediante User | Validación e identificación multimodal |
-| Imagen técnicamente adaptable | Procesamiento satisfactorio |
-| Imagen fuera de dominio | Interrupción antes de LangGraph |
-| Respuesta directa | Turno resuelto sin HITL |
-| Plan pendiente | Interrupción real e identificador de aprobación |
-| Aprobación válida | Resolución del turno y cierre de conversación |
-| Rechazo válido | Resolución del turno y posibilidad de reformular |
-| Aprobación obsoleta | Rechazo sin modificar el plan vigente |
-| Registro e inicio de sesión | Acceso a funcionalidades autorizadas |
-| Selección de una clave propia | Aislamiento de conversaciones |
-| Consulta de historial ajeno | Rechazo conforme al contrato |
-| Consulta de historial propio | Recuperación ordenada de mensajes |
-| Cuota agotada | Error controlado sin ejecución indebida |
-| Conversación ocupada | Rechazo por conflicto de estado |
-| Worker ocupado | Rechazo por falta de capacidad |
-| Timeout | Error controlado sin persistencia tardía |
-| Caída de la API municipal | Respaldo autorizado cuando corresponda |
-| Fallo de Gemini | Error técnico distinguible |
-| Fallo de PostgreSQL | Protección de la consistencia |
-| Reinicio del backend | Historial disponible y pérdida controlada de estado |
-| Cambio de backend local a Render | Funcionamiento sin modificar el código de Streamlit |
-
-Los escenarios deberán comprobar los resultados públicos y, cuando corresponda, las operaciones internas efectivamente realizadas.
-
-Una respuesta visible satisfactoria no acredita por sí sola qué herramientas se han ejecutado.
-
-## 25. Validación de infraestructura
-
-### 25.1. Entorno local
-
-Deberá comprobarse:
-
-- Instalación de dependencias.
-- Compatibilidad con Python 3.13.2.
-- Ejecución independiente del RAG.
-- Ejecución de la interfaz de terminal.
-- Inicialización de PostgreSQL.
-- Arranque de FastAPI.
-- Disponibilidad de Swagger.
-- Comunicación con Streamlit.
-
-### 25.2. Docker
-
-Deberá verificarse:
-
-- Construcción correcta de la imagen.
-- Inclusión de los recursos documentales necesarios.
-- Reconstrucción del índice desde embeddings existentes.
-- Ausencia de credenciales en la imagen.
-- Construcción sin necesidad de credenciales de Gemini.
-- Arranque del contenedor.
-- Disponibilidad del puerto configurado.
-- Comunicación con PostgreSQL.
-
-### 25.3. Health check
-
-Deberá comprobarse el comportamiento de GET /health cuando:
-
-- El servicio se encuentra operativo.
-- PostgreSQL no está disponible.
-- El servicio no dispone de los recursos obligatorios.
-- La configuración necesaria no permite operar correctamente.
-
-El health check no deberá realizar consultas al modelo de lenguaje.
-
-### 25.4. Render
-
-Deberá verificarse:
-
-- Despliegue desde el repositorio.
-- Construcción de la imagen.
-- Arranque del backend.
-- Conexión con PostgreSQL.
-- Acceso HTTPS.
-- Disponibilidad de Swagger.
-- Funcionamiento de endpoints protegidos.
-- Comunicación con Streamlit local.
-- Disponibilidad de registros.
-
-### 25.5. Redeploy
-
-Deberá comprobarse que un redeploy conserva los datos relacionales cuando se mantiene la misma base de datos.
-
-La pérdida de los checkpoints, sesiones y contadores en memoria deberá gestionarse conforme a las especificaciones.
-
-### 25.6. Rollback
-
-Deberá verificarse que la recuperación de una versión compatible del backend permite restablecer el servicio sin eliminar la información persistida.
-
-Los requisitos correspondientes se definen en [16-despliegue.md](16-despliegue.md).
-
-## 26. Evaluación de rendimiento y consumo
-
-### 26.1. Métricas
-
-La evaluación podrá contemplar:
-
-- Tiempo de recuperación.
-- Tiempo de generación.
-- Duración de peticiones HTTP.
-- Duración real de las ejecuciones.
-- Latencia media.
-- Percentiles de latencia.
-- Número de llamadas a Gemini.
+- Latencia de recuperación y generación.
+- Duración HTTP y duración real del agente.
+- Latencia media, mediana y percentiles.
+- Número de llamadas a Gemini y herramientas.
 - Consumo de tokens, cuando esté disponible.
-- Llamadas a herramientas.
-- Número de errores técnicos.
-- Número de timeouts.
-- Rechazos por falta de capacidad.
+- Errores, timeouts y rechazos de capacidad.
+- Consumo de memoria y recursos de infraestructura.
 
-### 26.2. Comparación
+Se distinguirá entre éxito HTTP, resultado funcional válido y calidad documental.
 
-Las comparaciones deberán realizarse utilizando condiciones de evaluación identificables y suficientemente comparables.
+No se establecerán garantías de rendimiento sin mediciones que las respalden.
 
-No se atribuirá una mejora de rendimiento exclusivamente a una modificación cuando existan otras diferencias relevantes entre las ejecuciones.
+Los resultados permitirán calibrar los límites y timeouts iniciales sin comprometer el comportamiento requerido.
 
-### 26.3. Calibración
+## 10. Validación de infraestructura y extremo a extremo
 
-Los límites internos deberán evaluarse mediante consultas representativas.
+Antes de la entrega deberá comprobarse:
 
-Las modificaciones orientadas a reducir consumo deberán conservar los requisitos funcionales y de calidad.
+- Funcionamiento independiente del núcleo RAG y la CLI.
+- Instalación reproducible de dependencias.
+- Construcción de Docker sin credenciales de Gemini.
+- Reconstrucción del índice desde artefactos existentes.
+- Funcionamiento de PostgreSQL.
+- Disponibilidad de GET /health y Swagger.
+- Funcionamiento de Streamlit mediante HTTP.
+- Despliegue HTTPS en Render.
+- Ejecución de recorridos representativos de cada perfil.
+- Persistencia del historial después de un redeploy.
+- Tratamiento de checkpoints perdidos.
+- Recuperación de una versión compatible del backend.
 
-### 26.4. Objetivos
+La validación del historial tras el redeploy utilizará la misma base de datos antes y después de la operación.
 
-No se establecerán valores de rendimiento obtenidos experimentalmente como resultados garantizados antes de realizar las mediciones correspondientes.
+Las pruebas con mocks no sustituirán las comprobaciones necesarias de integración real y despliegue.
 
-Los límites técnicos obligatorios serán los definidos en [15-robustez-observabilidad.md](15-robustez-observabilidad.md).
+Los procedimientos se establecen en [plan-pruebas.md](../docs/plan-pruebas.md) y [operaciones-despliegue.md](../docs/operaciones-despliegue.md).
 
-## 27. Integración continua
+## 11. Evidencias y trazabilidad
 
-Las validaciones automatizadas deberán poder ejecutarse de forma reproducible sobre las versiones candidatas a integración y despliegue.
+Los resultados de ejecución se registrarán en entregables/evidencias/.
 
-Las pruebas unitarias no deberán depender de credenciales reales ni consumir recursos externos.
+Cada evidencia deberá identificar:
 
-Las pruebas que requieran PostgreSQL deberán utilizar un entorno aislado.
+- Fecha y commit evaluado.
+- Entorno y configuración relevante.
+- Pruebas o procedimiento ejecutados.
+- Resultados obtenidos.
+- Fallos y limitaciones.
+- Comprobaciones pendientes.
 
-La automatización mediante GitHub Actions constituye una ampliación opcional.
+Se distinguirán los resultados automatizados, las evaluaciones factuales y las comprobaciones manuales.
 
-La obligatoriedad de las validaciones no dependerá de que se ejecuten manualmente o mediante automatización.
+No se incluirán secretos ni datos personales innecesarios.
 
-Los requisitos de integración continua se definen en [16-despliegue.md](16-despliegue.md).
+Las comprobaciones no ejecutadas no se presentarán como satisfactorias.
 
-## 28. Trazabilidad de requisitos
+## 12. Criterios de aceptación
 
-Cada requisito verificable deberá disponer de uno o varios mecanismos de comprobación.
+El producto podrá considerarse validado cuando:
 
-Los mecanismos podrán consistir en:
+- Se superen las pruebas obligatorias de regresión y de las funcionalidades nuevas.
+- Los contratos HTTP y relacionales se respeten.
+- Los controles de seguridad y robustez funcionen correctamente.
+- El HITL obligatorio del PB02 permanezca operativo.
+- No existan falsos éxitos HTTP ni persistencia indebida de resultados tardíos.
+- Las evaluaciones documentales acrediten el comportamiento esperado.
+- La interfaz funcione exclusivamente mediante HTTP.
+- El núcleo conserve su independencia.
+- El backend funcione mediante Docker y Render.
+- El historial sobreviva al redeploy.
+- Los fallos, limitaciones y resultados pendientes estén documentados.
 
-- Pruebas unitarias.
-- Pruebas de integración.
-- Pruebas de contrato.
-- Evaluaciones del RAG.
-- Comprobaciones manuales.
-- Pruebas de seguridad.
-- Pruebas de infraestructura.
+Las validaciones serán obligatorias independientemente de que se ejecuten manualmente o mediante CI automatizada.
 
-La ausencia de una prueba automatizada no implica necesariamente que un requisito no pueda verificarse.
-
-Cuando una comprobación requiera intervención manual, deberán existir condiciones objetivas que permitan determinar su resultado.
-
-Los resultados concretos de ejecución se registrarán fuera de las especificaciones.
-
-## 29. Criterios generales de aceptación
-
-- Las pruebas de regresión correspondientes a funcionalidades vigentes se conservan.
-- Los cambios de comportamiento expresamente definidos disponen de pruebas adaptadas.
-- Los nuevos contratos HTTP se verifican.
-- Los mecanismos de autenticación y autorización se comprueban.
-- Los datos de diferentes consumidores permanecen aislados.
-- Las restricciones de PostgreSQL se verifican mediante pruebas de integración.
-- Los turnos resueltos se persisten conforme a las reglas establecidas.
-- Las aprobaciones pendientes no se almacenan como turnos resueltos.
-- Las aprobaciones obsoletas no modifican el estado.
-- Los resultados tardíos no se persisten automáticamente.
-- Las cuotas y los límites se aplican correctamente.
-- El filtrado previo evita ejecuciones innecesarias.
-- Las imágenes no admisibles no continúan hacia LangGraph.
-- Las operaciones concurrentes respetan los mecanismos de exclusión.
-- Los timeouts no liberan recursos prematuramente.
-- Los errores técnicos se distinguen de resultados semánticos válidos.
-- Las respuestas documentales conservan sus fuentes.
-- Las evaluaciones factuales se diferencian de las validaciones estructurales.
-- Las credenciales no se exponen mediante respuestas ni registros no autorizados.
-- Streamlit funciona exclusivamente como cliente HTTP.
-- El núcleo RAG y la CLI mantienen su funcionamiento independiente.
-- La imagen Docker puede construirse sin credenciales de Gemini.
-- El backend puede desplegarse conforme a la arquitectura establecida.
-- El historial permanece disponible después de un redeploy que conserve PostgreSQL.
-- Las pruebas automatizadas obligatorias no presentan fallos sin resolver.
-- Las comprobaciones pendientes, omitidas o no ejecutadas no se presentan como satisfactorias.
-
-## 30. Especificaciones relacionadas
-
-| Documento | Ámbito de validación |
-|---|---|
-| [00-producto.md](00-producto.md) | Alcance funcional y perfiles |
-| [01-retrieval.md](01-retrieval.md) | Pipeline documental y recuperación |
-| [02-mejoras-retrieval.md](02-mejoras-retrieval.md) | Filtros y consultas estructuradas |
-| [03-generacion.md](03-generacion.md) | Generación y evidencia |
-| [04-consultas-generales.md](04-consultas-generales.md) | Interpretación de consultas |
-| [05-tools.md](05-tools.md) | Herramientas y permisos |
-| [06-langgraph.md](06-langgraph.md) | Orquestación, estado y HITL |
-| [07-streamlit.md](07-streamlit.md) | Cliente web |
-| [09-datos-y-fuentes.md](09-datos-y-fuentes.md) | Corpus y procedencia |
-| [10-seguridad.md](10-seguridad.md) | Seguridad del núcleo |
-| [11-arquitectura-mlops.md](11-arquitectura-mlops.md) | Arquitectura |
-| [12-contratos-http.md](12-contratos-http.md) | Contratos HTTP |
-| [13-persistencia.md](13-persistencia.md) | PostgreSQL y persistencia |
-| [14-autenticacion-autorizacion.md](14-autenticacion-autorizacion.md) | Autenticación y autorización |
-| [15-robustez-observabilidad.md](15-robustez-observabilidad.md) | Robustez, límites y observabilidad |
-| [16-despliegue.md](16-despliegue.md) | Infraestructura y despliegue |
+La estrategia de integración y despliegue se establece en [16-despliegue.md](16-despliegue.md).
