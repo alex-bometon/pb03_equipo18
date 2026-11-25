@@ -47,11 +47,11 @@ No se iniciarán ampliaciones opcionales que comprometan la entrega.
 - [x] Crear las ramas de integración y documentación.
 - [x] Redactar y revisar las 17 especificaciones.
 - [x] Resolver las decisiones técnicas D01–D12.
-- [ ] Incorporar las versiones consolidadas al repositorio.
-- [ ] Revisar y consolidar los documentos operativos.
-- [ ] Actualizar AGENTS.md.
-- [ ] Verificar coherencia transversal y referencias.
-- [ ] Revisar el diff, publicar e integrar en develop.
+- [x] Incorporar las versiones consolidadas al repositorio.
+- [x] Revisar y consolidar los documentos operativos.
+- [x] Actualizar AGENTS.md.
+- [x] Verificar coherencia transversal y referencias.
+- [x] Revisar el diff, publicar e integrar en develop.
 
 **Finalización:** documentación técnica coherente, revisada e integrada.
 
