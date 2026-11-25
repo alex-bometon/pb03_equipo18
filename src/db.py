@@ -1,10 +1,13 @@
 """Conexiones y persistencia relacional de ReciclaTIA."""
 
-from sqlalchemy import text
-from sqlalchemy.engine import Engine
-from sqlmodel import SQLModel, create_engine
+from uuid import UUID
 
-import src.models  # Registra los modelos en SQLModel.metadata
+from sqlalchemy import func, text
+from sqlalchemy.engine import Engine
+from sqlmodel import Session, SQLModel, create_engine, select
+
+from src.enums import ApiKeyRole, MessageRole
+from src.models import ApiKey, Conversation, Message, User, utc_now
 
 
 def create_db_engine(
