@@ -2,28 +2,35 @@
 
 ## 1. Objetivo
 
-Definir los requisitos de seguridad del núcleo funcional de ReciclaTÍA, incluyendo el sistema RAG, los modelos de lenguaje, la orquestación multiagente, las herramientas y los mecanismos de supervisión humana.
+Definir los requisitos de seguridad del núcleo funcional de ReciclaTÍA, incluyendo el sistema RAG, los modelos de lenguaje, la orquestación multiagente, las herramientas, las fuentes de información y los mecanismos de supervisión humana.
 
-El sistema deberá impedir que las entradas no confiables puedan modificar las reglas de funcionamiento, ejecutar operaciones no autorizadas, comprometer la integridad de las evidencias o alterar indebidamente el estado de las conversaciones.
+El sistema deberá protegerse frente a entradas no confiables que pretendan modificar sus reglas de funcionamiento, ejecutar operaciones no autorizadas, comprometer la integridad de las evidencias o alterar indebidamente el estado de las conversaciones.
 
-Los controles críticos de seguridad deberán aplicarse mediante código Python y no depender exclusivamente de instrucciones proporcionadas al modelo de lenguaje.
+La incorporación de la arquitectura MLOps deberá preservar los controles desarrollados durante el PB02 y reforzar aquellos necesarios para exponer el asistente mediante una API REST.
+
+Los controles críticos de seguridad deberán aplicarse mediante Python y no depender exclusivamente de instrucciones proporcionadas al modelo de lenguaje.
 
 ## 2. Principios de seguridad
 
 - Separación entre datos e instrucciones.
 - Principio de mínimo privilegio.
+- Denegación por defecto de operaciones no autorizadas.
 - Validación determinista de operaciones críticas.
 - Autorización explícita de herramientas.
+- Utilización exclusiva de fuentes autorizadas.
 - Limitación de recursos y capacidades.
 - Aislamiento entre conversaciones.
 - Protección de credenciales e información interna.
-- Fundamentación documental de las recomendaciones.
-- Supervisión humana cuando corresponda.
-- Tratamiento controlado de fallos.
+- Fundamentación documental de recomendaciones.
+- HITL obligatorio en las ejecuciones satisfactorias de LangGraph.
+- Diferenciación entre resultados semánticos y fallos técnicos.
 - Protección frente a entradas adversariales.
+- Minimización de datos personales.
 - Independencia de los controles respecto a la interfaz utilizada.
 
-La capacidad del modelo de lenguaje para solicitar una operación no implica que dicha operación esté autorizada.
+La capacidad del modelo para solicitar una operación no implica que dicha operación esté autorizada.
+
+Las instrucciones del consumidor, los documentos y las respuestas de proveedores externos no podrán modificar las reglas de seguridad.
 
 ## 3. Ámbito de seguridad
 
@@ -31,256 +38,424 @@ La capacidad del modelo de lenguaje para solicitar una operación no implica que
 
 Esta especificación comprende:
 
-- Seguridad de las entradas del asistente.
+- Validación de entradas.
 - Protección frente a inyección de instrucciones.
-- Seguridad de la recuperación documental.
-- Validación de respuestas generadas.
-- Autorización interna de herramientas.
+- Seguridad del RAG.
+- Validación de respuestas.
+- Control de fuentes.
+- Autorización de herramientas.
 - Validación de argumentos.
 - Protección del estado operativo.
-- Seguridad de las decisiones HITL.
+- Seguridad de HITL.
+- Procesamiento multimodal.
 - Tratamiento seguro de resultados externos.
-- Protección frente a la exposición de información interna.
+- Protección de información interna.
 
-### 3.2. Seguridad de la capa HTTP
+### 3.2. Seguridad HTTP
 
-La autenticación de consumidores, autorización de endpoints y protección de recursos se definen en [14-autenticacion-autorizacion.md](14-autenticacion-autorizacion.md).
+La autenticación de consumidores, autorización de endpoints y comprobación de propiedad se definen en [14-autenticacion-autorizacion.md](14-autenticacion-autorizacion.md).
 
-Los contratos públicos de error se definen en [12-contratos-http.md](12-contratos-http.md).
+Los contratos públicos se establecen en [12-contratos-http.md](12-contratos-http.md).
 
 ### 3.3. Seguridad operativa
 
-Los mecanismos de protección frente a consumo excesivo de recursos, concurrencia, timeouts, archivos multimedia y exposición de datos en logs se definen en [15-robustez-observabilidad.md](15-robustez-observabilidad.md).
+Los mecanismos de protección frente a consumo excesivo, concurrencia, timeouts, recepción multimedia y exposición de datos en logs se definen en [15-robustez-observabilidad.md](15-robustez-observabilidad.md).
 
 ### 3.4. Seguridad de infraestructura
 
-Los requisitos relacionados con secretos de despliegue, aislamiento de entornos y configuración de infraestructura se definen en [16-despliegue.md](16-despliegue.md).
+Los requisitos relacionados con secretos, aislamiento de entornos y configuración de infraestructura se definen en [16-despliegue.md](16-despliegue.md).
+
+### 3.5. Independencia del núcleo
+
+Las validaciones internas deberán mantenerse durante la ejecución independiente mediante terminal.
+
+La ausencia de FastAPI no permitirá omitir las restricciones de herramientas, argumentos, evidencias y estado.
+
+La CLI no dependerá de las credenciales HTTP de ReciclaTÍA ni de PostgreSQL.
 
 ## 4. Modelo de confianza
 
 ### 4.1. Entradas no confiables
 
-El sistema deberá tratar como datos no confiables:
+Se tratarán como datos no confiables:
 
-- Preguntas del usuario.
-- Imágenes proporcionadas por consumidores.
+- Preguntas del consumidor.
+- Imágenes recibidas.
+- Texto presente en imágenes.
+- Descripciones visuales.
 - Documentos recuperados.
 - Metadatos documentales.
 - Respuestas de Gemini.
 - Argumentos generados por el modelo.
 - Resultados de servicios externos.
 - Resultados de herramientas.
-- Estados proporcionados por clientes externos.
+- Información contextual de conversaciones.
+- Identificadores y parámetros proporcionados por clientes.
 
 La procedencia oficial de un documento no implica que su contenido pueda utilizarse como instrucciones ejecutables.
 
-### 4.2. Componentes autorizados
+### 4.2. Decisiones autorizadas
 
-Las decisiones críticas corresponderán a los mecanismos de control implementados mediante código Python.
+Las decisiones críticas corresponderán a mecanismos controlados mediante Python.
 
 Entre ellas:
 
 - Admisión de entradas.
-- Selección de operaciones permitidas.
-- Autorización de herramientas.
+- Autenticación.
+- Autorización.
+- Comprobación de propiedad.
 - Validación de argumentos.
+- Selección de operaciones permitidas.
 - Comprobación de presupuestos.
 - Validación de referencias.
-- Transiciones del estado.
-- Aprobación o rechazo de planes.
-- Acceso a conversaciones.
-- Persistencia de resultados.
+- Transiciones de estado.
+- Generación de identificadores.
+- Resolución de aprobaciones.
+- Persistencia.
 
-### 4.3. Límites de confianza
+### 4.3. Responsabilidad del modelo
 
-El modelo de lenguaje podrá interpretar información y proponer operaciones dentro de sus capacidades.
+Gemini podrá:
 
-No podrá modificar las reglas que determinan si dichas operaciones pueden ejecutarse.
+- Interpretar consultas.
+- Proponer rutas.
+- Solicitar herramientas autorizadas.
+- Interpretar observaciones visuales.
+- Generar respuestas fundamentadas.
+- Proponer planes.
+
+Sus resultados deberán superar los controles correspondientes.
+
+El modelo no podrá determinar por sí solo si una operación está autorizada.
+
+### 4.4. Roles independientes
+
+Se distinguirán:
+
+- Los roles de API keys Free, User y Admin.
+- Los roles internos residuos y puntos.
+
+Una API key Admin no ampliará los permisos de los especialistas.
+
+El rol interno de un especialista no concederá privilegios administrativos sobre el backend.
+
+### 4.5. Límites de confianza
+
+La validación estructural de una respuesta no demuestra automáticamente que su contenido sea correcto.
+
+La seguridad deberá combinar controles deterministas, restricciones de capacidades, validación de evidencias y pruebas adversariales.
 
 ## 5. Arquitectura de protección
 
 ```mermaid
 flowchart TD
-    U[Entrada del consumidor] --> A{Controles de admision HTTP}
-    A -->|Rechazada| E[Respuesta controlada]
-    A -->|Admitida| V[Validacion de entrada y dominio]
+    U[Entrada del consumidor] --> A{Controles HTTP}
 
-    V -->|No admisible| E
-    V -->|Admisible| R[Supervisor y especialistas]
+    A -->|Rechazada| E[ErrorOut]
+    A -->|Autorizada| V{Validación y dominio}
 
-    R --> L{Permisos y presupuestos}
-    L -->|Denegada| D[Operacion bloqueada]
-    L -->|Permitida| T[Herramienta autorizada]
+    V -->|Entrada inválida| E
+    V -->|Respuesta previa válida| P[AskOut sin LangGraph]
+    V -->|Consulta admitida| G[LangGraph]
 
-    T --> C[Validacion de resultados]
-    C --> S[Integracion de evidencias]
-    S --> F{Resultado valido}
+    G --> L{Herramientas y presupuestos}
 
-    F -->|No| E
-    F -->|Respuesta directa| O[Turno resuelto]
-    F -->|Plan pendiente| H{Decision HITL autorizada}
+    L -->|Operación denegada| D[Rechazo interno controlado]
+    L -->|Operación permitida| T[Herramienta autorizada]
 
-    H -->|Decision valida| P[Registrar decision]
-    H -->|Decision invalida| E
+    T --> C[Validar resultados]
+    C --> S[Integrar evidencias]
+    D --> S
 
-    P --> O
+    S --> F{Resultado válido}
+
+    F -->|Fallo técnico bloqueante| E
+    F -->|Propuesta válida| H[HITL obligatorio]
+
+    H -->|Decisión pendiente| I[AskOut pendiente]
+    H -->|Decisión autorizada| R[Resolver mediante aplicar]
+    H -->|Decisión inválida| E
+
+    R --> B{Validación y persistencia}
+    B -->|Fallo| E
+    B -->|Correcta| O[AskOut resuelto]
 ```
 
-El diagrama representa los niveles de protección del servicio.
+Las consultas multimodales deberán superar su identificación semántica previa antes de iniciar LangGraph.
 
-Los controles internos del núcleo deberán mantenerse también durante la ejecución independiente mediante terminal.
+El diagrama representa las capas funcionales de protección y no modifica la topología del agente.
 
-La ausencia de una capa HTTP en la ejecución local no autoriza a omitir las validaciones internas de herramientas, argumentos, evidencias y estado.
+Los mecanismos internos de seguridad permanecerán activos en la ejecución independiente mediante terminal.
 
 ## 6. Validación de entradas
 
 ### 6.1. Consultas textuales
 
-Las consultas deberán superar las validaciones de entrada correspondientes antes de utilizarse dentro del asistente.
-
 Se comprobará:
 
 - Tipo de dato.
 - Presencia de contenido válido.
-- Longitud permitida.
-- Compatibilidad con el ámbito funcional.
-- Compatibilidad con el estado de la conversación.
+- Longitud.
+- Ámbito funcional.
+- Ámbito geográfico.
+- Compatibilidad con el estado conversacional.
 
-### 6.2. Dominio
+La longitud máxima será de 500 caracteres después de eliminar espacios iniciales y finales.
 
-El servicio HTTP aplicará los mecanismos de filtrado previo establecidos.
+Una pregunta vacía después de aplicar strip() devolverá HTTP 400 EMPTY_QUESTION.
 
-El núcleo RAG conservará sus propias comprobaciones relacionadas con el ámbito documental y geográfico.
+Una pregunta que supere el límite devolverá HTTP 422 QUESTION_TOO_LONG.
 
-La superación del filtro previo no implica que la consulta pueda resolverse mediante la evidencia disponible.
+Las estructuras inválidas respetarán el catálogo de errores establecido.
 
-### 6.3. Consultas ambiguas
+### 6.2. Filtrado previo HTTP
 
-Una consulta ambigua no deberá considerarse automáticamente maliciosa.
+El backend aplicará un filtro determinista de dominio antes de ejecutar LangGraph.
 
-Cuando la información resulte insuficiente para interpretar correctamente la petición, podrán solicitarse aclaraciones.
+Las consultas inequívocamente fuera del ámbito del producto podrán resolverse sin invocar:
 
-### 6.4. Validaciones independientes
+- Gemini.
+- RAG.
+- LangGraph.
+- Herramientas.
 
-Los controles internos deberán mantenerse aunque las entradas hayan sido previamente validadas por FastAPI o Streamlit.
+Estas respuestas no consumirán cuota comercial ni turnos del agente.
 
-La validación realizada en una capa no sustituye los controles específicos de las capas posteriores.
+No generarán HITL ni mensajes persistidos.
 
-## 7. Protección frente a inyección de instrucciones
+Continuarán sujetas a los controles HTTP correspondientes.
+
+### 6.3. Contexto conversacional
+
+El filtro deberá considerar el contexto operativo autorizado cuando exista una conversación previa.
+
+No se rechazará automáticamente una consulta breve únicamente porque no contenga palabras clave del dominio.
+
+Las reformulaciones podrán depender de información previamente conservada.
+
+### 6.4. Ambigüedad
+
+Una consulta ambigua no se considerará automáticamente maliciosa.
+
+Cuando falte información decisiva, podrá solicitarse una aclaración.
+
+Se distinguirá entre:
+
+- Aclaración determinista previa al agente.
+- Aclaración del RAG independiente.
+- Aclaración generada dentro de LangGraph.
+
+Únicamente las aclaraciones obtenidas dentro de una ejecución satisfactoria de LangGraph estarán sujetas al HITL obligatorio.
+
+### 6.5. Restricciones de estado
+
+Cuando exista un thread_id, deberán comprobarse los permisos y las restricciones operativas antes de devolver una respuesta previa.
+
+El filtrado no permitirá eludir:
+
+- La propiedad de la conversación.
+- El HITL pendiente.
+- La finalización del hilo.
+- El agotamiento de turnos.
+- La exclusión mutua.
+- La pérdida del checkpoint.
+
+### 6.6. Validaciones independientes
+
+La validación realizada por Streamlit no sustituirá la validación HTTP.
+
+La validación realizada por FastAPI no sustituirá las comprobaciones internas del núcleo.
+
+No se duplicará innecesariamente la lógica de negocio, pero se mantendrán los controles propios de cada límite de confianza.
+
+## 7. Protección frente a prompt injection
 
 ### 7.1. Inyección directa
 
-Las instrucciones introducidas por el consumidor no podrán modificar las reglas del asistente.
+Las instrucciones introducidas por el consumidor no podrán autorizar operaciones dirigidas a:
 
-Deberán impedirse operaciones derivadas de instrucciones que pretendan:
-
-- Ignorar las restricciones del sistema.
-- Modificar los permisos de herramientas.
-- Inventar evidencia documental.
-- Ampliar los límites de ejecución.
-- Revelar información interna.
+- Ignorar las reglas del sistema.
+- Modificar el dominio.
+- Ampliar permisos.
+- Ejecutar herramientas no autorizadas.
+- Inventar evidencias.
+- Incrementar presupuestos.
+- Revelar secretos.
 - Acceder a conversaciones ajenas.
+- Alterar checkpoints.
 - Aprobar planes sin autorización.
-- Ejecutar operaciones fuera del dominio.
+- Realizar búsquedas abiertas en Internet.
 
 ### 7.2. Inyección indirecta
 
-Los documentos recuperados y los resultados de herramientas podrán contener instrucciones que intenten modificar el comportamiento del asistente.
+Los datos recuperados podrán contener instrucciones dirigidas al asistente.
 
-Estas instrucciones deberán tratarse como parte de los datos recuperados.
+Estas instrucciones se tratarán como contenido no confiable.
 
 No adquirirán autoridad por encontrarse dentro de:
 
 - Documentos HTML.
 - Archivos CSV.
 - Metadatos.
-- Respuestas HTTP externas.
-- Descripciones de imágenes.
+- Fragmentos recuperados.
+- Respuestas HTTP.
+- Descripciones visuales.
 - Resultados de herramientas.
+- Historial conversacional.
 
-### 7.3. Separación de contexto
+### 7.3. Separación de instrucciones y datos
 
-Las instrucciones del sistema deberán mantenerse diferenciadas del contenido aportado por el consumidor y de las evidencias recuperadas.
+Se conservarán los mecanismos existentes de src/agent_prompts.py y src/generate.py.
+
+Las instrucciones del sistema permanecerán diferenciadas de:
+
+- La pregunta.
+- El contexto conversacional.
+- Las evidencias.
+- Los resultados de herramientas.
 
 La construcción del contexto deberá identificar la naturaleza de la información incorporada.
 
+La separación de mensajes e instrucciones constituye una medida complementaria, no una garantía absoluta frente a prompt injection.
+
 ### 7.4. Protección determinista
 
-Las instrucciones del prompt constituyen una medida complementaria de seguridad.
+Los controles críticos continuarán ejecutándose mediante Python aunque el modelo interprete incorrectamente una entrada adversarial.
 
-Las operaciones críticas deberán continuar protegidas mediante validaciones y restricciones independientes del modelo.
+Las instrucciones proporcionadas a Gemini no sustituirán:
+
+- La allowlist de herramientas.
+- Los permisos por especialista.
+- La validación de argumentos.
+- La comprobación de propiedad.
+- Los límites internos.
+- La validación de referencias.
+- La resolución autorizada de HITL.
 
 ### 7.5. Tratamiento de intentos de inyección
 
-La presencia de instrucciones potencialmente maliciosas no deberá permitir la ejecución de operaciones no autorizadas.
+Cuando una consulta contenga instrucciones potencialmente maliciosas, el sistema podrá:
 
-El sistema podrá rechazar la operación, devolver una respuesta controlada o continuar únicamente con las partes admisibles de la consulta, conforme a los controles establecidos.
+- Resolver una abstención controlada anterior al agente.
+- Denegar una operación concreta.
+- Continuar únicamente con las partes admisibles.
+- Comunicar el error correspondiente si se incumple un contrato HTTP.
 
-No se utilizará una clasificación del modelo como único mecanismo de protección.
+No se considerará automáticamente que toda consulta que mencione instrucciones, reglas o seguridad constituye un ataque.
+
+No se utilizará una clasificación de Gemini como único mecanismo de protección.
+
+### 7.6. Resultado funcional
+
+Una abstención válida ante una consulta fuera de dominio podrá devolverse mediante HTTP 200.
+
+Una operación HTTP no autorizada deberá devolver el error correspondiente.
+
+Un fallo técnico no se presentará como una abstención satisfactoria.
+
+Cuando el agente complete correctamente una respuesta controlada dentro de LangGraph, deberá conservar el HITL obligatorio.
 
 ## 8. Seguridad del RAG
 
 ### 8.1. Fuentes autorizadas
 
-La recuperación utilizará exclusivamente los recursos documentales y mecanismos de acceso contemplados en las especificaciones.
+La recuperación documental utilizará exclusivamente el corpus autorizado de ReciclaTÍA.
 
-El modelo no podrá incorporar arbitrariamente fuentes externas al corpus.
+El modelo no podrá incorporar arbitrariamente nuevos documentos, fuentes o proveedores.
 
 ### 8.2. Integridad documental
 
-Los documentos originales y sus artefactos derivados deberán conservar una relación coherente.
+Los documentos originales, fragmentos, embeddings y artefactos derivados deberán mantener una relación coherente.
 
-No se modificarán automáticamente como consecuencia de una consulta del usuario.
+Las consultas de consumidores no modificarán automáticamente estos recursos.
 
 ### 8.3. Prevención de contaminación
 
-Las consultas, respuestas, imágenes y resultados operativos no se incorporarán automáticamente al corpus documental.
+No se incorporarán automáticamente al corpus:
 
-La incorporación de nuevos documentos requerirá un proceso autorizado e independiente.
+- Preguntas.
+- Respuestas generadas.
+- Conversaciones.
+- Imágenes de consumidores.
+- Descripciones visuales.
+- Instrucciones del modelo.
+- Resultados operativos.
 
-### 8.4. Protección frente a instrucciones documentales
+La actualización del corpus será un proceso independiente y autorizado.
 
-Los fragmentos recuperados deberán utilizarse como evidencia y no como instrucciones capaces de modificar el sistema.
+### 8.4. Metadatos
+
+Los metadatos documentales se utilizarán para identificar procedencia, filtrar resultados y construir referencias.
+
+No podrán modificar las instrucciones del sistema.
+
+Una URL incluida en los metadatos no autorizará automáticamente su consulta.
 
 ### 8.5. Referencias
 
-Las fuentes presentadas deberán corresponder a documentos realmente recuperados o utilizados mediante mecanismos autorizados.
+Las fuentes deberán corresponder a documentos realmente recuperados o utilizados mediante mecanismos deterministas autorizados.
 
-No se aceptarán referencias inventadas por Gemini.
+No se aceptarán referencias inventadas.
 
 ### 8.6. Suficiencia de evidencia
 
-La recuperación de un documento no constituye por sí sola una garantía de que este respalde la respuesta.
-
-El sistema deberá distinguir entre:
+El sistema distinguirá:
 
 - Evidencia suficiente.
 - Evidencia parcial.
 - Evidencia insuficiente.
 
-Cuando no exista evidencia suficiente, deberá aplicarse una abstención o aclaración conforme al comportamiento definido.
+La recuperación de un documento no garantiza que su contenido respalde la respuesta.
 
-### 8.7. Ámbito geográfico
+La insuficiencia legítima deberá generar una abstención o aclaración conforme a los contratos correspondientes.
 
-El corpus municipal de Madrid no deberá utilizarse para fundamentar normas o servicios específicos de otros municipios.
+### 8.7. Fallos de recuperación
 
-Las reglas correspondientes se definen en los documentos 01, 02, 03, 04 y 09.
+Un fallo técnico de ChromaDB o del proveedor de embeddings no se convertirá automáticamente en una búsqueda vacía.
+
+La ausencia legítima de documentos deberá distinguirse de la imposibilidad técnica de recuperarlos.
+
+### 8.8. Ámbito geográfico
+
+El corpus municipal no se utilizará para fundamentar normas o servicios específicos de otros municipios.
+
+Se conservarán las restricciones de src/domain.py y los mecanismos de interpretación documental existentes.
+
+No se incorporará un servicio externo de geocodificación para completar esta comprobación.
 
 ## 9. Seguridad de las respuestas generadas
 
 ### 9.1. Validación estructural
 
-Las respuestas de Gemini deberán superar las validaciones correspondientes a sus contratos.
+Las respuestas de Gemini deberán superar las validaciones correspondientes antes de incorporarse a las evidencias.
 
-No se presentarán directamente como resultados válidos respuestas que incumplan las estructuras requeridas.
+Se conservarán los mecanismos de src/generation_validation.py.
 
 ### 9.2. Validación de citas
 
-Los identificadores de fuentes deberán corresponder a fragmentos realmente proporcionados al modelo.
+Los identificadores deberán corresponder a fragmentos realmente proporcionados al modelo.
 
-Las referencias documentales se construirán utilizando los metadatos originales.
+Las referencias documentales se construirán mediante Python utilizando los metadatos originales.
 
-### 9.3. Prohibición de datos inventados
+No se confiará en nombres de documentos, rutas o enlaces inventados por Gemini.
+
+### 9.3. Ámbito de las referencias
+
+Los identificadores C1, C2 y sucesivos tendrán alcance local dentro de cada llamada RAG.
+
+Cuando se integren resultados de diferentes llamadas, deberá conservarse la procedencia correspondiente.
+
+No se eliminarán referencias únicamente porque coincida su chunk_id.
+
+### 9.4. Enlaces autorizados
+
+Las URL públicas de procedencia se obtendrán mediante el catálogo autorizado definido en [09-datos-y-fuentes.md](09-datos-y-fuentes.md).
+
+No se construirán enlaces mediante generación libre del modelo.
+
+Cuando no exista una URL autorizada disponible, el campo público correspondiente podrá contener None.
+
+### 9.5. Prohibición de datos inventados
 
 El asistente no deberá fabricar:
 
@@ -291,708 +466,1395 @@ El asistente no deberá fabricar:
 - Coordenadas.
 - Horarios.
 - Distancias.
+- Compatibilidades.
 - Resultados de herramientas.
-- Decisiones de consumidores.
+- Decisiones del consumidor.
 - Estados de ejecución.
+- Identificadores de aprobación.
 
-### 9.4. Protección de información interna
+### 9.6. Protección de información interna
 
-El modelo no deberá proporcionar como parte de una respuesta:
+Las respuestas no deberán exponer:
 
 - Credenciales.
 - Tokens de sesión.
-- Hashes de contraseñas.
-- Hashes de API keys.
-- Prompts privados.
-- Configuraciones sensibles.
-- Variables de entorno.
+- Hashes.
 - Cadenas de conexión.
-- Información correspondiente a conversaciones ajenas.
+- Configuraciones sensibles.
+- Prompts privados.
+- Rutas internas innecesarias.
+- Información de conversaciones ajenas.
 
-Los mecanismos de protección no deberán depender exclusivamente de que el modelo rechace una solicitud de exposición de información.
+La protección deberá comenzar evitando incorporar secretos al contexto del modelo.
 
-Los secretos no deberán incorporarse innecesariamente al contexto del modelo.
+No se dependerá exclusivamente de que Gemini rechace una solicitud de exposición.
 
-### 9.5. Contenido no ejecutable
+### 9.7. Contenido no ejecutable
 
 Las respuestas generadas constituirán contenido informativo.
 
-No podrán utilizarse directamente como instrucciones ejecutables, consultas SQL arbitrarias, comandos del sistema operativo o mecanismos de modificación del estado interno.
+No se utilizarán directamente como:
 
-### 9.6. Limitaciones de validación
+- Código Python ejecutable.
+- Consultas SQL arbitrarias.
+- Comandos del sistema operativo.
+- Instrucciones de administración.
+- Operaciones de modificación del estado.
 
-La validación estructural y la comprobación de referencias no garantizan la corrección factual de todas las afirmaciones.
+Streamlit deberá representar el contenido recibido sin habilitar ejecución arbitraria de HTML o JavaScript generado por el modelo.
 
-La calidad factual deberá evaluarse mediante los mecanismos definidos en [08-pruebas-y-validacion.md](08-pruebas-y-validacion.md).
+### 9.8. Fallos de validación
+
+Una salida estructuralmente inválida deberá tratarse conforme al contrato de generación.
+
+Se conservará SalidaGeneracionInvalida.
+
+No se fabricarán referencias ni abstenciones para ocultar el incumplimiento del contrato.
+
+### 9.9. Limitaciones
+
+La validación estructural y la comprobación de citas no garantizan la exactitud factual de todas las afirmaciones.
+
+La calidad deberá verificarse mediante las pruebas establecidas en [08-pruebas-y-validacion.md](08-pruebas-y-validacion.md).
 
 ## 10. Seguridad de las herramientas
 
 ### 10.1. Registro autorizado
 
-Únicamente podrán ejecutarse herramientas incluidas en el registro autorizado.
+Se conservarán TOOLS y TOOL_BY_NAME en src/tools/__init__.py.
 
-La existencia de una función dentro del código no implica que pueda ser invocada por el modelo.
+Las únicas herramientas registradas serán:
 
-### 10.2. Mínimo privilegio
+- consultar_rag.
+- buscar_puntos_limpios_cercanos.
+- hora_actual.
+- describir_imagen.
 
-Cada especialista únicamente podrá acceder a las herramientas necesarias para cumplir su responsabilidad.
+La existencia de una función en el código no implica que el modelo pueda invocarla.
 
-Los permisos se definen mediante AGENT_TOOLS_BY_ROLE.
+identificar_imagen() constituirá una función interna y no una quinta herramienta.
 
-El supervisor no podrá ampliar dichos permisos mediante instrucciones generadas por Gemini.
+### 10.2. Permisos por especialista
 
-### 10.3. Validación de argumentos
+Se conservará AGENT_TOOLS_BY_ROLE.
 
-Los argumentos de las herramientas deberán validarse antes de la ejecución.
+| Herramienta | residuos | puntos |
+|---|---|---|
+| consultar_rag | Sí | Sí |
+| buscar_puntos_limpios_cercanos | No | Sí |
+| hora_actual | No | Sí |
+| describir_imagen | Sí | No |
 
-Se rechazarán:
+El supervisor no podrá ampliar los permisos mediante instrucciones generadas por Gemini.
 
-- Parámetros desconocidos.
-- Tipos incompatibles.
-- Valores fuera de rango.
-- Rutas no autorizadas.
-- Direcciones externas arbitrarias.
-- Argumentos que pretendan modificar límites internos.
+### 10.3. Ejecución centralizada
 
-### 10.4. Ejecución centralizada
+Se conservarán los mecanismos:
 
-Las herramientas deberán ejecutarse mediante los mecanismos autorizados de registro y validación.
+- ejecutar_tool().
+- ejecutar_tool_estructurado().
 
-Los especialistas no podrán utilizar el nombre de una herramienta para acceder dinámicamente a funciones arbitrarias.
+La ejecución de especialistas utilizará el contrato estructurado y los permisos correspondientes.
 
-### 10.5. Operaciones denegadas
+La modalidad de ejecución independiente no constituirá una operación HTTP accesible a consumidores.
 
-Cuando una operación no esté autorizada:
+### 10.4. Validación de argumentos
 
-- No se ejecutará la herramienta.
-- No se utilizarán resultados simulados.
-- Se registrará el acontecimiento mediante los mecanismos de trazabilidad correspondientes.
-- Se comunicará el resultado controlado cuando corresponda.
+Se comprobarán:
 
-### 10.6. Validación de resultados
+- Nombres registrados.
+- Permisos del especialista.
+- Estructura de argumentos.
+- Campos permitidos.
+- Tipos de datos.
+- Rangos.
+- Presupuestos.
+- Condiciones de ejecución.
 
-Los resultados de las herramientas deberán comprobarse antes de incorporarse a las evidencias del asistente.
+No se aceptarán argumentos que permitan modificar libremente:
 
-La ejecución satisfactoria de una herramienta no autoriza automáticamente todas las interpretaciones posibles de su resultado.
+- URLs.
+- Rutas de archivos.
+- Credenciales.
+- Coordenadas autorizadas.
+- Límites internos.
+- Configuraciones de proveedores.
 
-Los permisos y contratos concretos se definen en [05-tools.md](05-tools.md).
+Las validaciones deberán contemplar posibles conversiones automáticas de tipos realizadas por las bibliotecas utilizadas.
 
-## 11. Acceso a recursos externos
+### 10.5. Entradas controladas por Python
+
+Se conservará el mecanismo existente de _preparar_args().
+
+Las coordenadas utilizadas en las búsquedas geográficas procederán del estado autorizado.
+
+La ruta utilizada por describir_imagen() en ejecución local procederá de la entrada autorizada.
+
+Los argumentos generados por Gemini no podrán sustituir estos valores.
+
+En el flujo HTTP con identificación visual previa no se proporcionará una nueva ruta para repetir la identificación.
+
+### 10.6. Operaciones denegadas
+
+Cuando una herramienta no esté autorizada:
+
+- No se ejecutará.
+- No se utilizarán resultados ficticios.
+- Se conservará una traza controlada.
+- Se comunicará el rechazo correspondiente.
+- Se mantendrán los presupuestos y controles aplicables.
+
+### 10.7. Validación de resultados
+
+Los resultados deberán respetar sus contratos antes de incorporarse como evidencias.
+
+ok=True no garantizará por sí solo que los datos sean suficientes o pertinentes.
+
+ok=False no constituirá evidencia válida.
+
+### 10.8. Propagación de fallos
+
+Se conservará el contrato ResultadoTool.
+
+Los errores públicos e internos destinados al modelo deberán mantenerse sanitizados.
+
+La implementación conservará información técnica suficiente para diferenciar fallos internos, dependencias indisponibles y otros errores relevantes.
+
+No se expondrán excepciones completas.
+
+No se dependerá exclusivamente de interpretar mensajes arbitrarios para determinar el código HTTP posterior.
+
+### 10.9. Recuperación autorizada
+
+Una operación denegada o fallida podrá recuperarse mediante un mecanismo permitido cuando exista una alternativa válida.
+
+La recuperación no concederá nuevas capacidades al modelo.
+
+Un fallo imprescindible no recuperado deberá impedir la finalización satisfactoria.
+
+## 11. Acceso a servicios externos
 
 ### 11.1. Servicios autorizados
 
-Las operaciones externas deberán limitarse a los servicios contemplados en los contratos de las herramientas y del sistema RAG.
+| Servicio o recurso | Finalidad |
+|---|---|
+| Gemini | Embeddings, razonamiento, generación e identificación visual |
+| ChromaDB | Recuperación del corpus autorizado |
+| ArcGIS municipal | Información geográfica de puntos limpios |
+| Corpus local | Respaldo geográfico autorizado |
+| Reloj del sistema | Información temporal |
 
-### 11.2. Restricción de destinos
+PostgreSQL constituirá un recurso de persistencia del backend, no una herramienta de consulta libre del modelo.
 
-El modelo y los consumidores no podrán modificar arbitrariamente los destinos de las peticiones HTTP realizadas por las herramientas.
+### 11.2. Fuentes de conocimiento
 
-No se ejecutarán peticiones a direcciones obtenidas de documentos recuperados únicamente porque aparezcan dentro de su contenido.
+El conocimiento documental procederá exclusivamente del corpus y de las referencias normativas previamente autorizadas.
 
-### 11.3. Protección de recursos internos
+La información geográfica procederá de ArcGIS municipal o de su respaldo local.
 
-Las herramientas no deberán permitir utilizar parámetros de entrada para realizar consultas arbitrarias a recursos internos del servidor.
+Gemini no constituirá una fuente documental independiente.
 
-### 11.4. Validación de respuestas externas
+### 11.3. Prohibición de búsquedas abiertas
 
-Las respuestas de servicios externos deberán considerarse datos no confiables.
+No se habilitarán:
 
-No podrán utilizarse directamente para modificar las reglas del sistema.
+- Motores de búsqueda.
+- Navegación general por Internet.
+- Grounding mediante búsquedas externas.
+- Herramientas de consulta web arbitraria.
+- Proveedores documentales adicionales.
+- Proveedores geográficos alternativos.
 
-### 11.5. Fallos externos
+### 11.4. Restricción de destinos
 
-Los fallos de Gemini y de los servicios municipales deberán gestionarse mediante los mecanismos establecidos.
+Los destinos de las peticiones externas estarán controlados por la configuración del producto.
 
-No se fabricarán resultados satisfactorios para ocultar errores técnicos.
+El modelo y los consumidores no podrán proporcionar direcciones arbitrarias.
 
-## 12. Protección frente a consumo excesivo de recursos
+La API municipal utilizará el servicio autorizado definido en [05-tools.md](05-tools.md).
+
+### 11.5. Protección frente a SSRF
+
+Las herramientas no permitirán utilizar sus argumentos para realizar peticiones arbitrarias a:
+
+- Servicios internos.
+- Interfaces administrativas.
+- Recursos locales del servidor.
+- Servicios de metadatos de infraestructura.
+- Destinos externos no autorizados.
+
+Las redirecciones HTTP deberán deshabilitarse o validarse conforme a los destinos autorizados cuando resulte aplicable.
+
+No se incorporará un cliente de navegación general accesible al modelo.
+
+### 11.6. Referencias documentales
+
+La presentación de una URL oficial al consumidor no implicará que el backend deba consultar dicha dirección.
+
+La actualización de documentos constituirá una operación independiente.
+
+### 11.7. Respuestas externas
+
+Las respuestas de proveedores se tratarán como datos no confiables.
+
+No podrán modificar permisos, configuraciones ni reglas del sistema.
+
+### 11.8. Fallos externos
+
+Se utilizarán los mecanismos autorizados de recuperación.
+
+No se fabricarán respuestas ni se consultarán nuevos proveedores para ocultar un fallo técnico.
+
+## 12. Protección frente a consumo excesivo
 
 ### 12.1. Límites internos
 
-El asistente deberá respetar los límites correspondientes a:
+El asistente respetará los límites correspondientes a:
 
+- Longitud de las consultas.
+- Tamaño del contexto documental.
 - Iteraciones del supervisor.
-- Rondas de razonamiento.
+- Rondas de especialistas.
 - Llamadas a herramientas.
 - Turnos por conversación.
 - Tamaño del historial.
 - Recursión del grafo.
-- Tamaño del contexto documental.
 
-### 12.2. Control determinista
+Los valores se establecen en [15-robustez-observabilidad.md](15-robustez-observabilidad.md).
 
-Los límites deberán aplicarse mediante Python.
+### 12.2. Aplicación determinista
 
-El modelo no podrá ampliarlos mediante instrucciones ni mediante la generación de múltiples llamadas dentro de una misma respuesta.
+El modelo no podrá ampliar los presupuestos mediante instrucciones, reformulaciones o múltiples solicitudes de herramientas.
 
 ### 12.3. Operaciones repetidas
 
-El asistente deberá evitar ejecuciones redundantes que no contribuyan a resolver la consulta.
+Se evitarán llamadas redundantes que no contribuyan a resolver la consulta.
 
-### 12.4. Agotamiento de recursos
+La reutilización de resultados deberá respetar su procedencia y ámbito de validez.
 
-Cuando se alcance un límite, deberán impedirse las operaciones adicionales incompatibles.
+### 12.4. Identificación visual reutilizada
 
-No se inventarán evidencias ni resultados para aparentar que una ejecución ha finalizado correctamente.
+Una identificación multimodal previamente validada no deberá generar una segunda llamada a Gemini.
 
-### 12.5. Protección operativa
+La reutilización no se contabilizará como una invocación ficticia de herramienta.
 
-Los valores concretos, cuotas comerciales, rate limiting, capacidad global de ejecución y timeouts se definen en [15-robustez-observabilidad.md](15-robustez-observabilidad.md).
+### 12.5. Agotamiento de presupuestos
 
-## 13. Seguridad del procesamiento multimodal
+Cuando se alcance un límite, se impedirán las operaciones adicionales incompatibles.
 
-### 13.1. Validación técnica
+Si el flujo no puede completarse correctamente, se comunicará el fallo correspondiente.
 
-Las imágenes deberán superar los controles técnicos correspondientes antes de enviarse al proveedor externo.
+No se generarán evidencias o planes ficticios para aparentar una ejecución satisfactoria.
 
-Los formatos, restricciones de peso y resolución, procesamiento y eliminación se definen en [15-robustez-observabilidad.md](15-robustez-observabilidad.md).
+### 12.6. Protección HTTP
 
-### 13.2. Acceso a archivos
+El núcleo no mantendrá cuotas comerciales independientes.
 
-Las herramientas únicamente podrán acceder a imágenes situadas dentro de las ubicaciones autorizadas.
+La autenticación, rate limiting, cuotas comerciales, capacidad del executor y timeout global corresponderán a la capa HTTP.
 
-Deberán impedirse accesos no autorizados mediante:
+Todos los perfiles, incluido Admin, estarán sujetos a los límites técnicos.
 
-- Rutas absolutas arbitrarias.
-- Referencias a directorios superiores.
-- Rutas relativas que escapen de las ubicaciones permitidas.
-- Enlaces simbólicos que resuelvan fuera de las ubicaciones autorizadas.
+## 13. Seguridad multimodal
 
-### 13.3. Rutas proporcionadas por clientes
+### 13.1. Autorización
 
-Los clientes HTTP no podrán proporcionar rutas locales para acceder al sistema de archivos del backend.
+Únicamente las API keys User y Admin podrán acceder a POST /ask/image.
 
-Las imágenes deberán recibirse mediante el contrato multimedia establecido.
+Las claves Free recibirán HTTP 403 INSUFFICIENT_PERMISSIONS.
 
-### 13.4. Validación semántica
+La autorización deberá comprobarse antes de procesar la imagen mediante Gemini.
 
-Una imagen técnicamente válida no se considerará automáticamente admisible.
+### 13.2. Recepción
 
-El servicio HTTP deberá aplicar los mecanismos de identificación y validación semántica previamente establecidos.
+Se aplicarán límites al tamaño del archivo y del cuerpo HTTP.
 
-### 13.5. Inyección multimodal
+No se confiará exclusivamente en Content-Length.
 
-El contenido visual de una imagen podrá incluir texto o instrucciones dirigidas al asistente.
+La recepción deberá impedir la acumulación ilimitada de archivos antes de su validación.
 
-Dicho contenido deberá tratarse como información observada y no como instrucciones autorizadas.
+### 13.3. Validación técnica
 
-La presencia de instrucciones dentro de una imagen no podrá modificar permisos, presupuestos, reglas de seguridad ni decisiones HITL.
+Las imágenes deberán comprobarse antes de enviarse al proveedor.
 
-### 13.6. Interrupción del flujo
+Se validarán:
 
-Las imágenes rechazadas durante la validación previa no deberán continuar hacia LangGraph.
+- Formato real.
+- Integridad.
+- Peso.
+- Resolución.
+- Ausencia de animación no admitida.
+- Riesgos de descompresión excesiva.
+- Compatibilidad con los límites establecidos.
 
-No se realizarán operaciones documentales, geográficas o de síntesis posteriores a su rechazo.
+Los formatos autorizados serán JPEG y PNG.
 
-### 13.7. Identificación frente a evidencia
+Los límites finales serán de 5 MiB y 16.000.000 píxeles.
 
-La descripción visual no constituye por sí sola evidencia documental suficiente para recomendar un destino de reciclaje.
+Los límites absolutos de recepción serán de 20 MiB y 32.000.000 píxeles.
 
-### 13.8. Privacidad
+### 13.4. Adaptación segura
 
-El procesamiento visual implica transmitir información al proveedor externo autorizado.
+Cuando una imagen supere los límites finales, pero permanezca dentro de los límites absolutos, podrá adaptarse mediante redimensionamiento o compresión.
 
-No se garantizará que el análisis de imágenes se realice exclusivamente de forma local.
+La imagen resultante deberá validarse nuevamente.
 
-Las imágenes no se conservarán permanentemente dentro de los mecanismos de almacenamiento del producto.
+No se desactivarán los mecanismos de protección de Pillow para admitir imágenes incompatibles.
 
-## 14. Seguridad de la información geográfica
+### 13.5. Acceso a archivos
+
+Las herramientas únicamente podrán acceder a imágenes situadas dentro de las ubicaciones autorizadas bajo assets/.
+
+Se conservarán las comprobaciones mediante resolve() e is_relative_to().
+
+Deberán impedirse rutas que escapen del directorio permitido, incluyendo enlaces simbólicos que resuelvan fuera de este.
+
+### 13.6. Rutas HTTP
+
+Los clientes HTTP no podrán proporcionar rutas locales.
+
+El backend generará los nombres de los archivos temporales.
+
+No se utilizará directamente el nombre original para construir una ruta de almacenamiento.
+
+### 13.7. Identificación semántica
+
+Se utilizará identificar_imagen() y el contrato compartido IdentificacionImagen:
+
+```python
+class IdentificacionImagen(TypedDict):
+    estado: Literal[
+        "allowed",
+        "out_of_domain",
+        "policy_violation",
+        "uncertain",
+    ]
+    descripcion: str
+```
+
+La respuesta se validará mediante Python.
+
+TypedDict no constituye por sí mismo un mecanismo de validación en tiempo de ejecución.
+
+### 13.8. Estados de admisibilidad
+
+| Estado | Comportamiento |
+|---|---|
+| allowed | Continuar con LangGraph |
+| out_of_domain | Abstención previa controlada |
+| policy_violation | HTTP 422 IMAGE_CONTENT_NOT_ALLOWED |
+| uncertain | Solicitar otra imagen antes del agente |
+
+Un fallo técnico no se transformará en ninguno de estos estados semánticos para ocultar el error.
+
+### 13.9. Inyección multimodal
+
+El texto y las instrucciones presentes en imágenes se tratarán como contenido observado.
+
+No podrán:
+
+- Modificar el dominio.
+- Alterar los permisos.
+- Ampliar presupuestos.
+- Ordenar llamadas externas.
+- Exponer secretos.
+- Aprobar planes.
+- Modificar el estado.
+
+La descripción obtenida de Gemini también se tratará como información no confiable.
+
+### 13.10. Interrupción del flujo
+
+Las imágenes no admitidas no continuarán hacia:
+
+- LangGraph.
+- Recuperación documental.
+- Búsquedas geográficas.
+- Síntesis.
+- Generación de planes.
+- HITL.
+
+No incrementarán turnos_consumidos.
+
+No generarán mensajes SQL ni nuevas conversaciones del agente.
+
+Las identificaciones ya ejecutadas consumirán la cuota comercial correspondiente.
+
+### 13.11. Reutilización de la identificación
+
+Las identificaciones admitidas se proporcionarán al agente mediante identificacion_imagen.
+
+No se proporcionará simultáneamente ruta_imagen.
+
+No se repetirán llamadas multimodales.
+
+No se generarán resultados ficticios de describir_imagen.
+
+La procedencia de la observación visual deberá distinguirse de una nueva ejecución de herramienta.
+
+### 13.12. Identificación frente a evidencia
+
+La observación visual podrá fundamentar una descripción del objeto.
+
+La clasificación de su destino de reciclaje requerirá evidencia documental autorizada.
+
+La identificación visual no ampliará las fuentes de conocimiento del producto.
+
+### 13.13. Privacidad y eliminación
+
+Se eliminarán metadatos innecesarios de las imágenes HTTP, incluyendo EXIF y coordenadas GPS.
+
+Los archivos temporales se eliminarán cuando ninguna ejecución pueda seguir utilizándolos.
+
+No se eliminarán prematuramente durante un timeout si el worker continúa procesándolos.
+
+No se conservarán imágenes binarias en PostgreSQL ni referencias operativas a archivos temporales eliminados dentro de checkpoints HTTP.
+
+El procesamiento mediante Gemini implica transmitir la imagen preparada al proveedor autorizado.
+
+La política de eliminación del producto no garantiza la eliminación de datos mantenidos por dicho proveedor conforme a sus propias condiciones.
+
+## 14. Seguridad geográfica y temporal
 
 ### 14.1. Autorización de ubicación
 
-Las operaciones geográficas deberán utilizar únicamente coordenadas proporcionadas explícitamente por el consumidor.
+Las búsquedas geográficas únicamente utilizarán coordenadas proporcionadas voluntariamente por el consumidor.
 
 ### 14.2. Validación
 
-Las coordenadas deberán comprobarse antes de ejecutar una búsqueda geográfica.
+Se comprobarán:
 
-No se utilizarán valores no finitos, fuera de rango o incompletos.
+- Presencia conjunta de latitud y longitud.
+- Tipos compatibles.
+- Valores finitos.
+- Rangos autorizados.
+- Radio permitido.
+
+No se admitirán valores booleanos como coordenadas o radios.
 
 ### 14.3. Ubicación supuesta
 
-El asistente no podrá inventar coordenadas para realizar búsquedas de proximidad.
+El modelo no podrá inventar coordenadas.
 
-Los valores predeterminados de la interfaz no deberán utilizarse sin autorización.
+No se utilizarán automáticamente:
 
-### 14.4. Interpretación de distancias
+- Coordenadas predeterminadas.
+- Direcciones del consumidor.
+- Ubicaciones inferidas mediante IP.
+- Metadatos GPS de imágenes.
+- Ubicaciones extraídas mediante proveedores externos.
 
-Las distancias geográficas no se presentarán como rutas, tiempos de desplazamiento ni garantías de accesibilidad.
+### 14.4. Procedencia geográfica
 
-### 14.5. Procedencia de resultados
+Los resultados deberán distinguir entre:
 
-La información obtenida del servicio municipal y del respaldo documental deberá conservar su procedencia.
+- ArcGIS municipal.
+- Corpus local de respaldo.
 
-Los resultados del corpus local no podrán presentarse como información obtenida directamente de la API.
+Los datos locales no se presentarán como información consultada directamente en ArcGIS.
 
-### 14.6. Información temporal
+### 14.5. Integridad de resultados
 
-Los horarios publicados no se presentarán como garantías de apertura física.
+No se fabricarán coordenadas, instalaciones ni distancias.
 
-Las reglas de interpretación geográfica y temporal se definen en [04-consultas-generales.md](04-consultas-generales.md).
+Una respuesta no vacía cuyos registros sean completamente inválidos no se interpretará como ausencia legítima de instalaciones.
+
+### 14.6. Compatibilidad
+
+La proximidad no constituirá evidencia de que una instalación admite un residuo.
+
+Las referencias negativas a modalidades de recogida no podrán interpretarse como autorizaciones.
+
+### 14.7. Interpretación temporal
+
+La evaluación horaria utilizará Europe/Madrid y documentación autorizada.
+
+No se afirmará apertura física basándose exclusivamente en horarios publicados.
+
+La información temporal imprescindible que no pueda obtenerse debido a un fallo técnico no se sustituirá por una hora inventada.
 
 ## 15. Seguridad del estado conversacional
 
 ### 15.1. Aislamiento
 
-Cada conversación deberá mantener un estado operativo independiente.
+Cada conversación mantendrá un estado independiente.
 
-No se compartirán automáticamente mensajes, evidencias, planes ni resultados entre diferentes identificadores de conversación.
+No se compartirán automáticamente:
 
-### 15.2. Identificador de conversación
+- Mensajes.
+- Contexto.
+- Evidencias.
+- Planes.
+- Aprobaciones.
+- Coordenadas.
+- Identificaciones visuales.
+- Resultados de herramientas.
 
-El conocimiento de un thread_id no concede autorización para acceder al estado correspondiente.
+### 15.2. Identificación
 
-La autorización de acceso deberá realizarse antes de consultar o modificar el checkpoint desde la capa HTTP.
+Los nuevos thread_id HTTP se generarán mediante UUID en el backend.
 
-### 15.3. Fuente de verdad
+El conocimiento de thread_id no constituirá autorización.
 
-El checkpoint real de LangGraph tendrá prioridad sobre los estados o representaciones conservados por los clientes.
+Un identificador proporcionado por el cliente que no corresponda a una conversación existente no permitirá crearla arbitrariamente.
 
-Los clientes externos no podrán proporcionar directamente el estado interno del grafo.
+### 15.3. Propiedad
 
-### 15.4. Integridad del contexto
+Cada conversación HTTP pertenecerá a una API key.
 
-El contexto utilizado para interpretar una consulta deberá pertenecer a la conversación autorizada.
+La autorización se comprobará antes de consultar o modificar su checkpoint.
 
-No se utilizará información de otros consumidores para completar datos ausentes.
+Dos API keys del mismo usuario no compartirán automáticamente sus conversaciones.
 
-### 15.5. Evidencias anteriores
+Los accesos administrativos respetarán los controles establecidos en la especificación 14.
 
-Las evidencias de turnos anteriores no se considerarán automáticamente válidas para fundamentar nuevas recomendaciones.
+### 15.4. Recursos ajenos
 
-### 15.6. Estados incompatibles
+Un consumidor no autorizado recibirá THREAD_NOT_FOUND conforme al contrato HTTP.
 
-No se permitirá continuar una conversación cuando:
+No se revelará previamente si la conversación está ocupada, cerrada, agotada o contiene una aprobación pendiente.
 
-- Exista un HITL pendiente que impida iniciar otro turno.
-- La conversación haya finalizado.
-- Se hayan agotado los límites correspondientes.
-- Exista una modificación concurrente incompatible.
-- El estado operativo no sea consistente.
-- La operación no se encuentre autorizada.
+### 15.5. Fuente de verdad
 
-### 15.7. Pérdida de estado
+El checkpoint real tendrá prioridad sobre cualquier representación del cliente.
 
-No se reconstruirán automáticamente checkpoints utilizando mensajes proporcionados por el cliente o recuperados del historial SQL.
+Los consumidores HTTP no podrán aportar directamente:
 
-Las transiciones del estado se definen en [06-langgraph.md](06-langgraph.md).
+- EstadoProducto.
+- EstadoGrafo.
+- Checkpoints.
+- Contadores internos.
+- Evidencias.
+- Planes modificados.
+- Identificaciones visuales supuestamente validadas.
+
+### 15.6. Contexto autorizado
+
+El contexto utilizado deberá pertenecer al hilo autorizado.
+
+Las evidencias anteriores no se considerarán automáticamente válidas para una nueva recomendación.
+
+### 15.7. Estados incompatibles
+
+No se admitirán nuevas consultas cuando:
+
+- Exista HITL pendiente.
+- La conversación esté finalizada.
+- Se haya agotado el límite de turnos.
+- Exista una ejecución concurrente.
+- El checkpoint no esté disponible.
+- El estado no sea consistente.
+- La operación no esté autorizada.
+
+La aprobación correspondiente al último turno permitido podrá resolverse aunque se haya alcanzado el límite de turnos.
+
+### 15.8. Exclusión mutua
+
+Las operaciones de modificación deberán ejecutarse bajo el bloqueo correspondiente al hilo.
+
+Las comprobaciones, resolución y persistencia deberán mantenerse coordinadas.
+
+El timeout no autorizará liberar prematuramente el bloqueo.
+
+### 15.9. Pérdida de estado
+
+No se reconstruirán automáticamente checkpoints utilizando el historial SQL o mensajes proporcionados por consumidores.
+
+Una conversación persistida sin estado operativo fiable recibirá HTTP 409 THREAD_STATE_LOST al intentar continuarla.
+
+La lectura del historial autorizado permanecerá diferenciada de la capacidad de ejecución.
 
 ## 16. Seguridad de HITL
 
 ### 16.1. Finalidad
 
-HITL constituye un mecanismo de revisión y registro de decisiones sobre los planes generados.
+HITL constituye un mecanismo de revisión y registro de decisiones.
 
-No constituye una autorización para ejecutar acciones físicas ni operaciones externas.
+No constituye una autorización para ejecutar acciones físicas, contratar servicios o realizar operaciones administrativas externas.
 
-### 16.2. Interrupción real
+### 16.2. Obligatoriedad
 
-Una aprobación pendiente deberá corresponder a una interrupción real del checkpoint antes del nodo aplicar.
+Toda ejecución satisfactoria de LangGraph deberá producir:
 
-No será suficiente modificar el atributo pendiente_hitl desde un cliente.
+- Una respuesta válida.
+- Un plan válido.
+- Un approval_id.
+- Una interrupción real antes de aplicar.
+
+No se incorporarán rutas satisfactorias que eviten esta interrupción.
 
 ### 16.3. Validación del plan
 
-Únicamente podrán someterse a aprobación planes que hayan superado las validaciones correspondientes.
+El plan deberá contener al menos dos cadenas no vacías.
+
+Deberá ser coherente con la respuesta y las evidencias disponibles.
+
+No se utilizará un plan proporcionado por el consumidor como sustituto del almacenado en el checkpoint.
 
 ### 16.4. Identificador de aprobación
 
-Cada aprobación pendiente dispondrá de un approval_id generado por el sistema.
+approval_id se generará mediante UUID en Python.
 
-El identificador deberá corresponder al plan vigente.
+El identificador corresponderá exclusivamente a la propuesta pendiente.
+
+No será generado ni controlado por Gemini.
 
 ### 16.5. Autorización de decisiones
 
-La resolución de una aprobación requerirá:
+La resolución requerirá:
 
-- Una operación autorizada.
-- Una conversación válida.
-- Un checkpoint consistente.
-- Una interrupción HITL real.
-- Un plan válido.
-- Un approval_id coincidente.
-- Una decisión compatible con el contrato.
+- Credencial válida.
+- Rol autorizado.
+- Acceso autorizado a la conversación.
+- Checkpoint consistente.
+- Interrupción HITL real.
+- Plan válido.
+- approval_id coincidente.
+- Decisión booleana válida.
+- Ausencia de ejecución concurrente incompatible.
 
-### 16.6. Aprobaciones obsoletas
+Conocer approval_id no sustituirá la autenticación ni la autorización.
 
-Una aprobación correspondiente a un identificador anterior no podrá resolver un plan posterior.
+### 16.6. Aprobaciones inexistentes
 
-### 16.7. Aprobaciones duplicadas
+Si no existe una aprobación pendiente, se devolverá HTTP 409 NO_PENDING_APPROVAL.
 
-Una decisión ya registrada no podrá volver a modificar el estado del turno correspondiente.
+La disponibilidad del botón en Streamlit no constituirá un control de seguridad suficiente.
 
-### 16.8. Aprobación manual
+### 16.7. Aprobaciones obsoletas
 
-Streamlit y el modo interactivo de terminal deberán requerir una decisión explícita cuando exista HITL pendiente.
+Una aprobación correspondiente a un identificador anterior no podrá resolver una propuesta posterior.
 
-### 16.9. Aprobación automática autorizada
+Se devolverá HTTP 409 STALE_APPROVAL cuando exista una propuesta pendiente diferente.
 
-La resolución automática únicamente podrá realizarse mediante los mecanismos contemplados en los contratos del producto.
+### 16.8. Aprobaciones duplicadas
 
-El modelo de lenguaje no podrá generar por sí mismo una autorización de aprobación.
+Una decisión resuelta no podrá volver a modificar el mismo turno.
 
-La resolución automática deberá superar los mismos controles de estado e integridad que la resolución manual.
+La exclusión mutua y las comprobaciones posteriores deberán impedir resoluciones simultáneas o repetidas.
 
-### 16.10. Respuestas directas
+No se generarán pares duplicados de mensajes SQL.
 
-Las consultas que no requieran HITL podrán resolverse sin generar un plan.
+### 16.9. Aprobación manual
 
-Esta posibilidad no deberá utilizarse para omitir una aprobación necesaria.
+Streamlit utilizará auto_aprobar=False.
 
-### 16.11. Fallos de resolución
+El modo interactivo de terminal solicitará una decisión explícita.
 
-Un fallo durante la actualización o reanudación del checkpoint no deberá presentarse como una aprobación satisfactoria.
+La decisión deberá resolverse mediante aprobar_plan() conforme a [06-langgraph.md](06-langgraph.md).
 
-Las reglas de transición y protección de aprobaciones se definen en los documentos 06, 12 y 15.
+### 16.10. Aprobación automática
+
+La aprobación automática únicamente podrá realizarse mediante una modalidad explícitamente autorizada por los contratos del producto.
+
+Se utilizará el mismo mecanismo de resolución que en la aprobación manual.
+
+No se modificará done directamente para simular una aprobación.
+
+El modelo no podrá decidir aprobar su propio plan.
+
+### 16.11. Respuestas anteriores al agente
+
+Las respuestas resueltas antes de ejecutar LangGraph no requerirán planes ni HITL.
+
+Esto incluye las abstenciones deterministas previas, determinadas aclaraciones y las imágenes no admitidas.
+
+No se generarán aprobaciones ficticias.
+
+Esta excepción no se aplicará a las respuestas informativas, abstenciones o aclaraciones obtenidas dentro de una ejecución satisfactoria de LangGraph.
+
+### 16.12. Fallos de resolución
+
+Una actualización o reanudación fallida del checkpoint no se presentará como una decisión satisfactoria.
+
+No se persistirán turnos fallidos.
+
+Los estados inconsistentes deberán quedar protegidos frente a su reutilización.
+
+### 16.13. Limpieza
+
+Después de resolver correctamente una aprobación se eliminará approval_id del estado pendiente.
+
+La aprobación finalizará la conversación.
+
+El rechazo permitirá reformular dentro de las restricciones establecidas.
 
 ## 17. Protección de credenciales
 
 ### 17.1. Credenciales externas
 
-Las credenciales utilizadas para acceder a Gemini deberán obtenerse mediante los mecanismos seguros de configuración del entorno.
+Las credenciales de Gemini se obtendrán mediante la configuración segura del entorno.
 
-### 17.2. Separación de secretos y contexto
+No se proporcionarán al modelo como parte de los prompts.
 
-Las credenciales del sistema no deberán incorporarse a:
+### 17.2. Separación de credenciales
+
+Se mantendrán diferenciados:
+
+- GEMINI_API_KEY.
+- API_KEY de aprovisionamiento administrativo.
+- API keys de consumidores.
+- Tokens de sesión.
+- DATABASE_URL.
+
+Una credencial de ReciclaTÍA no permitirá acceder directamente a Gemini.
+
+La credencial de Gemini no se utilizará para autenticar consumidores.
+
+### 17.3. Almacenamiento
+
+Las contraseñas se almacenarán mediante bcrypt.
+
+Las API keys y tokens opacos generados con suficiente entropía se gestionarán mediante hashes SHA-256 conforme a la especificación 14.
+
+Las API keys originales únicamente se devolverán durante su emisión autorizada.
+
+Los tokens originales únicamente se devolverán durante el inicio de sesión.
+
+### 17.4. Privilegios
+
+La autorización ordinaria del nivel User dependerá de USER_TIER_ALLOWED_USER_IDS.
+
+No se concederán privilegios únicamente por registrar una dirección de email incluida en una lista autorizada.
+
+El producto no verificará automáticamente la titularidad del correo durante el PB03.
+
+### 17.5. Protección de secretos
+
+Las credenciales no se incorporarán a:
 
 - Prompts.
-- Contextos documentales.
 - Evidencias.
+- Contextos documentales.
 - Resultados de herramientas.
-- Descripciones de imágenes.
-- Historiales conversacionales.
+- Historiales.
+- Logs.
+- URLs.
+- Repositorios.
 
-### 17.3. Archivos de configuración
+Los archivos que contengan secretos deberán excluirse del control de versiones.
 
-Los archivos que contengan secretos no deberán incorporarse al control de versiones.
+### 17.6. Transporte
 
-### 17.4. Credenciales de consumidores
+Las comunicaciones en producción utilizarán HTTPS.
 
-Las reglas de almacenamiento, emisión, autenticación y protección de API keys, contraseñas y sesiones se definen en [14-autenticacion-autorizacion.md](14-autenticacion-autorizacion.md).
+Las credenciales se transmitirán mediante las cabeceras autorizadas.
 
-### 17.5. Infraestructura
+Las respuestas que contengan secretos originales incluirán Cache-Control: no-store.
 
-Las reglas de configuración segura de secretos en los entornos de desarrollo y producción se definen en [16-despliegue.md](16-despliegue.md).
+### 17.7. Revocación
+
+Las operaciones nuevas deberán comprobar el estado actual de las credenciales.
+
+Una revocación impedirá admitir nuevas ejecuciones.
+
+Las operaciones en curso deberán volver a comprobar la autorización correspondiente antes de entregar y persistir sus resultados.
+
+No se garantizará la cancelación inmediata de llamadas externas previamente iniciadas.
 
 ## 18. Protección de datos personales
 
 ### 18.1. Minimización
 
-El sistema deberá utilizar únicamente la información necesaria para resolver la consulta y proporcionar las funcionalidades autorizadas.
+El sistema tratará únicamente la información necesaria para proporcionar las funcionalidades autorizadas.
+
+No solicitará datos personales adicionales que resulten innecesarios.
 
 ### 18.2. Información aportada
 
-Los consumidores podrán incluir información personal dentro de sus preguntas, imágenes o coordenadas.
+Los consumidores podrán incluir información personal dentro de:
 
-El sistema no deberá solicitar información adicional innecesaria.
+- Preguntas.
+- Imágenes.
+- Coordenadas.
+- Datos de registro.
+- Conversaciones.
 
-### 18.3. Procesamiento mediante proveedores
+El procesamiento deberá ajustarse a las responsabilidades de cada componente.
 
-Las operaciones de embeddings, generación e identificación multimodal podrán requerir el envío de información a Gemini.
+### 18.3. Proveedores externos
 
-La aplicación no deberá presentarse como un sistema completamente desconectado de proveedores externos.
+La generación de embeddings, inferencia e identificación visual podrán requerir el envío de información a Gemini.
+
+La búsqueda geográfica podrá requerir el envío de coordenadas al servicio municipal.
+
+No se presentará el producto como un sistema completamente local o desconectado de proveedores externos.
 
 ### 18.4. Separación documental
 
-Los datos personales aportados por consumidores no deberán incorporarse automáticamente al corpus RAG.
+Los datos de consumidores no se incorporarán automáticamente al corpus.
+
+Las herramientas no dispondrán de acceso libre a la base de datos de usuarios y conversaciones.
 
 ### 18.5. Persistencia
 
-El almacenamiento de usuarios, API keys, conversaciones y mensajes deberá ajustarse al modelo definido en [13-persistencia.md](13-persistencia.md).
+La persistencia respetará el modelo definido en [13-persistencia.md](13-persistencia.md).
 
-### 18.6. Alcance del almacenamiento
+Se almacenarán únicamente los mensajes correspondientes a turnos de LangGraph correctamente resueltos.
 
-La ausencia de columnas específicas para imágenes o coordenadas no garantiza que el texto de los mensajes almacenados esté libre de información personal.
+No se almacenarán imágenes binarias.
 
-### 18.7. Eliminación lógica
+### 18.6. Datos dentro de mensajes
 
-La eliminación lógica de usuarios y credenciales constituye un mecanismo de gestión del producto e integridad referencial.
+La ausencia de columnas específicas para imágenes, direcciones o coordenadas no garantiza que los mensajes almacenados estén libres de información personal.
 
-No equivale por sí sola a la supresión definitiva de todos los datos personales asociados.
+El consumidor podría incluir estos datos directamente en una pregunta.
+
+### 18.7. Estado operativo
+
+Los checkpoints podrán contener información contextual necesaria para la conversación.
+
+No deberán exponerse directamente mediante respuestas públicas.
+
+MemorySaver no proporcionará por sí mismo un mecanismo específico de cifrado o supresión definitiva de datos.
+
+### 18.8. Eliminación lógica
+
+La eliminación lógica constituirá un mecanismo de gestión de recursos e integridad referencial.
+
+No equivaldrá automáticamente a la supresión física definitiva de todos los datos personales asociados.
+
+Los procedimientos adicionales de conservación, anonimización y supresión deberán desarrollarse antes de una futura explotación comercial.
 
 ## 19. Seguridad de registros y trazas
 
 ### 19.1. Finalidad
 
-Las trazas internas deberán permitir identificar operaciones, decisiones, restricciones y fallos relevantes para el funcionamiento del asistente.
+Las trazas internas permitirán analizar:
 
-### 19.2. Información sensible
+- Operaciones solicitadas.
+- Herramientas ejecutadas.
+- Operaciones denegadas.
+- Resultados reutilizados.
+- Presupuestos alcanzados.
+- Procedencia.
+- Decisiones HITL.
+- Fallos técnicos.
 
-Los registros y trazas no deberán exponer:
+### 19.2. Información prohibida
+
+Los registros operativos no deberán contener:
 
 - Contraseñas.
-- API keys originales.
+- API keys.
+- Tokens.
 - Hashes de credenciales.
-- Tokens de sesión.
-- Variables de entorno sensibles.
 - Cadenas de conexión.
-- Contenido binario de imágenes.
+- Cabeceras de autenticación.
 - Prompts privados.
-- Información de consumidores no necesaria para el diagnóstico.
+- Imágenes binarias.
+- Coordenadas personales.
+- Preguntas y respuestas completas.
+- Descripciones visuales completas.
+- Documentos recuperados completos.
+- Rutas internas innecesarias.
 
-### 19.3. Exposición pública
+### 19.3. Trazas del núcleo
 
-Los estados y trazas internas no deberán serializarse directamente mediante los endpoints públicos.
+Se conservarán los mecanismos de trazabilidad existentes, incluyendo las vistas acotadas de resultados.
 
-La información de diagnóstico accesible para los clientes deberá ajustarse a contratos autorizados.
+Deberá revisarse que las vistas de diagnóstico no expongan información sensible.
 
-### 19.4. Errores técnicos
+Las trazas internas no se confundirán con los logs HTTP.
 
-Las excepciones internas deberán gestionarse sin exponer detalles que faciliten accesos no autorizados.
+### 19.4. Identidades autorizadas
 
-### 19.5. Observabilidad
+Los registros HTTP podrán contener los identificadores necesarios para diagnosticar operaciones.
 
-Los campos obligatorios, eventos técnicos y restricciones específicas de logging se definen en [15-robustez-observabilidad.md](15-robustez-observabilidad.md).
+No se registrará como autorizado un thread_id cuya propiedad no se haya comprobado.
+
+No se utilizarán secretos originales como identificadores de consumo.
+
+### 19.5. Exposición pública
+
+EstadoGrafo, EstadoProducto, checkpoints y trazas completas no se serializarán directamente mediante los endpoints públicos.
+
+Los resultados se transformarán mediante los contratos autorizados.
+
+### 19.6. Errores sanitizados
+
+Los manejadores de errores no expondrán:
+
+- Stack traces.
+- Consultas SQL.
+- Excepciones completas.
+- Credenciales.
+- Variables sensibles.
+- Cuerpos completos de peticiones.
+- Rutas internas innecesarias.
+
+Los errores de validación tampoco reproducirán contraseñas o tokens recibidos.
+
+### 19.7. Observabilidad
+
+Se utilizarán request_id, códigos HTTP y códigos de error conforme a [15-robustez-observabilidad.md](15-robustez-observabilidad.md).
+
+La información de diagnóstico deberá ser suficiente sin necesidad de registrar datos sensibles.
 
 ## 20. Gestión segura de fallos
 
 ### 20.1. Principio general
 
-Un fallo técnico no deberá provocar la relajación automática de los controles de seguridad.
+Un fallo técnico no provocará la relajación automática de los controles de seguridad.
 
-### 20.2. Operaciones no verificables
+### 20.2. Condiciones no verificables
 
-Cuando no pueda comprobarse una condición crítica de autorización o integridad, no deberá ejecutarse la operación correspondiente.
+Si no puede comprobarse una condición crítica de autorización o integridad, no se ejecutará la operación correspondiente.
+
+Un fallo de PostgreSQL durante la autenticación no se tratará como si la credencial fuera válida.
 
 ### 20.3. Fallos del modelo
 
-Una respuesta inválida del modelo podrá activar mecanismos controlados de fallback.
+Las salidas inválidas podrán activar mecanismos autorizados de recuperación cuando corresponda.
 
-Estos mecanismos deberán conservar los permisos y restricciones establecidos.
+Estos mecanismos conservarán las restricciones de seguridad.
+
+No se realizarán reintentos ilimitados.
 
 ### 20.4. Fallos de herramientas
 
-Los fallos de herramientas no deberán generar resultados ficticios ni provocar accesos a servicios no autorizados.
+Los fallos no producirán evidencias ficticias.
 
-### 20.5. Fallos de estado
+No se ampliarán los servicios externos autorizados para intentar recuperar una operación.
 
-Cuando no pueda garantizarse la consistencia del checkpoint, deberá impedirse su reutilización.
+### 20.5. Abstenciones frente a errores
 
-### 20.6. Fallos de persistencia
+Una abstención por insuficiencia documental legítima podrá constituir un resultado satisfactorio.
+
+Un fallo técnico no recuperado de una operación imprescindible deberá comunicarse mediante el error correspondiente.
+
+### 20.6. Prevención de falsos éxitos
+
+No se devolverá HTTP 200 cuando:
+
+- El agente contenga un error técnico.
+- No pueda verificarse el resultado.
+- Falte el HITL obligatorio.
+- Falle una dependencia imprescindible.
+- El checkpoint resulte inconsistente.
+- No pueda confirmarse una persistencia obligatoria.
+- Se supere el timeout.
+
+Toda respuesta AskOut satisfactoria contendrá error=None.
+
+### 20.7. Fallos de estado
+
+Los checkpoints cuya consistencia no pueda garantizarse no se reutilizarán.
+
+No se reconstruirán automáticamente utilizando mensajes del consumidor o datos SQL.
+
+### 20.8. Fallos de persistencia
 
 La imposibilidad de persistir correctamente un turno deberá gestionarse conforme a [13-persistencia.md](13-persistencia.md).
 
-### 20.7. Timeouts
+No se comunicará una operación satisfactoria cuando su persistencia obligatoria no pueda confirmarse.
 
-La finalización de una petición HTTP por timeout no implica necesariamente la finalización real del agente.
+### 20.9. Timeout
 
-No se liberarán prematuramente recursos que puedan seguir utilizándose.
+La devolución de HTTP 504 no implicará necesariamente que el worker haya terminado.
 
-Las reglas correspondientes se definen en [15-robustez-observabilidad.md](15-robustez-observabilidad.md).
+Se conservarán los recursos necesarios hasta la finalización real.
+
+Los resultados tardíos no se persistirán.
+
+### 20.10. Respuestas perdidas
+
+El cliente no repetirá automáticamente operaciones POST cuyo resultado sea desconocido.
+
+No se inferirá la existencia de un HITL pendiente utilizando exclusivamente el historial SQL.
 
 ## 21. Matriz de riesgos y controles
 
 | Riesgo | Control principal | Especificación |
 |---|---|---|
-| Inyección directa de instrucciones | Separación de datos e instrucciones y validación determinista | 10 |
-| Inyección indirecta mediante documentos | Tratamiento del corpus como datos no confiables | 03, 09, 10 |
-| Inyección mediante imágenes | Validación multimodal y restricciones de autoridad | 05, 10, 15 |
+| Inyección directa | Separación de datos e instrucciones y controles Python | 10 |
+| Inyección documental | Contexto no confiable y validación de referencias | 03, 09, 10 |
+| Inyección multimodal | Identificación estructurada y restricciones de autoridad | 05, 10, 15 |
 | Herramienta no autorizada | Registro y permisos por especialista | 05 |
-| Argumentos maliciosos | Validación previa a la ejecución | 05, 10 |
-| Acceso arbitrario a archivos | Restricción de ubicaciones autorizadas | 05, 10, 15 |
-| Peticiones externas arbitrarias | Destinos de servicios controlados | 05, 10 |
+| Argumentos maliciosos | Validación y sustitución de entradas autorizadas | 05, 10 |
+| Acceso arbitrario a archivos | Resolución de rutas y directorios permitidos | 05, 10 |
+| SSRF | Destinos HTTP controlados | 05, 10 |
+| Búsquedas externas no autorizadas | Restricción de servicios y herramientas | 05, 10 |
 | Citas inventadas | Validación de identificadores y metadatos | 03 |
-| Respuestas sin evidencia | Control de suficiencia y abstención | 03 |
-| Contaminación del corpus | Separación entre documentos y datos operativos | 09 |
-| Bucles del agente | Límites de ejecución | 15 |
-| Consumo excesivo | Presupuestos, cuotas y rate limiting | 15 |
-| Acceso a conversaciones ajenas | Autorización basada en propiedad | 14 |
-| Elevación de privilegios | Autorización basada en roles | 14 |
+| Enlaces inventados | Catálogo autorizado de procedencia | 09, 12 |
+| Respuesta sin evidencia | Control de suficiencia y abstención | 03 |
+| Contaminación del corpus | Separación de datos documentales y operativos | 09 |
+| Bucles del agente | Presupuestos deterministas | 06, 15 |
+| Consumo excesivo | Cuotas, rate limiting y capacidad limitada | 15 |
+| Emisión abusiva de claves | Límites temporales y de claves activas | 14, 15 |
+| Elevación de privilegios | Autorización por roles y UUID autorizados | 14 |
+| Acceso a recursos ajenos | Comprobación de propiedad | 14 |
 | Mezcla de conversaciones | Aislamiento por thread_id | 06 |
-| Aprobación sin plan pendiente | Comprobación del checkpoint real | 06, 12 |
+| Aprobación inexistente | Comprobación de checkpoint real | 06, 12 |
 | Aprobación obsoleta | Validación de approval_id | 06, 15 |
-| Modificaciones simultáneas | Bloqueo por conversación | 15 |
-| Estado inconsistente | Protección frente a reutilización | 06, 13, 15 |
+| Aprobación ficticia | Resolución obligatoria mediante aplicar | 06 |
+| Modificaciones concurrentes | Exclusión mutua por conversación | 15 |
+| Estado inconsistente | Invalidación del hilo | 06, 13, 15 |
 | Ubicación inventada | Coordenadas explícitamente autorizadas | 04, 05 |
-| Respaldo presentado como fuente actual | Identificación de procedencia | 05, 09 |
-| Interpretación incorrecta de horarios | Comparación determinista con información publicada | 04 |
-| Exposición de credenciales | Protección de secretos | 14, 15, 16 |
-| Exposición de datos en registros | Logging restringido | 15 |
-| Pérdida de historial | Persistencia relacional | 13 |
-| Exposición de excepciones internas | Contratos de error sanitizados | 12, 15 |
+| Compatibilidad incorrecta | Validación de evidencia documental | 04 |
+| Horarios inventados | Interpretación temporal determinista | 04 |
+| Imagen excesivamente grande | Límites absolutos y adaptación segura | 15 |
+| Identificación visual duplicada | Reutilización de observación autorizada | 05, 06 |
+| Exposición de secretos | Hashing, configuración y sanitización | 14, 15, 16 |
+| Exposición de datos en registros | Restricciones de logging | 15 |
+| Persistencia tardía | Separación entre worker y persistencia final | 13, 15 |
+| Falso éxito HTTP | Validación integral de resultados | 12, 15 |
+| Revocación durante ejecución | Nueva comprobación de autorización | 14, 15 |
 
-Los controles deberán considerarse complementarios.
+Los controles serán complementarios.
 
-La existencia de una medida de protección no elimina la necesidad de aplicar las restantes cuando correspondan.
+La existencia de una medida no eliminará la necesidad de aplicar las restantes cuando corresponda.
 
 ## 22. Validación adversarial
 
 ### 22.1. Inyección de instrucciones
 
-Las pruebas deberán contemplar:
+Se comprobarán solicitudes dirigidas a:
 
-- Solicitudes de ignorar las instrucciones del sistema.
-- Solicitudes de responder inventando evidencia.
-- Instrucciones maliciosas incorporadas a documentos recuperados.
-- Instrucciones incorporadas a imágenes.
-- Instrucciones procedentes de resultados externos.
-- Solicitudes de revelar prompts internos.
-- Solicitudes de revelar secretos.
+- Ignorar las instrucciones del sistema.
+- Ampliar el dominio.
+- Inventar evidencia.
+- Revelar prompts.
+- Exponer credenciales.
+- Realizar búsquedas externas.
+- Aprobar planes sin autorización.
+
+También se probarán instrucciones incorporadas a documentos, imágenes y resultados de herramientas.
 
 ### 22.2. Herramientas
 
-Deberán comprobarse:
+Se comprobarán:
 
 - Herramientas inexistentes.
 - Herramientas fuera de la allowlist.
 - Herramientas permitidas únicamente para otro especialista.
 - Argumentos desconocidos.
-- Argumentos fuera de rango.
-- Solicitudes de servicios externos no autorizados.
+- Tipos incompatibles.
+- Valores fuera de rango.
 - Intentos de superar presupuestos.
+- Sustitución de coordenadas por el modelo.
+- Sustitución de rutas autorizadas.
+- Solicitudes de servicios externos no permitidos.
 
 ### 22.3. Archivos
 
-Deberán comprobarse:
+Se comprobarán:
 
-- Rutas que escapen de ubicaciones autorizadas.
+- Rutas fuera de assets/.
 - Referencias a directorios superiores.
 - Enlaces simbólicos incompatibles.
-- Archivos con extensiones engañosas.
+- Extensiones engañosas.
 - Archivos corruptos.
-- Imágenes que superen los límites establecidos.
+- Archivos vacíos.
+- Imágenes animadas no admitidas.
+- Límites absolutos de peso y resolución.
+- Riesgos de descompresión excesiva.
+- Eliminación de metadatos.
 
-### 22.4. Evidencias
+### 22.4. Multimodalidad
 
-Deberán comprobarse:
+Se comprobarán:
 
-- Referencias documentales inexistentes.
-- Evidencias insuficientes.
+- Imágenes fuera de dominio.
+- Imágenes con contenido no permitido.
+- Identificaciones inciertas.
+- Identificaciones estructuralmente inválidas.
+- Instrucciones maliciosas visibles en imágenes.
+- Fallos del proveedor.
+- Reutilización de identificaciones admitidas.
+- Ausencia de llamadas duplicadas.
+- Ausencia de LangGraph tras un rechazo previo.
+- Ausencia de HITL tras un rechazo previo.
+- Ausencia de mensajes persistidos en consultas no admitidas.
+
+### 22.5. Evidencias
+
+Se comprobarán:
+
+- Referencias inexistentes.
+- Citas pertenecientes a otra llamada.
+- Enlaces no autorizados.
+- Evidencia insuficiente.
 - Resultados externos inválidos.
-- Información geográfica incompatible.
+- Compatibilidades contradictorias.
 - Horarios asociados a instalaciones incorrectas.
-- Ausencia de resultados documentales.
-- Fallos de proveedores externos.
+- Ausencia legítima de documentos.
+- Fallos de recuperación.
+- Fallos de ArcGIS y del respaldo local.
 
-### 22.5. Estado conversacional
+### 22.6. Autenticación y autorización
 
-Deberán comprobarse:
+Se comprobarán:
 
-- Aislamiento entre conversaciones.
-- Estados proporcionados por clientes externos.
-- Intentos de acceder a conversaciones ajenas.
+- Credenciales ausentes.
+- Credenciales incorrectas.
+- Claves desactivadas.
+- Usuarios desactivados.
+- Credenciales eliminadas.
+- Intentos de elevar privilegios.
+- Emisión ordinaria User no autorizada.
+- Selección de una API key ajena.
+- Acceso a conversaciones ajenas.
+- Acceso multimodal mediante Free.
+- Acceso administrativo mediante sesión ordinaria.
+- Revocación durante una ejecución.
+
+### 22.7. Estado conversacional
+
+Se comprobarán:
+
+- Aislamiento de conversaciones.
+- Estados aportados indebidamente por clientes.
+- Identificadores inexistentes.
 - Consultas durante HITL pendiente.
 - Continuación de conversaciones finalizadas.
+- Agotamiento de turnos.
+- Modificaciones concurrentes.
+- Pérdida de checkpoints.
 - Reutilización de estados inconsistentes.
 
-### 22.6. HITL
+### 22.8. HITL
 
-Deberán comprobarse:
+Se comprobarán:
 
 - Aprobaciones sin checkpoint pendiente.
 - Aprobaciones obsoletas.
 - Aprobaciones duplicadas.
 - Aprobaciones concurrentes.
+- Intentos de modificar un plan desde el cliente.
 - Intentos de aprobación mediante instrucciones al modelo.
+- Aprobación automática mediante resolución real.
 - Fallos durante la reanudación.
-- Resolución directa sin aprobación ficticia.
+- Resolución del último turno permitido.
+- Ausencia de HITL en respuestas anteriores al agente.
+- HITL obligatorio en todas las ejecuciones satisfactorias de LangGraph.
 
-### 22.7. Información sensible
+### 22.9. Información sensible
 
-Deberá verificarse que no se exponen credenciales ni datos internos mediante:
+Se comprobará que no aparecen secretos ni información interna no autorizada en:
 
 - Respuestas generadas.
 - Resultados de herramientas.
 - Contratos HTTP.
-- Trazas internas.
-- Registros operativos.
-- Mensajes de error.
+- Errores de validación.
+- Logs.
+- Trazas expuestas.
+- Mensajes de excepción.
 
-La estrategia general de validación se define en [08-pruebas-y-validacion.md](08-pruebas-y-validacion.md).
+### 22.10. Fallos técnicos
+
+Se comprobarán:
+
+- Fallos de autenticación dependientes de PostgreSQL.
+- Fallos imprescindibles de herramientas.
+- Salidas inválidas de Gemini.
+- Fallos de persistencia.
+- Timeouts.
+- Resultados tardíos.
+- Invalidación de checkpoints.
+- Ausencia de falsos éxitos HTTP 200.
+
+### 22.11. Regresión
+
+Se conservarán las pruebas existentes relacionadas con:
+
+- tests/test_tools_registry.py.
+- tests/test_generate.py.
+- tests/test_rag_domain.py.
+- tests/test_rag_tool.py.
+- tests/test_describir_imagen.py.
+- tests/test_api_puntos_limpios.py.
+- tests/test_agent_regression.py.
+- tests/test_agent_resultado.py.
+- tests/test_agent_schedule_integration.py.
+
+Las pruebas existentes se adaptarán únicamente cuando cambien expresamente los contratos o se corrijan comportamientos verificados.
+
+No se modificarán pruebas para ocultar regresiones.
+
+Se utilizarán mocks y dependencias controladas cuando resulte necesario evitar consumo innecesario de proveedores.
+
+La estrategia general se establece en [08-pruebas-y-validacion.md](08-pruebas-y-validacion.md).
 
 ## 23. Limitaciones de seguridad
 
 ### 23.1. Modelos de lenguaje
 
-Los mecanismos de protección no garantizan la eliminación absoluta de todos los riesgos asociados a modelos de lenguaje.
+La separación de datos e instrucciones no garantiza una protección absoluta frente a prompt injection.
 
-La separación de instrucciones y datos no constituye por sí sola una protección infalible frente a prompt injection.
+Los controles deterministas limitan las capacidades del modelo, pero no garantizan que toda interpretación o respuesta sea correcta.
 
 ### 23.2. Evidencia documental
 
-La validación de referencias no garantiza la corrección factual de todas las afirmaciones generadas.
+La validación de referencias no garantiza la fundamentación factual completa.
+
+La calidad deberá comprobarse mediante evaluaciones específicas.
 
 ### 23.3. Identificación multimodal
 
-La clasificación semántica de imágenes puede producir identificaciones incorrectas.
+La clasificación semántica de imágenes puede producir falsos positivos y falsos negativos.
 
-Los mecanismos de validación deberán impedir que resultados estructuralmente inválidos continúen hacia el asistente.
+La validación estructural no garantiza la correcta identificación visual.
 
-### 23.4. Estado operativo
+### 23.4. Filtrado de dominio
 
-MemorySaver no proporciona por sí mismo persistencia durable ni cifrado específico de checkpoints.
+Las reglas deterministas de dominio no constituyen un clasificador infalible.
 
-### 23.5. Dependencias externas
+Deberán evaluarse consultas ambiguas, reformulaciones y entradas adversariales.
 
-El producto depende de servicios externos que pueden introducir limitaciones de disponibilidad, tratamiento de datos y seguridad.
+### 23.5. Estado operativo
 
-### 23.6. Consumidores anónimos
+MemorySaver no proporciona persistencia durable.
 
-La utilización de API keys anónimas no permite identificar permanentemente a una persona.
+Tampoco constituye por sí mismo un mecanismo de cifrado específico de checkpoints.
 
-Las medidas de control de emisión y consumo constituyen mecanismos de mitigación, no una garantía de identificación inequívoca.
+### 23.6. Dependencias externas
 
-### 23.7. Infraestructura inicial
+Gemini y ArcGIS pueden introducir limitaciones de disponibilidad y tratamiento de datos.
 
-La configuración inicial de un único proceso y un único worker simplifica determinados mecanismos de protección, pero no elimina todos los riesgos operativos.
+La aplicación no controla íntegramente el procesamiento realizado por estos proveedores.
 
-### 23.8. Ampliaciones futuras
+### 23.7. Acceso anónimo
 
-La incorporación de operaciones externas, reservas, notificaciones o acciones irreversibles requerirá nuevas especificaciones de seguridad, autorización y recuperación ante fallos.
+Las API keys Free anónimas no permiten identificar permanentemente a una persona.
+
+Los límites de emisión y consumo constituyen medidas de mitigación.
+
+No eliminan completamente el abuso mediante múltiples credenciales.
+
+### 23.8. Infraestructura
+
+El despliegue inicial de un único proceso y un único worker simplificará los controles de concurrencia y consumo.
+
+No eliminará todos los riesgos operativos.
+
+Los contadores y sesiones almacenados en memoria no constituirán mecanismos durables ni distribuidos.
+
+### 23.9. Alcance comercial
+
+El PB03 no constituye por sí mismo una certificación de seguridad, una auditoría completa ni una garantía de cumplimiento normativo para explotación comercial.
+
+### 23.10. Ampliaciones futuras
+
+La incorporación de pagos, operaciones externas, acciones irreversibles o nuevas herramientas requerirá especificaciones adicionales de seguridad.
 
 ## 24. Criterios de aceptación
 
-- Las entradas del consumidor se tratan como datos no confiables.
-- Los documentos recuperados no pueden modificar las instrucciones del sistema.
-- Los resultados externos no pueden ampliar los permisos del asistente.
+### 24.1. Entradas e instrucciones
+
+- Las entradas externas se tratan como datos no confiables.
+- Los documentos no pueden modificar los permisos del asistente.
+- Las instrucciones visuales no adquieren autoridad.
 - Las decisiones críticas se validan mediante Python.
-- Las herramientas únicamente se ejecutan cuando están registradas y autorizadas.
-- Los especialistas respetan el principio de mínimo privilegio.
-- Los argumentos se validan antes de ejecutar herramientas.
-- No se permite acceso arbitrario al sistema de archivos.
-- No se permiten peticiones a destinos externos arbitrarios.
-- Los límites internos no pueden modificarse mediante instrucciones al modelo.
-- Las fuentes documentales corresponden a evidencias reales.
-- Las referencias inventadas no se aceptan.
-- Las respuestas sin evidencia suficiente se gestionan mediante abstención o aclaración.
-- Los mensajes de consumidores no contaminan automáticamente el corpus.
-- Las imágenes se validan antes de su procesamiento.
-- Las instrucciones presentes en imágenes no adquieren autoridad sobre el sistema.
-- Las imágenes no admisibles no continúan hacia LangGraph.
-- Las coordenadas únicamente se utilizan cuando están autorizadas.
-- Los resultados geográficos conservan su procedencia.
+- El filtrado previo no permite eludir las restricciones de estado.
+- Las consultas ambiguas no se consideran automáticamente maliciosas.
+
+### 24.2. Herramientas
+
+- Se conservan las cuatro herramientas registradas.
+- identificar_imagen() no constituye una herramienta adicional.
+- Los especialistas respetan sus permisos.
+- Los argumentos se validan antes de ejecutar operaciones.
+- El modelo no sustituye coordenadas ni rutas autorizadas.
+- No existe acceso arbitrario al sistema de archivos.
+- No existen peticiones a destinos externos arbitrarios.
+- Los límites no pueden ampliarse mediante instrucciones al modelo.
+
+### 24.3. Fuentes y evidencias
+
+- El conocimiento documental procede del corpus autorizado.
+- La información geográfica procede de ArcGIS o del respaldo local.
+- No se realizan búsquedas abiertas en Internet.
+- Gemini no constituye una fuente documental independiente.
+- Las referencias corresponden a evidencias reales.
+- Las URL públicas proceden del catálogo autorizado.
+- No se aceptan referencias inventadas.
+- Las preguntas de consumidores no contaminan automáticamente el corpus.
+- Los fallos técnicos no se presentan como ausencia legítima de evidencia.
+
+### 24.4. Multimodalidad
+
+- Se comprueba la autorización antes de invocar Gemini.
+- Las imágenes superan validaciones técnicas.
+- Las identificaciones estructuradas se validan mediante Python.
+- Las imágenes no admitidas no continúan hacia LangGraph.
+- Las identificaciones admitidas se reutilizan.
+- No se realizan llamadas multimodales duplicadas.
+- No se generan invocaciones ficticias.
+- Los archivos temporales se eliminan de forma segura.
+- La identificación visual no sustituye la clasificación documental.
+
+### 24.5. Geografía y tiempo
+
+- Las coordenadas se utilizan únicamente cuando están autorizadas.
+- El modelo no inventa ubicaciones.
+- Los resultados conservan su procedencia.
+- La proximidad no se interpreta como compatibilidad.
+- Las prohibiciones documentales no se interpretan como autorizaciones.
 - Los horarios publicados no se presentan como garantías de apertura física.
+
+### 24.6. Conversaciones y HITL
+
 - Las conversaciones mantienen estados independientes.
-- Los clientes externos no pueden modificar directamente los checkpoints.
-- Los planes pendientes disponen de una interrupción HITL real.
-- Las decisiones HITL requieren un identificador de aprobación válido.
+- Los clientes no pueden modificar directamente los checkpoints.
+- La propiedad se verifica antes de revelar información operativa.
+- Toda ejecución satisfactoria de LangGraph alcanza HITL.
+- Cada propuesta dispone de approval_id.
+- Las decisiones se validan contra el checkpoint real.
 - Las aprobaciones obsoletas no modifican el estado.
-- El modelo de lenguaje no puede aprobar planes por sí mismo.
-- Las respuestas directas no requieren aprobaciones ficticias.
-- Los errores técnicos no generan resultados satisfactorios inventados.
-- Los estados inconsistentes no se reutilizan.
+- Las aprobaciones duplicadas no generan mensajes duplicados.
+- El modelo no puede aprobar sus propios planes.
+- La aprobación automática reutiliza el mecanismo real.
+- Las respuestas anteriores al agente no requieren aprobaciones ficticias.
+- No existen salidas satisfactorias directas de LangGraph que eviten aplicar.
+
+### 24.7. Credenciales y privacidad
+
 - Las credenciales no se incorporan al contexto del modelo.
-- Los registros y respuestas públicas no exponen información sensible no autorizada.
-- Los controles internos permanecen activos durante la ejecución independiente mediante terminal.
-- Las limitaciones de los mecanismos de seguridad se reconocen expresamente.
+- Los secretos no aparecen en repositorios ni logs.
+- Los recursos ajenos no revelan su existencia.
+- Los permisos administrativos no se obtienen mediante instrucciones al modelo.
+- Las respuestas sensibles incluyen las protecciones correspondientes.
+- Las imágenes no se almacenan permanentemente en el producto.
+- El historial SQL no se utiliza como mecanismo de reconstrucción de checkpoints.
+
+### 24.8. Fallos y robustez
+
+- Los errores técnicos no generan evidencias ficticias.
+- Los errores técnicos no se presentan mediante HTTP 200.
+- Las respuestas satisfactorias contienen error=None.
+- Los estados inconsistentes no se reutilizan.
+- Los fallos no amplían los permisos.
+- Los timeouts no liberan prematuramente recursos.
+- Los resultados tardíos no se persisten.
+- Las operaciones POST de resultado desconocido no se repiten automáticamente.
+
+### 24.9. Arquitectura
+
+- Los controles internos permanecen activos durante la ejecución mediante terminal.
+- FastAPI no sustituye las validaciones propias del núcleo.
+- Streamlit no determina permisos de seguridad.
+- No se incorporan servicios externos innecesarios.
+- El núcleo conserva su independencia respecto a PostgreSQL.
+- Las limitaciones de seguridad quedan documentadas.
+- Se preserva el HITL obligatorio del PB02.
 
 ## 25. Especificaciones relacionadas
 
 | Documento | Responsabilidad |
 |---|---|
 | [00-producto.md](00-producto.md) | Alcance y principios del producto |
-| [01-retrieval.md](01-retrieval.md) | Pipeline documental y recuperación |
+| [01-retrieval.md](01-retrieval.md) | Recuperación documental |
 | [02-mejoras-retrieval.md](02-mejoras-retrieval.md) | Filtros y consultas estructuradas |
 | [03-generacion.md](03-generacion.md) | Generación, evidencia y citas |
 | [04-consultas-generales.md](04-consultas-generales.md) | Interpretación de consultas |
 | [05-tools.md](05-tools.md) | Herramientas, contratos y permisos |
 | [06-langgraph.md](06-langgraph.md) | Estado operativo, orquestación y HITL |
-| [07-streamlit.md](07-streamlit.md) | Seguridad y responsabilidades de la interfaz |
-| [08-pruebas-y-validacion.md](08-pruebas-y-validacion.md) | Validación y pruebas adversariales |
-| [09-datos-y-fuentes.md](09-datos-y-fuentes.md) | Corpus, procedencia y tratamiento de datos |
+| [07-streamlit.md](07-streamlit.md) | Seguridad de la interfaz |
+| [08-pruebas-y-validacion.md](08-pruebas-y-validacion.md) | Evaluación y pruebas adversariales |
+| [09-datos-y-fuentes.md](09-datos-y-fuentes.md) | Corpus y fuentes autorizadas |
 | [11-arquitectura-mlops.md](11-arquitectura-mlops.md) | Separación arquitectónica |
-| [12-contratos-http.md](12-contratos-http.md) | Contratos HTTP y errores |
+| [12-contratos-http.md](12-contratos-http.md) | Contratos públicos y errores |
 | [13-persistencia.md](13-persistencia.md) | Integridad y almacenamiento relacional |
-| [14-autenticacion-autorizacion.md](14-autenticacion-autorizacion.md) | Identidad, credenciales y autorización |
+| [14-autenticacion-autorizacion.md](14-autenticacion-autorizacion.md) | Identidad, credenciales y permisos |
 | [15-robustez-observabilidad.md](15-robustez-observabilidad.md) | Protección operativa y observabilidad |
 | [16-despliegue.md](16-despliegue.md) | Infraestructura y seguridad de entornos |
