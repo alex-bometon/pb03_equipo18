@@ -63,13 +63,13 @@ La actualización de README.md se realizará en la fase 12.
 
 **Dependencia:** fase 00.
 
-- [ ] Incorporar y verificar las dependencias de MLOps.
-- [ ] Crear el paquete api/ y la configuración del backend.
-- [ ] Preparar .env.example y revisar .gitignore.
-- [ ] Inicializar FastAPI y comprobar Uvicorn y Swagger.
-- [ ] Validar configuración y regresión.
+- [x] Incorporar y verificar las dependencias de MLOps.
+- [x] Crear el paquete api/ y la configuración del backend.
+- [x] Preparar .env.example y revisar .gitignore.
+- [x] Inicializar FastAPI y comprobar Uvicorn y Swagger.
+- [x] Validar configuración y regresión.
 
-**Archivos:** requirements.txt, .env.example, .gitignore, api/__init__.py, api/config.py, api/main.py.
+**Archivos:** requirements.txt, .env.example, .gitignore, api/__init__.py, api/config.py, api/main.py, tests/test_api_config.py, tests/test_api_main.py.
 
 **Finalización:** backend inicial operativo y núcleo independiente.
 
