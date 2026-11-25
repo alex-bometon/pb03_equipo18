@@ -19,6 +19,9 @@ from sqlalchemy.engine import make_url
 
 from config import BASE_DIR, IMAGE_MAX_BYTES, IMAGE_MAX_PIXELS
 
+# Límites del contrato HTTP
+MAX_API_STEPS = 4
+
 
 class ApiSettings(BaseModel):
     """Parámetros de configuración del backend."""
