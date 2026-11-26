@@ -24,8 +24,10 @@ from src.agent_routing import (
     resolver_enrutamiento,
 )
 from src.agent_schedule import (
+    _hora,
     anexos_temporales,
     debe_buscar_puntos_automaticamente,
+    requiere_hora
 )
 from src.agent_resultado import respuesta_geografica_integrada
 from src.agent_tool_loop import (
@@ -263,25 +265,47 @@ def _evidencia_suficiente(estado: EstadoGrafo,) -> tuple[str, str | None]:
 
 
 def _hay_fallo_bloqueante(estado: EstadoGrafo) -> bool:
-    """Reconoce errores técnicos sin confundirlos con datos ausentes."""
+    """Distingue los fallos imprescindibles de los auxiliares."""
     if estado.get("error"):
+        return True
+
+    pedido = normalizar_texto(estado["pedido"])
+    consulta_actual = bool(re.search(
+        r"\b(?:ahora|hoy|abiert\w*|cerrad\w*|"
+        r"en este momento)\b",
+        pedido,
+    ))
+
+    necesita_hora = consulta_actual and (
+        requiere_hora(estado, "residuos")
+        or requiere_hora(estado, "puntos")
+    )
+
+    if necesita_hora and _hora(estado) is None:
         return True
 
     for traza in estado["traza_tools"]:
         if traza.get("status") != "error":
             continue
-        if traza.get("tool") == "hora_actual":
-            continue  # Fallo auxiliar: conservar evidencia RAG/API.
+
+        herramienta = traza.get("tool")
+
+        if herramienta == "hora_actual":
+            continue
+
         if (
-            traza.get("tool") == "buscar_puntos_limpios_cercanos"
+            herramienta == "buscar_puntos_limpios_cercanos"
             and estado["ubicacion"] is None
         ):
             continue
+
         if (
-            traza.get("tool") == "describir_imagen"
+            herramienta == "describir_imagen"
             and not estado["ruta_imagen"]
+            and estado["identificacion_imagen"] is None
         ):
             continue
+
         return True
 
     return False
@@ -301,7 +325,7 @@ def _sintesis_directa(
     No combina evidencias distintas ni reformula clasificaciones del RAG.
     Los casos complejos continúan utilizando el prompt de síntesis.
     """
-    if evidencia != "suficiente" or _hay_fallo_bloqueante(estado):
+    if evidencia != "suficiente":
         return None
 
     principales = [
@@ -484,11 +508,14 @@ def sintetizar(estado: EstadoGrafo) -> dict[str, Any]:
 
     if estado["siguiente"] != "sintetizar":
         raise RuntimeError("Síntesis fuera de la ruta autorizada.")
+    
+    if _hay_fallo_bloqueante(estado):
+        raise RuntimeError("No se pudo completar la consulta por un fallo técnico.")
 
     evidencia, motivo = _evidencia_suficiente(estado)
     integrada = (
         respuesta_geografica_integrada(estado)
-        if evidencia == "suficiente" and not _hay_fallo_bloqueante(estado)
+        if evidencia == "suficiente"
         else None
     )
     limitaciones = deepcopy(estado["limitaciones"])
@@ -498,11 +525,6 @@ def sintetizar(estado: EstadoGrafo) -> dict[str, Any]:
         respuesta, plan = integrada
         modo = "integrado"
     elif evidencia == "insuficiente":
-        if _hay_fallo_bloqueante(estado):
-            raise RuntimeError(
-                "No se pudo obtener evidencia por un fallo técnico."
-            )
-
         respuesta = _respuesta_sin_evidencia(estado)
         plan = [
             "Aclarar los datos necesarios para responder la consulta.",
@@ -641,6 +663,7 @@ def aplicar(estado: EstadoGrafo) -> dict[str, Any]:
             "fuentes": [],
             "notas_residuos": "",
             "notas_puntos": "",
+            "limitaciones": [],
             "estado_evidencia": "insuficiente",
             "abstencion": True,
             "motivo": None,
