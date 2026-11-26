@@ -613,6 +613,37 @@ respuestas de error.
 
 Las respuestas de rechazo preflight generadas por CORSMiddleware conservarán su formato nativo. Incluirán X-Request-ID, pero no estarán sujetas a ErrorOut.
 
+Los errores de validación se identificarán mediante su tipo,
+ubicación y operación HTTP, sin repetir las validaciones
+realizadas por los modelos.
+
+Cuando se detecten varios errores simultáneamente, se aplicará
+la siguiente prioridad:
+
+1. INVALID_CREDENTIALS.
+2. INVALID_THREAD_ID.
+3. INVALID_EMAIL.
+4. INVALID_PASSWORD.
+5. EMPTY_QUESTION.
+6. QUESTION_TOO_LONG.
+7. INVALID_LOCATION.
+8. INVALID_MAX_STEPS.
+9. VALIDATION_ERROR.
+
+La prioridad se aplicará exclusivamente a los errores
+efectivamente detectados.
+
+Las inconsistencias en modelos de salida y las excepciones
+internas no clasificadas devolverán INTERNAL_SERVER_ERROR.
+
+La documentación OpenAPI de errores se construirá mediante
+build_error_responses(), utilizando el catálogo centralizado.
+
+Cada endpoint declarará únicamente los códigos de error
+aplicables a su operación. Cuando corresponda, documentará
+ErrorOut como respuesta HTTP 422 en lugar del contrato
+predeterminado de FastAPI.
+
 ## 9. Resultados válidos y falsos éxitos
 
 No constituyen errores HTTP:

@@ -548,7 +548,7 @@ Se emitirá un registro estructurado al finalizar la petición:
 | api_key_id | str o None |
 | role | str o None |
 | duration_ms | float |
-| status_code | int |
+| status_code | int o None |
 | error_code | str o None |
 
 path representará preferentemente el patrón de ruta, sin parámetros sensibles.

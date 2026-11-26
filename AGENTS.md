@@ -65,6 +65,21 @@ No alterar contratos, arquitectura, alcance ni dependencias sin justificación y
 
 Trabajar incrementalmente, completando las comprobaciones de cada bloque antes de avanzar.
 
+### Toma de decisiones
+
+Las decisiones establecidas en las especificaciones o aprobadas
+previamente se aplicarán sin solicitar una nueva autorización.
+
+Las decisiones técnicas nuevas requerirán la aprobación expresa
+del desarrollador antes de implementar los cambios.
+
+Cuando sea posible, las decisiones pendientes se presentarán
+conjuntamente, indicando el problema, las alternativas, la opción
+recomendada y sus repercusiones.
+
+No se prolongarán innecesariamente los debates sobre decisiones
+ya resueltas.
+
 ## 4. Principios técnicos
 
 - Reutilizar el código, corpus, embeddings y herramientas existentes.
@@ -80,6 +95,20 @@ No introducir rutas satisfactorias que eviten HITL dentro de LangGraph. Las resp
 
 Consultar las especificaciones 11 a 16 antes de modificar la arquitectura MLOps.
 
+### Simplicidad y mantenibilidad
+
+- Aplicar DRY, KISS, YAGNI y separación de responsabilidades.
+- Priorizar la solución más sencilla que cumpla los requisitos.
+- Reutilizar los módulos existentes cuando mantengan su cohesión.
+- No duplicar constantes, validaciones, contratos ni lógica.
+- Evitar la fragmentación excesiva del código.
+- Justificar la creación de archivos, clases y abstracciones.
+- Facilitar la evolución del proyecto sin anticipar necesidades
+  hipotéticas.
+
+La arquitectura deberá mantener un equilibrio entre facilidad
+de implementación, escalabilidad y coste de mantenimiento.
+
 ## 5. Convenciones de programación
 
 - Seguir PEP 8.
@@ -91,6 +120,13 @@ Consultar las especificaciones 11 a 16 antes de modificar la arquitectura MLOps.
 - Documentar los contratos públicos y las decisiones no evidentes.
 - Declarar explícitamente las dependencias utilizadas directamente.
 - Mantener las convenciones lingüísticas del código existente.
+- Seguir PEP 257 para las cadenas de documentación.
+- Limitar las líneas de código Python a 79 caracteres.
+- Limitar comentarios y docstrings a 72 caracteres.
+- Agrupar las importaciones en biblioteca estándar, dependencias
+  externas y módulos propios.
+- Evitar líneas en blanco innecesarias entre atributos de clases.
+- Redactar comentarios y docstrings en español.
 
 La documentación y las explicaciones se redactarán en español.
 
