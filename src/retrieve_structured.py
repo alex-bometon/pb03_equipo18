@@ -357,6 +357,8 @@ def listar_destinos_residuos(abrir_coleccion: Callable) -> list[str]:
 
 def consultar_puntos_limpios_locales(
     abrir_coleccion: Callable,
+    *,
+    avisos: list[str] | None = None,
 ) -> list[dict]:
     """
     Recupera puntos limpios geolocalizados desde ChromaDB.
@@ -366,30 +368,15 @@ def consultar_puntos_limpios_locales(
     """
 
     modalidades = {
-        "punto_limpio_fijo": (
-            "Fijo", "puntos_limpios_fijos.csv"
-        ),
-        "punto_limpio_movil": (
-            "Móvil", "puntos_limpios_moviles.csv"
-        ),
-        "punto_limpio_movil_24h": (
-            "Móvil 24h", "puntos_limpios_moviles_24h.csv"
-        ),
-        "punto_limpio_proximidad": (
-            "Proximidad", "puntos_limpios_proximidad.csv"
-        ),
+        "punto_limpio_fijo": ("Fijo", "puntos_limpios_fijos.csv"),
+        "punto_limpio_movil": ("Móvil", "puntos_limpios_moviles.csv"),
+        "punto_limpio_movil_24h": ("Móvil 24h", "puntos_limpios_moviles_24h.csv"),
+        "punto_limpio_proximidad": ("Proximidad", "puntos_limpios_proximidad.csv"),
     }
 
     coleccion, _ = abrir_coleccion()
 
-    registros = _obtener_registros(
-        coleccion,
-        {
-            "document_type": {
-                "$in": list(modalidades)
-            }
-        },
-    )
+    registros = _obtener_registros(coleccion, {"document_type": {"$in": list(modalidades)}})
 
     puntos = []
 
@@ -447,16 +434,10 @@ def consultar_puntos_limpios_locales(
 
         horario = _extraer_campo(texto, "Horario")
 
-        dia = (
-            _extraer_campo(texto, "Día")
-            or _extraer_campo(texto, "Día de ubicación")
-        )
+        dia = _extraer_campo(texto, "Día") or _extraer_campo(texto, "Día de ubicación")
 
         punto = {
-            "id": (
-                f"{fuente_esperada}:"
-                f"{metadata.get('source_row')}"
-            ),
+            "id": f"{fuente_esperada}: {metadata.get('source_row')}",
             "tipo": tipo,
             "direccion": direccion,
             "distrito": distrito,
@@ -472,6 +453,14 @@ def consultar_puntos_limpios_locales(
         }
 
         puntos.append(punto)
+
+    if registros and not puntos:
+        raise RuntimeError("El corpus local contiene registros geográficos inválidos.")
+
+    descartados = len(registros) - len(puntos)
+
+    if descartados and avisos is not None:
+        avisos.append(f"Se descartaron {descartados} registros locales inválidos.")
 
     return puntos
 
