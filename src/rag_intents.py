@@ -61,6 +61,10 @@ MENSAJE_ACLARACION_PROXIMIDAD = (
     "Para buscar puntos limpios cercanos, facilita "
     "voluntariamente latitud y longitud."
 )
+MENSAJE_ACLARACION_CONTEXTO = (
+    "¿A qué residuo o punto limpio te refieres? "
+    "Necesito más información para resolver tu consulta."
+)
 
 
 def _es_consulta_catalogo(pregunta: str) -> bool:
@@ -224,3 +228,20 @@ def consulta_proximidad(
         )
 
     return bool(PATRON_PROXIMIDAD.search(texto))
+
+
+def requiere_antecedente(pregunta: str) -> bool:
+    """Reconoce reformulaciones que necesitan una referencia previa."""
+    texto = normalizar_texto(pregunta).strip("¿?¡! ")
+
+    return bool(
+        re.fullmatch(
+            r"y si (?:es|son) de \w+(?: \w+)?"
+            r"|y (?:hoy|manana|ahora|pasado manana)"
+            rf"|y {PATRON_DIA.pattern}"
+            rf"|hay (?:uno|una) (?:mas )?{PATRON_PROXIMIDAD.pattern}"
+            r"|que hago con (?:esto|eso|aquello)"
+            r"|donde (?:tiro|reciclo|deposito) (?:esto|eso|aquello)",
+            texto,
+        )
+    )

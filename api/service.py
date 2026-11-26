@@ -4,11 +4,13 @@ from api.schemas import AskOut, UbicacionIn
 from src.domain import es_consulta_programacion, evaluar_ambito
 from src.generation_validation import MENSAJE_ABSTENCION
 from src.rag_intents import (
+    MENSAJE_ACLARACION_CONTEXTO,
     MENSAJE_ACLARACION_HORARIO_MOVIL,
     MENSAJE_ACLARACION_PROXIMIDAD,
     consulta_proximidad,
     es_consulta_reparacion_telefonos,
     es_horario_movil_sin_ubicacion,
+    requiere_antecedente,
 )
 from src.text_utils import normalizar_texto
 
@@ -52,8 +54,16 @@ def filtrar_entrada(
     """Resuelve consultas inequívocas antes de ejecutar el agente."""
     normalizada = normalizar_texto(pregunta)
 
-    if contexto_revision or hay_imagen:
-        return None
+    if requiere_antecedente(normalizada):
+        if contexto_revision or hay_imagen:
+            return None
+
+        return _respuesta_previa(
+            MENSAJE_ACLARACION_CONTEXTO,
+            "ambiguedad",
+            thread_id=thread_id,
+            turnos_consumidos=turnos_consumidos,
+        )
 
     if (
         es_consulta_reparacion_telefonos(normalizada)
@@ -67,7 +77,13 @@ def filtrar_entrada(
             turnos_consumidos=turnos_consumidos,
         )
 
-    if es_horario_movil_sin_ubicacion(normalizada):
+    if hay_imagen:
+        return None
+
+    if (
+        not contexto_revision
+        and es_horario_movil_sin_ubicacion(normalizada)
+    ):
         return _respuesta_previa(
             MENSAJE_ACLARACION_HORARIO_MOVIL,
             "ambiguedad",

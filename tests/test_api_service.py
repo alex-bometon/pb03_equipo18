@@ -7,7 +7,8 @@ from api.schemas import AskOut, UbicacionIn
 from api.service import filtrar_entrada
 from src.generation_validation import MENSAJE_ABSTENCION
 from src.rag_intents import (
-    MENSAJE_ACLARACION_HORARIO_MOVIL, 
+    MENSAJE_ACLARACION_CONTEXTO,
+    MENSAJE_ACLARACION_HORARIO_MOVIL,
     MENSAJE_ACLARACION_PROXIMIDAD,
 )
 
@@ -218,3 +219,86 @@ def test_filtrado_rechaza_consultas_de_programacion(pregunta):
 def test_filtrado_conserva_consultas_de_residuos_electronicos(pregunta):
     """No confunde residuos electrónicos con desarrollo de software."""
     assert filtrar_entrada(pregunta) is None
+
+
+@pytest.mark.parametrize(
+    "pregunta",
+    [
+        "¿Y si es de plástico?",
+        "¿Y mañana?",
+        "¿Hay uno más cerca?",
+        "¿Qué hago con esto?",
+    ],
+)
+def test_filtrado_aclara_reformulacion_sin_contexto(pregunta):
+    """Una referencia sin antecedente requiere aclaración."""
+    resultado = filtrar_entrada(pregunta)
+
+    assert isinstance(resultado, AskOut)
+    assert resultado.respuesta == MENSAJE_ACLARACION_CONTEXTO
+    assert resultado.motivo == "ambiguedad"
+    assert resultado.turnos_consumidos == 0
+    assert resultado.pendiente_hitl is False
+
+
+@pytest.mark.parametrize(
+    "pregunta",
+    [
+        "¿Y si es de plástico?",
+        "¿Y mañana?",
+        "¿Hay uno más cerca?",
+        "¿Qué hago con esto?",
+    ],
+)
+def test_filtrado_admite_reformulacion_con_contexto(pregunta):
+    """Las referencias pueden interpretarse con contexto autorizado."""
+    resultado = filtrar_entrada(
+        pregunta,
+        contexto_revision=(
+            "Plan rechazado. Consulta original: "
+            "¿Dónde reciclo una botella de vidrio?"
+        ),
+    )
+
+    assert resultado is None
+
+
+@pytest.mark.parametrize(
+    "pregunta",
+    [
+        "¿Cómo programo una API?",
+        "¿Dónde reparan teléfonos móviles?",
+        "¿Dónde reciclo vidrio en Barcelona?",
+    ],
+)
+def test_contexto_no_elude_restricciones_de_dominio(pregunta):
+    """El contexto anterior no amplía el dominio autorizado."""
+    thread_id = str(uuid4())
+
+    resultado = filtrar_entrada(
+        pregunta,
+        contexto_revision="¿Dónde reciclo unas pilas?",
+        thread_id=thread_id,
+        turnos_consumidos=1,
+    )
+
+    assert isinstance(resultado, AskOut)
+    assert resultado.motivo == "fuera_de_dominio"
+    assert resultado.thread_id == thread_id
+    assert resultado.turnos_consumidos == 1
+
+
+def test_referencia_con_imagen_no_requiere_contexto():
+    """Una imagen puede aportar el referente que falta."""
+    assert filtrar_entrada("¿Qué hago con esto?", hay_imagen=True) is None
+
+
+def test_contexto_no_sustituye_coordenadas():
+    """Las coordenadas anteriores no se reutilizan automáticamente."""
+    resultado = filtrar_entrada(
+        "¿Qué punto limpio tengo más cerca?",
+        contexto_revision="Consulta anterior sobre puntos limpios.",
+    )
+
+    assert isinstance(resultado, AskOut)
+    assert resultado.respuesta == MENSAJE_ACLARACION_PROXIMIDAD
