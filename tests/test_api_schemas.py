@@ -1,10 +1,21 @@
 """Pruebas de los contratos públicos HTTP."""
 
-import pytest
-from pydantic import ValidationError
 from datetime import datetime, timedelta, timezone
+from typing import Any
 
+import pytest
+from fastapi import FastAPI
+from pydantic import ValidationError
+
+from api.config import MAX_API_STEPS
+from api.error_catalog import ErrorCode
+from api.exception_handlers import build_error_responses
 from api.schemas import (
+    ActiveStatusIn,
+    AdminApiKeyCreateIn,
+    ApiKeyCreateIn,
+    ApiKeyCreatedOut,
+    ApiKeyOut,
     ApiSchema,
     ApproveIn,
     AskIn,
@@ -13,13 +24,26 @@ from api.schemas import (
     FuenteOut,
     GeografiaOut,
     HealthOut,
+    LoginIn,
+    LoginOut,
     MessageOut,
+    PasswordChangeIn,
     PuntoLimpioOut,
+    RegisterIn,
     UbicacionIn,
+    UserOut,
 )
-
-from config import MAX_PREGUNTA_CARACTERES
-from src.enums import MessageRole
+from config import (
+    GEO_MAX_LATITUDE,
+    GEO_MAX_LONGITUDE,
+    GEO_MAX_RADIUS_METERS,
+    GEO_MAX_RESULTS,
+    GEO_MIN_LATITUDE,
+    GEO_MIN_LONGITUDE,
+    GEO_MIN_RADIUS_METERS,
+    MAX_PREGUNTA_CARACTERES,
+)
+from src.enums import ApiKeyRole, MessageRole
 from src.input_validation import (
     PreguntaDemasiadoLargaError,
     PreguntaVaciaError,
@@ -1300,3 +1324,380 @@ def test_health_out_rechaza_campos_adicionales(
 
     with pytest.raises(ValidationError):
         HealthOut(**datos)
+
+
+# =========================================================
+# VALIDACIÓN DE OPENAPI
+# =========================================================
+
+
+@pytest.fixture(scope="module")
+def openapi_components() -> dict[str, Any]:
+    """Genera los esquemas OpenAPI de los contratos públicos."""
+    application = FastAPI()
+
+    @application.post(
+        "/ask",
+        response_model=AskOut,
+        responses=build_error_responses(
+            ErrorCode.VALIDATION_ERROR,
+        ),
+    )
+    def ask(data: AskIn) -> None:
+        """Declara el contrato de consulta."""
+
+    @application.post("/approve", response_model=AskOut)
+    def approve(data: ApproveIn) -> None:
+        """Declara el contrato de aprobación."""
+
+    @application.post(
+        "/auth/register",
+        status_code=201,
+        response_model=UserOut,
+    )
+    def register(data: RegisterIn) -> None:
+        """Declara el contrato de registro."""
+
+    @application.post("/auth/login", response_model=LoginOut)
+    def login(data: LoginIn) -> None:
+        """Declara el contrato de inicio de sesión."""
+
+    @application.patch("/auth/password", response_model=UserOut)
+    def change_password(data: PasswordChangeIn) -> None:
+        """Declara el contrato de cambio de contraseña."""
+
+    @application.post(
+        "/api-keys",
+        status_code=201,
+        response_model=ApiKeyCreatedOut,
+    )
+    def create_api_key(data: ApiKeyCreateIn) -> None:
+        """Declara el contrato de emisión ordinaria."""
+
+    @application.post(
+        "/admin/api-keys",
+        status_code=201,
+        response_model=ApiKeyCreatedOut,
+    )
+    def admin_create_api_key(data: AdminApiKeyCreateIn) -> None:
+        """Declara el contrato de emisión administrativa."""
+
+    @application.patch("/admin/users/{user_id}",
+                       response_model=UserOut)
+    def update_user(user_id: str, data: ActiveStatusIn) -> None:
+        """Declara el contrato de modificación de estado."""
+
+    @application.get("/health", response_model=HealthOut)
+    @application.get("/api-keys", response_model=list[ApiKeyOut])
+    @application.get("/threads",
+                     response_model=list[ConversationOut])
+    @application.get("/threads/{thread_id}/messages",
+                     response_model=list[MessageOut])
+    def read_contracts() -> None:
+        """Declara los contratos restantes de salida."""
+
+    return application.openapi()["components"]["schemas"]
+
+
+@pytest.mark.parametrize(
+    "model_name",
+    [
+        "UbicacionIn",
+        "AskIn",
+        "ApproveIn",
+        "FuenteOut",
+        "PuntoLimpioOut",
+        "GeografiaOut",
+        "AskOut",
+        "RegisterIn",
+        "LoginIn",
+        "PasswordChangeIn",
+        "ApiKeyCreateIn",
+        "AdminApiKeyCreateIn",
+        "ActiveStatusIn",
+        "UserOut",
+        "LoginOut",
+        "ApiKeyOut",
+        "ApiKeyCreatedOut",
+        "MessageOut",
+        "ConversationOut",
+        "HealthOut",
+        "ErrorOut",
+    ],
+)
+def test_public_openapi_models(
+    openapi_components: dict[str, Any],
+    model_name: str,
+) -> None:
+    """Comprueba la presencia y configuración de cada modelo."""
+    schema = openapi_components[model_name]
+
+    assert schema["type"] == "object"
+    assert schema["additionalProperties"] is False
+    assert "properties" in schema
+
+
+def test_openapi_ask_input(
+    openapi_components: dict[str, Any],
+) -> None:
+    """Comprueba la estructura pública de AskIn."""
+    schema = openapi_components["AskIn"]
+    properties = schema["properties"]
+
+    assert set(schema["required"]) == {"pregunta"}
+    assert properties["auto_aprobar"]["default"] is True
+    assert properties["pregunta"]["type"] == "string"
+
+    assert str(MAX_PREGUNTA_CARACTERES) in (
+        properties["pregunta"]["description"]
+    )
+
+    for field_name in ("thread_id", "ubicacion", "max_steps"):
+        field = properties[field_name]
+
+        assert {"type": "null"} in field["anyOf"]
+        assert field.get("default") is None
+
+
+def test_openapi_ask_output(
+    openapi_components: dict[str, Any],
+) -> None:
+    """Exige todos los campos de una respuesta AskOut."""
+    schema = openapi_components["AskOut"]
+    properties = schema["properties"]
+
+    assert set(schema["required"]) == set(properties)
+
+    for field_name in (
+        "thread_id",
+        "approval_id",
+        "plan_aprobado",
+        "motivo",
+        "error",
+    ):
+        assert {"type": "null"} in (
+            properties[field_name]["anyOf"]
+        )
+
+
+def test_openapi_error_output(
+    openapi_components: dict[str, Any],
+) -> None:
+    """Comprueba los campos obligatorios de ErrorOut."""
+    schema = openapi_components["ErrorOut"]
+
+    assert set(schema["required"]) == {
+        "code",
+        "message",
+        "request_id",
+    }
+
+
+def test_openapi_location_limits(
+    openapi_components: dict[str, Any],
+) -> None:
+    """Comprueba los límites geográficos documentados."""
+    properties = openapi_components["UbicacionIn"]["properties"]
+
+    latitude = properties["latitud"]
+    longitude = properties["longitud"]
+
+    assert latitude["minimum"] == GEO_MIN_LATITUDE
+    assert latitude["maximum"] == GEO_MAX_LATITUDE
+    assert longitude["minimum"] == GEO_MIN_LONGITUDE
+    assert longitude["maximum"] == GEO_MAX_LONGITUDE
+
+
+def test_openapi_max_steps(
+    openapi_components: dict[str, Any],
+) -> None:
+    """Comprueba los límites de ejecución del asistente."""
+    properties = openapi_components["AskIn"]["properties"]
+
+    integer_schema = next(
+        item
+        for item in properties["max_steps"]["anyOf"]
+        if item.get("type") == "integer"
+    )
+
+    assert integer_schema["minimum"] == 1
+    assert integer_schema["maximum"] == MAX_API_STEPS
+
+
+def test_openapi_geography_limits(
+    openapi_components: dict[str, Any],
+) -> None:
+    """Comprueba las restricciones del resultado geográfico."""
+    properties = openapi_components["GeografiaOut"]["properties"]
+
+    radius = properties["radio_metros"]
+
+    assert radius["minimum"] == GEO_MIN_RADIUS_METERS
+    assert radius["maximum"] == GEO_MAX_RADIUS_METERS
+    assert properties["puntos"]["maxItems"] == GEO_MAX_RESULTS
+    assert properties["total_encontrados"]["minimum"] == 0
+
+
+@pytest.mark.parametrize(
+    "model_name, field_name",
+    [
+        ("ApproveIn", "thread_id"),
+        ("ApproveIn", "approval_id"),
+        ("ConversationOut", "thread_id"),
+        ("ConversationOut", "api_key_id"),
+        ("UserOut", "id"),
+        ("ApiKeyOut", "id"),
+        ("ApiKeyCreatedOut", "id"),
+        ("ErrorOut", "request_id"),
+    ],
+)
+def test_openapi_uuid_format(
+    openapi_components: dict[str, Any],
+    model_name: str,
+    field_name: str,
+) -> None:
+    """Documenta correctamente los identificadores UUID."""
+    field = openapi_components[model_name]["properties"][field_name]
+
+    assert field["type"] == "string"
+    assert field["format"] == "uuid"
+
+
+@pytest.mark.parametrize(
+    "model_name, field_name",
+    [
+        ("UserOut", "created_at"),
+        ("ApiKeyOut", "created_at"),
+        ("ApiKeyCreatedOut", "created_at"),
+        ("LoginOut", "expires_at"),
+        ("ConversationOut", "created_at"),
+        ("MessageOut", "created_at"),
+    ],
+)
+def test_openapi_datetime_format(
+    openapi_components: dict[str, Any],
+    model_name: str,
+    field_name: str,
+) -> None:
+    """Documenta las fechas mediante el formato date-time."""
+    field = openapi_components[model_name]["properties"][field_name]
+
+    assert field["type"] == "string"
+    assert field["format"] == "date-time"
+
+
+@pytest.mark.parametrize(
+    "model_name, field_name",
+    [
+        ("RegisterIn", "password"),
+        ("LoginIn", "password"),
+        ("PasswordChangeIn", "current_password"),
+        ("PasswordChangeIn", "new_password"),
+    ],
+)
+def test_openapi_password_fields(
+    openapi_components: dict[str, Any],
+    model_name: str,
+    field_name: str,
+) -> None:
+    """Documenta las contraseñas como campos de escritura."""
+    field = openapi_components[model_name]["properties"][field_name]
+
+    assert field["type"] == "string"
+    assert field["format"] == "password"
+    assert field["writeOnly"] is True
+
+
+@pytest.mark.parametrize("model_name", ["RegisterIn", "LoginIn"])
+def test_openapi_email_format(
+    openapi_components: dict[str, Any],
+    model_name: str,
+) -> None:
+    """Documenta el formato de email en las entradas."""
+    field = openapi_components[model_name]["properties"]["email"]
+
+    assert field["format"] == "email"
+
+
+def test_openapi_credential_outputs(
+    openapi_components: dict[str, Any],
+) -> None:
+    """Excluye los hashes de los contratos públicos."""
+    user = openapi_components["UserOut"]["properties"]
+    api_key = openapi_components["ApiKeyOut"]["properties"]
+    created = openapi_components["ApiKeyCreatedOut"]["properties"]
+    login = openapi_components["LoginOut"]["properties"]
+
+    assert "password_hash" not in user
+    assert "key_hash" not in api_key
+    assert "key_hash" not in created
+    assert "api_key" not in api_key
+
+    assert "api_key" in created
+    assert "session_token" in login
+
+
+def test_openapi_enums(
+    openapi_components: dict[str, Any],
+) -> None:
+    """Comprueba los valores de los enumerados públicos."""
+    for enum_type in (ErrorCode, ApiKeyRole, MessageRole):
+        schema = openapi_components[enum_type.__name__]
+
+        assert set(schema["enum"]) == {
+            member.value
+            for member in enum_type
+        }
+
+
+@pytest.mark.parametrize(
+    "model_name",
+    [
+        "ApiKeyCreateIn",
+        "AdminApiKeyCreateIn",
+        "ApiKeyCreatedOut",
+    ],
+)
+def test_openapi_issuable_roles(
+    openapi_components: dict[str, Any],
+    model_name: str,
+) -> None:
+    """Impide documentar Admin como rol de emisión."""
+    role = openapi_components[model_name]["properties"]["role"]
+
+    assert set(role["enum"]) == {
+        ApiKeyRole.FREE.value,
+        ApiKeyRole.USER.value,
+    }
+
+
+@pytest.mark.parametrize(
+    "model_name, field_name, nested_model",
+    [
+        ("AskOut", "fuentes", "FuenteOut"),
+        ("AskOut", "geografia", "GeografiaOut"),
+        ("GeografiaOut", "puntos", "PuntoLimpioOut"),
+    ],
+)
+def test_openapi_nested_lists(
+    openapi_components: dict[str, Any],
+    model_name: str,
+    field_name: str,
+    nested_model: str,
+) -> None:
+    """Comprueba las referencias de los modelos anidados."""
+    field = openapi_components[model_name]["properties"][field_name]
+
+    assert field["type"] == "array"
+    assert field["items"]["$ref"] == (
+        f"#/components/schemas/{nested_model}"
+    )
+
+
+def test_openapi_nested_user(
+    openapi_components: dict[str, Any],
+) -> None:
+    """Comprueba la referencia al usuario autenticado."""
+    field = openapi_components["LoginOut"]["properties"]["user"]
+
+    assert field["$ref"] == "#/components/schemas/UserOut"

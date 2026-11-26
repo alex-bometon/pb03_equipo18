@@ -15,6 +15,7 @@ from starlette.exceptions import HTTPException
 from api.error_catalog import ERROR_CATALOG, ErrorCode
 from api.errors import ApiError
 from api.exception_handlers import (
+    build_error_responses,
     register_exception_handlers,
     resolve_question_error_code,
     resolve_validation_error_code,
@@ -690,4 +691,95 @@ def test_malformed_multipart(client: TestClient) -> None:
     assert_error_response(
         response,
         ErrorCode.BAD_REQUEST,
+    )
+
+
+# =========================================================
+# DOCUMENTACIÓN OPENAPI
+# =========================================================
+
+
+def test_build_error_responses_empty() -> None:
+    """Admite operaciones sin errores adicionales."""
+    assert build_error_responses() == {}
+
+
+def test_build_error_responses_grouped() -> None:
+    """Agrupa los errores que comparten estado HTTP."""
+    codes = (
+        ErrorCode.EMPTY_QUESTION,
+        ErrorCode.INVALID_THREAD_ID,
+        ErrorCode.QUESTION_TOO_LONG,
+    )
+
+    responses = build_error_responses(*codes)
+
+    expected_statuses = {
+        ERROR_CATALOG[code].status_code
+        for code in codes
+    }
+
+    assert set(responses) == expected_statuses
+
+    for code in codes:
+        definition = ERROR_CATALOG[code]
+        response = responses[definition.status_code]
+
+        assert response["model"] is ErrorOut
+        assert code.value in response["description"]
+        assert definition.message in response["description"]
+
+
+def test_build_error_responses_no_duplicates() -> None:
+    """Evita documentar varias veces un mismo código."""
+    code = ErrorCode.VALIDATION_ERROR
+    status = ERROR_CATALOG[code].status_code
+
+    responses = build_error_responses(code, code)
+
+    description = responses[status]["description"]
+
+    assert description.count(code.value) == 1
+
+
+def test_build_error_responses_independent() -> None:
+    """Evita compartir estructuras mutables entre operaciones."""
+    code = ErrorCode.VALIDATION_ERROR
+    status = ERROR_CATALOG[code].status_code
+
+    first = build_error_responses(code)
+    second = build_error_responses(code)
+
+    first[status]["description"] = "Modificado"
+
+    assert second[status]["description"] != "Modificado"
+
+
+def test_openapi_custom_error_response() -> None:
+    """Sustituye la respuesta 422 predeterminada de FastAPI."""
+    application = FastAPI()
+
+    @application.post(
+        "/ask",
+        responses=build_error_responses(
+            ErrorCode.EMPTY_QUESTION,
+            ErrorCode.INVALID_THREAD_ID,
+            ErrorCode.VALIDATION_ERROR,
+        ),
+    )
+    def ask(data: AskIn) -> None:
+        """Declara un contrato exclusivamente para la prueba."""
+
+    schema = application.openapi()
+    responses = schema["paths"]["/ask"]["post"]["responses"]
+
+    for status in ("400", "422"):
+        documented = responses[status]
+
+        assert documented["content"]["application/json"][
+            "schema"
+        ]["$ref"] == "#/components/schemas/ErrorOut"
+
+    assert "HTTPValidationError" not in (
+        schema["components"]["schemas"]
     )

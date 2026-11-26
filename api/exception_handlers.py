@@ -249,6 +249,31 @@ def build_error_response(
     )
 
 
+def build_error_responses(
+    *codes: ErrorCode,
+) -> dict[int, dict[str, Any]]:
+    """Construye la documentación OpenAPI de los errores."""
+    descriptions: dict[int, list[str]] = {}
+
+    for code in dict.fromkeys(codes):
+        definition = ERROR_CATALOG[code]
+
+        descriptions.setdefault(
+            definition.status_code,
+            [],
+        ).append(
+            f"`{code.value}`: {definition.message}"
+        )
+
+    return {
+        status_code: {
+            "model": ErrorOut,
+            "description": "\n\n".join(messages),
+        }
+        for status_code, messages in descriptions.items()
+    }
+
+
 # =========================================================
 # MANEJADORES DE EXCEPCIONES
 # =========================================================
