@@ -4,7 +4,8 @@
 from unittest.mock import Mock
 
 import pytest
-from uuid import UUID
+from uuid import UUID, uuid4
+
 from fastapi.testclient import TestClient
 from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException
@@ -15,6 +16,7 @@ from api.config import ApiSettings
 from api.error_catalog import ERROR_CATALOG, ErrorCode
 from api.errors import ApiError
 from api.request_context import REQUEST_ID_HEADER
+from api.security import SessionStore
 
 
 @pytest.fixture
@@ -238,3 +240,48 @@ def test_security_failure_prevents_startup(mock_db) -> None:
     )
 
     mock_db["engine"].dispose.assert_called_once()
+
+
+# =========================================================
+# CICLO DE VIDA DE LAS SESIONES
+# =========================================================
+
+
+def test_session_store_initialized(
+    client: TestClient,
+) -> None:
+    """Inicializa el gestor de sesiones durante el arranque."""
+    store = client.app.state.session_store
+
+    assert isinstance(store, SessionStore)
+
+
+def test_session_store_ttl(
+    client: TestClient,
+) -> None:
+    """Utiliza la duración configurada para las sesiones."""
+    store = client.app.state.session_store
+    settings = client.app.state.settings
+
+    _, session = store.create(uuid4())
+
+    duration = session.expires_at - session.created_at
+
+    assert duration.total_seconds() == settings.SESSION_TTL_SECONDS
+
+
+def test_session_store_restart(mock_db) -> None:
+    """Descarta las sesiones anteriores al reiniciar el backend."""
+    with TestClient(api_main.app) as client:
+        first_store = client.app.state.session_store
+        token, _ = first_store.create(uuid4())
+
+    with TestClient(api_main.app) as client:
+        second_store = client.app.state.session_store
+
+        assert first_store is not second_store
+
+        with pytest.raises(ApiError) as exc_info:
+            second_store.get(token)
+
+        assert exc_info.value.code == ErrorCode.INVALID_SESSION

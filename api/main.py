@@ -7,11 +7,8 @@ from fastapi import FastAPI
 
 from api.config import load_settings
 from api.exception_handlers import register_exception_handlers
-from api.middleware import (
-    RequestMiddleware,
-    configure_http_logging,
-)
-from api.security import create_dummy_password_hash
+from api.middleware import RequestMiddleware, configure_http_logging
+from api.security import SessionStore, create_dummy_password_hash
 from src.db import (
     check_database,
     create_db_engine,
@@ -27,9 +24,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.settings = settings
 
     if settings.DATABASE_URL is None:
-        raise RuntimeError(
-            "DATABASE_URL no está configurada."
-        )
+        raise RuntimeError("DATABASE_URL no está configurada.")
 
     engine = None
 
@@ -49,9 +44,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             ensure_schema(engine)
 
         except Exception:
-            raise RuntimeError(
-                "No se ha podido inicializar PostgreSQL."
-            ) from None
+            raise RuntimeError("No se ha podido inicializar PostgreSQL.") from None
 
         app.state.engine = engine
 
@@ -59,10 +52,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             app.state.dummy_password_hash = create_dummy_password_hash(
                 settings.BCRYPT_ROUNDS,
             )
+
+            app.state.session_store = SessionStore(
+                ttl_seconds=settings.SESSION_TTL_SECONDS,
+            )
+
         except Exception:
-            raise RuntimeError(
-                "No se ha podido inicializar la seguridad."
-            ) from None
+            raise RuntimeError("No se ha podido inicializar la seguridad.") from None
 
         configure_http_logging(settings.LOG_LEVEL)
 

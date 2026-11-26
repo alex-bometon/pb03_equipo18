@@ -4,9 +4,19 @@ import re
 
 import pytest
 
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import FrozenInstanceError
+from datetime import datetime, timedelta, timezone
+from threading import Event
+from unittest.mock import Mock
+from uuid import uuid4
+
 from api.error_catalog import ErrorCode
 from api.errors import ApiError
+import api.security as security
 from api.security import (
+    SessionRecord,
+    SessionStore,
     create_dummy_password_hash,
     generate_secret,
     hash_password,
@@ -224,3 +234,384 @@ def test_create_distinct_dummy_hashes() -> None:
     second = create_dummy_password_hash(TEST_ROUNDS)
 
     assert first != second
+
+
+# =========================================================
+# GESTIÓN DE SESIONES
+# =========================================================
+
+
+@pytest.fixture
+def session_clock(
+    monkeypatch: pytest.MonkeyPatch,
+) -> list[float]:
+    """Proporciona un reloj monotónico controlado."""
+    clock = [1000.0]
+
+    monkeypatch.setattr(
+        security,
+        "monotonic",
+        lambda: clock[0],
+    )
+
+    return clock
+
+
+@pytest.fixture
+def session_store(
+    session_clock: list[float],
+) -> SessionStore:
+    """Crea un gestor aislado con una duración de ocho horas."""
+    return SessionStore(ttl_seconds=28_800)
+
+
+def test_create_session(session_store: SessionStore) -> None:
+    """Crea una sesión con los datos internos esperados."""
+    user_id = uuid4()
+
+    token, session = session_store.create(user_id)
+
+    assert isinstance(session, SessionRecord)
+    assert session.user_id == user_id
+    assert session.token_hash == hash_secret(token)
+    assert session.token_hash != token
+    assert len(token) == 43
+    assert session.created_at.tzinfo == timezone.utc
+    assert session.expires_at - session.created_at == timedelta(
+        hours=8,
+    )
+    assert session.deadline == 1000.0 + 28_800
+
+
+def test_session_record_immutable(
+    session_store: SessionStore,
+) -> None:
+    """Impide modificar los atributos de una sesión."""
+    _, session = session_store.create(uuid4())
+
+    with pytest.raises(FrozenInstanceError):
+        session.user_id = uuid4()
+
+
+def test_session_repr(
+    session_store: SessionStore,
+) -> None:
+    """Excluye el secreto y su hash de la representación."""
+    token, session = session_store.create(uuid4())
+
+    assert token not in repr(session)
+    assert session.token_hash not in repr(session)
+
+
+def test_get_session(session_store: SessionStore) -> None:
+    """Recupera el registro asociado al token original."""
+    token, session = session_store.create(uuid4())
+
+    assert session_store.get(token) == session
+
+
+def test_invalid_session(session_store: SessionStore) -> None:
+    """Rechaza tokens desconocidos."""
+    with pytest.raises(ApiError) as exc_info:
+        session_store.get(generate_secret())
+
+    assert exc_info.value.code == ErrorCode.INVALID_SESSION
+
+
+def test_invalid_session_encoding(
+    session_store: SessionStore,
+) -> None:
+    """Gestiona una credencial que no puede codificarse."""
+    with pytest.raises(ApiError) as exc_info:
+        session_store.get("\ud800")
+
+    assert exc_info.value.code == ErrorCode.INVALID_SESSION
+
+
+def test_multiple_user_sessions(
+    session_store: SessionStore,
+) -> None:
+    """Permite varias sesiones independientes por usuario."""
+    user_id = uuid4()
+
+    first_token, first = session_store.create(user_id)
+    second_token, second = session_store.create(user_id)
+
+    assert first_token != second_token
+    assert first.token_hash != second.token_hash
+    assert first.user_id == second.user_id
+
+
+def test_session_collision(
+    session_store: SessionStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Impide sobrescribir una sesión ante una colisión."""
+    token, session = session_store.create(uuid4())
+
+    monkeypatch.setattr(
+        security,
+        "generate_secret",
+        lambda: token,
+    )
+
+    with pytest.raises(ApiError) as exc_info:
+        session_store.create(uuid4())
+
+    assert exc_info.value.code == ErrorCode.INTERNAL_SERVER_ERROR
+    assert session_store.get(token) == session
+
+
+def test_session_before_expiration(
+    session_store: SessionStore,
+    session_clock: list[float],
+) -> None:
+    """Conserva la sesión hasta su instante de caducidad."""
+    token, session = session_store.create(uuid4())
+
+    session_clock[0] += 28_799.999
+
+    assert session_store.get(token) == session
+
+
+def test_session_exact_expiration(
+    session_store: SessionStore,
+    session_clock: list[float],
+) -> None:
+    """Rechaza la sesión exactamente al alcanzar su límite."""
+    token, _ = session_store.create(uuid4())
+
+    session_clock[0] += 28_800
+
+    with pytest.raises(ApiError) as exc_info:
+        session_store.get(token)
+
+    assert exc_info.value.code == ErrorCode.SESSION_EXPIRED
+
+
+def test_expired_session_removed(
+    session_store: SessionStore,
+    session_clock: list[float],
+) -> None:
+    """Elimina la sesión después de detectar su caducidad."""
+    token, _ = session_store.create(uuid4())
+
+    session_clock[0] += 28_800
+
+    with pytest.raises(ApiError) as exc_info:
+        session_store.get(token)
+
+    assert exc_info.value.code == ErrorCode.SESSION_EXPIRED
+
+    with pytest.raises(ApiError) as exc_info:
+        session_store.get(token)
+
+    assert exc_info.value.code == ErrorCode.INVALID_SESSION
+
+
+def test_session_periodic_cleanup(
+    session_store: SessionStore,
+    session_clock: list[float],
+) -> None:
+    """Elimina registros caducados durante otra operación."""
+    expired_token, _ = session_store.create(uuid4())
+
+    session_clock[0] += 28_800
+
+    valid_token, valid = session_store.create(uuid4())
+
+    with pytest.raises(ApiError) as exc_info:
+        session_store.get(expired_token)
+
+    assert exc_info.value.code == ErrorCode.INVALID_SESSION
+    assert session_store.get(valid_token) == valid
+
+
+def test_cleanup_interval(
+    session_clock: list[float],
+) -> None:
+    """Respeta el intervalo mínimo entre limpiezas generales."""
+    store = SessionStore(ttl_seconds=10)
+    expired_token, _ = store.create(uuid4())
+
+    session_clock[0] += 20
+
+    store.create(uuid4())
+
+    with pytest.raises(ApiError) as exc_info:
+        store.get(expired_token)
+
+    assert exc_info.value.code == ErrorCode.SESSION_EXPIRED
+
+
+def test_session_utc_clock_change(
+    session_store: SessionStore,
+    session_clock: list[float],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Utiliza el reloj monotónico aunque cambie el reloj UTC."""
+    token, session = session_store.create(uuid4())
+
+    clock = Mock(wraps=datetime)
+    clock.now.return_value = session.created_at + timedelta(
+        days=365,
+    )
+
+    monkeypatch.setattr(security, "datetime", clock)
+
+    session_clock[0] += 60
+
+    assert session_store.get(token) == session
+
+    session_clock[0] += 28_740
+
+    with pytest.raises(ApiError) as exc_info:
+        session_store.get(token)
+
+    assert exc_info.value.code == ErrorCode.SESSION_EXPIRED
+
+
+def test_revoke_session(session_store: SessionStore) -> None:
+    """Impide utilizar una sesión revocada."""
+    token, _ = session_store.create(uuid4())
+
+    session_store.revoke(token)
+
+    with pytest.raises(ApiError) as exc_info:
+        session_store.get(token)
+
+    assert exc_info.value.code == ErrorCode.INVALID_SESSION
+
+
+def test_revoke_only_current_session(
+    session_store: SessionStore,
+) -> None:
+    """Conserva otras sesiones del mismo usuario."""
+    user_id = uuid4()
+
+    first_token, _ = session_store.create(user_id)
+    second_token, second = session_store.create(user_id)
+
+    session_store.revoke(first_token)
+
+    assert session_store.get(second_token) == second
+
+
+def test_revoke_user_sessions(
+    session_store: SessionStore,
+) -> None:
+    """Invalida todas las sesiones del usuario indicado."""
+    user_id = uuid4()
+
+    first_token, _ = session_store.create(user_id)
+    second_token, _ = session_store.create(user_id)
+
+    session_store.revoke_user(user_id)
+
+    for token in (first_token, second_token):
+        with pytest.raises(ApiError) as exc_info:
+            session_store.get(token)
+
+        assert exc_info.value.code == ErrorCode.INVALID_SESSION
+
+
+def test_revoke_user_preserves_other_users(
+    session_store: SessionStore,
+) -> None:
+    """No afecta a las sesiones pertenecientes a otros usuarios."""
+    first_user = uuid4()
+    second_user = uuid4()
+
+    session_store.create(first_user)
+
+    token, session = session_store.create(second_user)
+
+    session_store.revoke_user(first_user)
+
+    assert session_store.get(token) == session
+
+
+def test_revoke_unknown_user(
+    session_store: SessionStore,
+) -> None:
+    """Permite invalidar las sesiones de un usuario sin sesiones."""
+    token, session = session_store.create(uuid4())
+
+    session_store.revoke_user(uuid4())
+
+    assert session_store.get(token) == session
+
+
+# =========================================================
+# CONCURRENCIA DE SESIONES
+# =========================================================
+
+
+def test_concurrent_session_creation(
+    session_store: SessionStore,
+) -> None:
+    """Permite crear sesiones concurrentes sin perder registros."""
+    user_id = uuid4()
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        sessions = list(
+            pool.map(
+                session_store.create,
+                [user_id] * 50,
+            )
+        )
+
+    tokens = {
+        token
+        for token, _ in sessions
+    }
+
+    assert len(tokens) == 50
+
+    for token, session in sessions:
+        assert session_store.get(token) == session
+
+
+def test_nested_session_lock(
+    session_store: SessionStore,
+) -> None:
+    """Permite adquisiciones anidadas desde el mismo hilo."""
+    with session_store.locked():
+        token, session = session_store.create(uuid4())
+
+        assert session_store.get(token) == session
+
+        session_store.revoke(token)
+
+    with pytest.raises(ApiError) as exc_info:
+        session_store.get(token)
+
+    assert exc_info.value.code == ErrorCode.INVALID_SESSION
+
+
+def test_session_revocation_waits_for_lock(
+    session_store: SessionStore,
+) -> None:
+    """Coordina la revocación con otra operación protegida."""
+    token, session = session_store.create(uuid4())
+    started = Event()
+
+    def revoke_session() -> None:
+        """Intenta revocar la sesión desde otro hilo."""
+        started.set()
+        session_store.revoke(token)
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        with session_store.locked():
+            future = pool.submit(revoke_session)
+
+            assert started.wait(timeout=2)
+            assert not future.done()
+            assert session_store.get(token) == session
+
+        future.result(timeout=2)
+
+    with pytest.raises(ApiError) as exc_info:
+        session_store.get(token)
+
+    assert exc_info.value.code == ErrorCode.INVALID_SESSION
