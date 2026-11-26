@@ -260,6 +260,12 @@ Ejecutar las operaciones protegidas con cada perfil y contrastarlas con la matri
 
 Comprobar específicamente que una sesión ordinaria no permite utilizar privilegios Admin y que las claves propias desactivadas permiten consultar el historial autorizado.
 
+Las pruebas concurrentes utilizarán Barrier y Event cuando sea necesario controlar el orden de las operaciones.
+
+Se comprobará especialmente la concurrencia entre emisión ordinaria, emisión administrativa, reactivación y desactivación de usuarios.
+
+La autorización final durante la ejecución real del asistente se validará en la fase 08.
+
 ### 5.3. Agente, filtrado y HITL
 
 Consulta inicial de referencia:

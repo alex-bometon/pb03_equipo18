@@ -1,28 +1,30 @@
-
 """Pruebas de inicialización del backend FastAPI."""
 
 from unittest.mock import Mock
+from uuid import UUID, uuid4
 
 import pytest
-from uuid import UUID
-from fastapi.testclient import TestClient
 from fastapi.exceptions import RequestValidationError
-from starlette.exceptions import HTTPException
+from fastapi.testclient import TestClient
 from sqlalchemy.engine import Engine
+from starlette.exceptions import HTTPException
 
 import api.main as api_main
 from api.config import ApiSettings
 from api.error_catalog import ERROR_CATALOG, ErrorCode
 from api.errors import ApiError
 from api.request_context import REQUEST_ID_HEADER
+from api.security import SessionStore, generate_secret
 
 
 @pytest.fixture
 def mock_db(monkeypatch):
     """Simula PostgreSQL sin establecer conexiones reales."""
-
     settings = ApiSettings(
-        DATABASE_URL="postgresql://test:test@localhost/test_db"
+        DATABASE_URL="postgresql://test:test@localhost/test_db",
+        ADMIN_EMAIL="admin-ficticio@example.com",
+        ADMIN_PASSWORD=generate_secret(),
+        API_KEY=generate_secret(),
     )
 
     engine = Mock(spec=Engine)
@@ -30,11 +32,28 @@ def mock_db(monkeypatch):
     creator = Mock(return_value=engine)
     checker = Mock()
     initializer = Mock()
+    admin_bootstrap = Mock()
+
+    dummy_hash_creator = Mock(
+        return_value="hash-ficticio-de-prueba",
+    )
 
     monkeypatch.setattr(api_main, "load_settings", loader)
     monkeypatch.setattr(api_main, "create_db_engine", creator)
     monkeypatch.setattr(api_main, "check_database", checker)
     monkeypatch.setattr(api_main, "ensure_schema", initializer)
+
+    monkeypatch.setattr(
+        api_main,
+        "bootstrap_admin_api_key",
+        admin_bootstrap,
+    )
+
+    monkeypatch.setattr(
+        api_main,
+        "create_dummy_password_hash",
+        dummy_hash_creator,
+    )
 
     return {
         "settings": settings,
@@ -43,6 +62,8 @@ def mock_db(monkeypatch):
         "creator": creator,
         "checker": checker,
         "initializer": initializer,
+        "admin_bootstrap": admin_bootstrap,
+        "dummy_hash_creator": dummy_hash_creator,
     }
 
 
@@ -197,3 +218,202 @@ def test_application_request_id(
 
     assert UUID(request_id).version == 4
     assert str(UUID(request_id)) == request_id
+
+
+# =========================================================
+# INICIALIZACIÓN DE SEGURIDAD
+# =========================================================
+
+
+def test_dummy_hash_initialized(mock_db) -> None:
+    """Genera el hash auxiliar durante la inicialización."""
+    with TestClient(api_main.app) as client:
+        assert client.app.state.dummy_password_hash == (
+            "hash-ficticio-de-prueba"
+        )
+
+        client.get("/docs")
+        client.get("/openapi.json")
+
+    mock_db["dummy_hash_creator"].assert_called_once_with(
+        mock_db["settings"].BCRYPT_ROUNDS,
+    )
+
+
+def test_security_failure_prevents_startup(mock_db) -> None:
+    """Impide arrancar si falla la inicialización de seguridad."""
+    mock_db["dummy_hash_creator"].side_effect = RuntimeError(
+        "informacion-sensible-ficticia",
+    )
+
+    with pytest.raises(RuntimeError) as exc_info:
+        with TestClient(api_main.app):
+            pass
+
+    assert str(exc_info.value) == (
+        "No se ha podido inicializar la seguridad."
+    )
+
+    mock_db["engine"].dispose.assert_called_once()
+
+
+# =========================================================
+# CICLO DE VIDA DE LAS SESIONES
+# =========================================================
+
+
+def test_session_store_initialized(
+    client: TestClient,
+) -> None:
+    """Inicializa el gestor de sesiones durante el arranque."""
+    store = client.app.state.session_store
+
+    assert isinstance(store, SessionStore)
+
+
+def test_session_store_ttl(
+    client: TestClient,
+) -> None:
+    """Utiliza la duración configurada para las sesiones."""
+    store = client.app.state.session_store
+    settings = client.app.state.settings
+
+    _, session = store.create(uuid4())
+
+    duration = session.expires_at - session.created_at
+
+    assert duration.total_seconds() == settings.SESSION_TTL_SECONDS
+
+
+def test_session_store_restart(mock_db) -> None:
+    """Descarta las sesiones anteriores al reiniciar el backend."""
+    with TestClient(api_main.app) as client:
+        first_store = client.app.state.session_store
+        token, _ = first_store.create(uuid4())
+
+    with TestClient(api_main.app) as client:
+        second_store = client.app.state.session_store
+
+        assert first_store is not second_store
+
+        with pytest.raises(ApiError) as exc_info:
+            second_store.get(token)
+
+        assert exc_info.value.code == ErrorCode.INVALID_SESSION
+
+
+# =========================================================
+# INICIALIZACIÓN ADMINISTRATIVA
+# =========================================================
+
+
+def test_admin_bootstrap_initialized(mock_db) -> None:
+    """Ejecuta el aprovisionamiento una vez por arranque."""
+    with TestClient(api_main.app) as client:
+        client.get("/docs")
+        client.get("/openapi.json")
+
+    mock_db["admin_bootstrap"].assert_called_once_with(
+        mock_db["engine"],
+        mock_db["settings"],
+    )
+
+
+def test_admin_bootstrap_initialization_order(mock_db) -> None:
+    """Aprovisiona la administración después de crear las tablas."""
+    sequence = Mock()
+
+    sequence.attach_mock(
+        mock_db["checker"],
+        "check_database",
+    )
+
+    sequence.attach_mock(
+        mock_db["initializer"],
+        "ensure_schema",
+    )
+
+    sequence.attach_mock(
+        mock_db["admin_bootstrap"],
+        "bootstrap_admin",
+    )
+
+    sequence.attach_mock(
+        mock_db["dummy_hash_creator"],
+        "create_dummy_hash",
+    )
+
+    with TestClient(api_main.app):
+        pass
+
+    methods = [
+        call[0]
+        for call in sequence.mock_calls
+    ]
+
+    assert methods == [
+        "check_database",
+        "ensure_schema",
+        "bootstrap_admin",
+        "create_dummy_hash",
+    ]
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "ADMIN_EMAIL",
+        "ADMIN_PASSWORD",
+        "API_KEY",
+    ],
+)
+def test_missing_admin_settings_prevent_startup(
+    mock_db,
+    field: str,
+) -> None:
+    """Impide arrancar si falta una credencial administrativa."""
+    settings = mock_db["settings"].model_copy(
+        update={field: None},
+    )
+
+    mock_db["loader"].return_value = settings
+
+    with pytest.raises(RuntimeError) as exc_info:
+        with TestClient(api_main.app):
+            pass
+
+    assert field in str(exc_info.value)
+
+    mock_db["creator"].assert_not_called()
+    mock_db["admin_bootstrap"].assert_not_called()
+
+
+def test_admin_bootstrap_failure_prevents_startup(
+    mock_db,
+) -> None:
+    """Impide arrancar si falla el aprovisionamiento."""
+    mock_db["admin_bootstrap"].side_effect = RuntimeError(
+        "informacion-sensible-ficticia",
+    )
+
+    with pytest.raises(RuntimeError) as exc_info:
+        with TestClient(api_main.app):
+            pass
+
+    assert str(exc_info.value) == (
+        "No se ha podido aprovisionar la administración."
+    )
+
+    mock_db["dummy_hash_creator"].assert_not_called()
+    mock_db["engine"].dispose.assert_called_once()
+
+
+def test_admin_bootstrap_on_restart(mock_db) -> None:
+    """Comprueba las credenciales en cada arranque."""
+    with TestClient(api_main.app):
+        pass
+
+    with TestClient(api_main.app):
+        pass
+
+    assert mock_db["admin_bootstrap"].call_count == 2

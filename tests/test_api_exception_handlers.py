@@ -783,3 +783,58 @@ def test_openapi_custom_error_response() -> None:
     assert "HTTPValidationError" not in (
         schema["components"]["schemas"]
     )
+
+
+# =========================================================
+# CABECERAS DE AUTENTICACIÓN
+# =========================================================
+
+
+@pytest.mark.parametrize(
+    ("code", "challenge"),
+    [
+        (ErrorCode.API_KEY_REQUIRED, "APIKey"),
+        (ErrorCode.INVALID_API_KEY, "APIKey"),
+        (ErrorCode.INVALID_SESSION, "Bearer"),
+        (ErrorCode.SESSION_EXPIRED, "Bearer"),
+    ],
+)
+def test_authentication_challenge(
+    client: TestClient,
+    code: ErrorCode,
+    challenge: str,
+) -> None:
+    """Incorpora el esquema de autenticación correspondiente."""
+    response = client.get(
+        f"/test/error/{code.value}",
+    )
+
+    assert_error_response(response, code)
+
+    assert response.headers["WWW-Authenticate"] == challenge
+
+
+@pytest.mark.parametrize(
+    "code",
+    [
+        ErrorCode.INVALID_CREDENTIALS,
+        ErrorCode.API_KEY_INACTIVE,
+        ErrorCode.USER_INACTIVE,
+        ErrorCode.INSUFFICIENT_PERMISSIONS,
+        ErrorCode.AMBIGUOUS_CREDENTIALS,
+        ErrorCode.SERVICE_UNAVAILABLE,
+        ErrorCode.INTERNAL_SERVER_ERROR,
+    ],
+)
+def test_no_inapplicable_authentication_challenge(
+    client: TestClient,
+    code: ErrorCode,
+) -> None:
+    """Evita anunciar esquemas de autenticación inaplicables."""
+    response = client.get(
+        f"/test/error/{code.value}",
+    )
+
+    assert_error_response(response, code)
+
+    assert "WWW-Authenticate" not in response.headers

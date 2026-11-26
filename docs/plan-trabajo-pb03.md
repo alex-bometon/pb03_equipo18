@@ -154,7 +154,7 @@ incluyendo la regresión relacional.
 **Finalización:** contratos públicos, tratamiento de errores
 y trazabilidad HTTP implementados y validados.
 
-**Integración:** pendiente de pull request hacia develop.
+**Integración:** PR #5 integrado en develop.
 
 **Referencia:** especificaciones 08, 12, 14 y 15.
 
@@ -163,25 +163,38 @@ durante la integración de los servicios correspondientes.
 
 ### Fase 04 — Autenticación y autorización
 
-**Rama:** feature/auth-authorization.
+**Rama:** feature/auth.
 
 **Dependencias:** fases 02 y 03.
 
-- [ ] Implementar registro, hashing y gestión de contraseñas.
-- [ ] Implementar sesiones, caducidad e invalidación.
-- [ ] Implementar generación, emisión y consulta de API keys.
-- [ ] Implementar el aprovisionamiento administrativo.
-- [ ] Implementar autenticación, roles y comprobación de propiedad.
-- [ ] Implementar límites de claves activas y operaciones administrativas.
-- [ ] Verificar aislamiento, revocación y protección de credenciales.
+- [x] Implementar registro, hashing y gestión de contraseñas.
+- [x] Implementar sesiones, caducidad e invalidación.
+- [x] Implementar generación, emisión y consulta de API keys.
+- [x] Implementar el aprovisionamiento administrativo.
+- [x] Implementar autenticación, roles y comprobación de propiedad.
+- [x] Implementar límites de claves activas y operaciones administrativas.
+- [x] Verificar aislamiento, revocación y protección de credenciales.
 
-**Archivos:** api/security.py, api/dependencies.py, api/main.py, src/db.py.
+**Archivos principales:** api/security.py, api/auth_service.py,
+api/dependencies.py y api/request_context.py.
 
-**Finalización:** identidades, permisos y gestión de credenciales validados.
+**Decisiones:** D73–D109.
 
-**Referencia:** especificación 14.
+**Validación:** 1680 pruebas superadas en 11,52 segundos,
+sin fallos ni omisiones.
 
-Los endpoints públicos no se expondrán en producción antes de incorporar los límites de seguridad de la fase 07.
+**Evidencias:** [Validación de la fase 04](../entregables/evidencias/fase-04-autenticacion-autorizacion.md).
+
+**Finalización:** identidades, permisos y gestión de credenciales
+implementados y validados.
+
+**Integración:** pendiente de pull request hacia develop.
+
+**Referencia:** especificaciones 12, 13, 14 y 15.
+
+Los límites temporales de seguridad se implementarán en la fase 07.
+La autorización final del asistente y los endpoints definitivos
+se integrarán en la fase 08.
 
 ### Fase 05 — Adaptación del núcleo
 
@@ -385,7 +398,7 @@ Los procedimientos de Git e integración se establecen en [flujo-desarrollo.md](
 
 ## 5. Decisiones técnicas
 
-Las decisiones D01–D72 han sido aprobadas y se encuentran recogidas en las especificaciones y documentos de referencia.
+Las decisiones D01–D109 han sido aprobadas y se encuentran recogidas en las especificaciones y documentos de referencia.
 
 | ID | Decisión | Referencia |
 |---|---|---|
@@ -461,6 +474,43 @@ Las decisiones D01–D72 han sido aprobadas y se encuentran recogidas en las esp
 | D70 | CORSMiddleware nativo con trazabilidad y conservación de rechazos preflight | 12, 15 |
 | D71 | Documentación OpenAPI de errores generada desde el catálogo centralizado | 12 |
 | D72 | Validación de OpenAPI mediante aplicaciones FastAPI aisladas | 08, 12, Plan de pruebas |
+| D73 | Hash auxiliar para reducir la enumeración temporal de usuarios | 14 |
+| D74 | Diferenciación entre credenciales incorrectas y corrupción interna | 14 |
+| D75 | Gestor de sesiones en memoria con tokens opacos | 14 |
+| D76 | Protección de sesiones mediante RLock | 14 |
+| D77 | Caducidad mediante reloj monotónico y fechas UTC | 14 |
+| D78 | Limpieza periódica diferida de sesiones caducadas | 14 |
+| D79 | Servicios de autenticación con engine explícito | 13, 14 |
+| D80 | Resolución de registros concurrentes mediante restricciones SQL | 13, 14 |
+| D81 | Traducción de errores relacionales mediante SQLSTATE | 12, 13 |
+| D82 | Verificación de contraseñas con hash auxiliar | 14 |
+| D83 | Bloqueo del usuario antes del bloqueo de sesiones | 13, 14 |
+| D84 | Invalidación conservadora ante commits inciertos | 14 |
+| D85 | Reutilización de servicios de emisión de credenciales | 14 |
+| D86 | Colisiones de credenciales tratadas como errores internos | 14 |
+| D87 | No repetir emisiones con resultado transaccional incierto | 14 |
+| D88 | Aprovisionamiento obligatorio mediante ADMIN_EMAIL, ADMIN_PASSWORD y API_KEY | 14, 16 |
+| D89 | Rechazo del arranque ante configuración administrativa inválida | 14, 16 |
+| D90 | Generación independiente y segura de secretos administrativos | 14 |
+| D91 | Aprovisionamiento idempotente sin sobrescribir cuentas ni claves | 14 |
+| D92 | Rotación administrativa mediante configuración y aprovisionamiento | 14, 16 |
+| D93 | Sincronización de la contraseña administrativa con el entorno | 14, 16 |
+| D94 | AuthContext mínimo e inmutable, sin secretos ni hashes | 14 |
+| D95 | Validación de combinaciones y duplicados de cabeceras | 12, 14 |
+| D96 | Diferenciación de errores de autenticación | 12, 14 |
+| D97 | Sesiones SQL breves durante la autenticación | 13, 14 |
+| D98 | Esquemas nativos de seguridad en OpenAPI y WWW-Authenticate | 12, 14 |
+| D99 | Modalidades de autenticación específicas por endpoint | 12, 14 |
+| D100 | Dependencias parametrizables por rol | 14 |
+| D101 | Centralización de la propiedad de API keys | 14 |
+| D102 | Centralización del acceso autorizado a conversaciones | 13, 14 |
+| D103 | Comprobación de permisos y propiedad antes del estado operativo | 14, 15 |
+| D104 | Protección de las credenciales de aprovisionamiento configuradas | 14, 16 |
+| D105 | Idempotencia de operaciones administrativas de estado | 12, 14 |
+| D106 | Prioridad de errores administrativos | 12, 14 |
+| D107 | Orden determinista de bloqueos e invalidación coordinada | 13, 14 |
+| D108 | Incorporación de deleted_at a UserOut | 12 |
+| D109 | Pruebas críticas de concurrencia y autorización final en fase 08 | Plan de pruebas |
 
 Su contenido no se reproducirá en este plan.
 

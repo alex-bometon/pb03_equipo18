@@ -7,6 +7,7 @@ from pydantic import ValidationError
 
 import api.config as api_config
 from api.config import ApiSettings, load_settings
+from api.security import generate_secret
 
 
 @pytest.fixture
@@ -43,27 +44,31 @@ def test_default_settings(isolated_env):
 
 def test_missing_required_settings(isolated_env):
     """Identifica las credenciales imprescindibles ausentes."""
-
     settings = load_settings()
 
     assert settings.missing_required_settings() == (
         "DATABASE_URL",
         "GEMINI_API_KEY",
+        "ADMIN_EMAIL",
+        "ADMIN_PASSWORD",
         "API_KEY",
     )
 
 
-def test_empty_secrets():
-    """Las credenciales vacías se representan mediante None."""
-
+def test_empty_secrets() -> None:
+    """Representa las credenciales vacías mediante None."""
     settings = ApiSettings(
         DATABASE_URL="",
         GEMINI_API_KEY="",
+        ADMIN_EMAIL="",
+        ADMIN_PASSWORD="",
         API_KEY="",
     )
 
     assert settings.DATABASE_URL is None
     assert settings.GEMINI_API_KEY is None
+    assert settings.ADMIN_EMAIL is None
+    assert settings.ADMIN_PASSWORD is None
     assert settings.API_KEY is None
 
 
@@ -86,14 +91,24 @@ def test_invalid_database_driver():
         ApiSettings(DATABASE_URL="sqlite:///test.db")
 
 
-def test_secret_representation():
-    """Comprueba que la representación no expone secretos."""
+def test_secret_representation() -> None:
+    """Comprueba que la configuración no representa secretos."""
+    email = "admin-ficticio@example.com"
+    password = generate_secret()
+    secret = generate_secret()
 
-    secret = "credencial-ficticia-de-pruebas"
+    settings = ApiSettings(
+        ADMIN_EMAIL=email,
+        ADMIN_PASSWORD=password,
+        API_KEY=secret,
+    )
 
-    settings = ApiSettings(API_KEY=secret)
+    for value in (email, password, secret):
+        assert value not in repr(settings)
+        assert value not in str(settings)
 
-    assert secret not in repr(settings)
+    assert email not in str(settings.ADMIN_EMAIL)
+    assert password not in str(settings.ADMIN_PASSWORD)
     assert secret not in str(settings.API_KEY)
 
 
@@ -235,4 +250,124 @@ def test_invalid_secret_is_not_exposed(isolated_env, monkeypatch):
         load_settings()
 
     assert "DATABASE_URL" in str(exc_info.value)
+    assert secret not in str(exc_info.value)
+
+
+# =========================================================
+# CONFIGURACIÓN ADMINISTRATIVA
+# =========================================================
+
+
+def test_admin_settings() -> None:
+    """Acepta credenciales administrativas válidas."""
+    password = generate_secret()
+    api_key = generate_secret()
+
+    settings = ApiSettings(
+        ADMIN_EMAIL="  ADMIN-FICTICIO@EXAMPLE.COM  ",
+        ADMIN_PASSWORD=password,
+        API_KEY=api_key,
+    )
+
+    assert settings.missing_admin_settings() == ()
+
+    assert settings.ADMIN_EMAIL is not None
+    assert settings.ADMIN_PASSWORD is not None
+    assert settings.API_KEY is not None
+
+    assert settings.ADMIN_EMAIL.get_secret_value() == (
+        "admin-ficticio@example.com"
+    )
+
+    assert settings.ADMIN_PASSWORD.get_secret_value() == password
+    assert settings.API_KEY.get_secret_value() == api_key
+
+
+def test_missing_admin_settings() -> None:
+    """Identifica las credenciales administrativas ausentes."""
+    settings = ApiSettings()
+
+    assert settings.missing_admin_settings() == (
+        "ADMIN_EMAIL",
+        "ADMIN_PASSWORD",
+        "API_KEY",
+    )
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("ADMIN_EMAIL", "email-invalido"),
+        ("ADMIN_PASSWORD", "corta"),
+        ("ADMIN_PASSWORD", "Password con espacios"),
+        ("ADMIN_PASSWORD", "a" * 73),
+        ("API_KEY", "clave-corta"),
+        ("API_KEY", "A" * 42),
+        ("API_KEY", "A" * 44),
+        ("API_KEY", "A" * 42 + "B"),
+        ("API_KEY", "A" * 42 + "="),
+        ("API_KEY", "A" * 42 + " "),
+        ("API_KEY", "+" + "A" * 42),
+    ],
+)
+def test_invalid_admin_credentials(
+    field: str,
+    value: str,
+) -> None:
+    """Rechaza credenciales administrativas incompatibles."""
+    with pytest.raises(ValidationError):
+        ApiSettings(**{field: value})
+
+
+def test_generated_admin_credentials() -> None:
+    """Acepta el formato producido por el generador de secretos."""
+    for _ in range(100):
+        settings = ApiSettings(
+            ADMIN_EMAIL="admin-ficticio@example.com",
+            ADMIN_PASSWORD=generate_secret(),
+            API_KEY=generate_secret(),
+        )
+
+        assert settings.missing_admin_settings() == ()
+
+
+def test_admin_environment_loading(
+    isolated_env,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Carga las credenciales desde un entorno aislado."""
+    email = "admin-ficticio@example.com"
+    password = generate_secret()
+    api_key = generate_secret()
+
+    monkeypatch.setenv("ADMIN_EMAIL", email)
+    monkeypatch.setenv("ADMIN_PASSWORD", password)
+    monkeypatch.setenv("API_KEY", api_key)
+
+    settings = load_settings()
+
+    assert settings.missing_admin_settings() == ()
+
+    assert settings.ADMIN_EMAIL is not None
+    assert settings.ADMIN_PASSWORD is not None
+    assert settings.API_KEY is not None
+
+    assert settings.ADMIN_EMAIL.get_secret_value() == email
+    assert settings.ADMIN_PASSWORD.get_secret_value() == password
+    assert settings.API_KEY.get_secret_value() == api_key
+
+
+def test_invalid_admin_secret_not_exposed(
+    isolated_env,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Impide exponer una credencial inválida al diagnosticar."""
+    secret = "credencial-administrativa-ficticia-invalida"
+
+    monkeypatch.setenv("API_KEY", secret)
+
+    with pytest.raises(ValueError) as exc_info:
+        load_settings()
+
+    assert "API_KEY" in str(exc_info.value)
     assert secret not in str(exc_info.value)

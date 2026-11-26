@@ -1701,3 +1701,25 @@ def test_openapi_nested_user(
     field = openapi_components["LoginOut"]["properties"]["user"]
 
     assert field["$ref"] == "#/components/schemas/UserOut"
+
+
+def test_openapi_user_deleted_at(
+    openapi_components: dict[str, Any],
+) -> None:
+    """Documenta la fecha de eliminación como campo nullable."""
+    schema = openapi_components["UserOut"]
+
+    field = schema["properties"]["deleted_at"]
+
+    assert "deleted_at" in schema["required"]
+
+    assert any(
+        item.get("type") == "null"
+        for item in field["anyOf"]
+    )
+
+    assert any(
+        item.get("type") == "string"
+        and item.get("format") == "date-time"
+        for item in field["anyOf"]
+    )
