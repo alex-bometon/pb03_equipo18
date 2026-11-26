@@ -2,6 +2,10 @@
 
 from io import BytesIO
 from math import sqrt
+from collections.abc import Iterator
+from contextlib import contextmanager
+from pathlib import Path
+from tempfile import NamedTemporaryFile
 
 from PIL import Image, ImageOps
 from fastapi import UploadFile
@@ -10,7 +14,7 @@ from starlette.concurrency import run_in_threadpool
 from api.config import ApiSettings
 from api.error_catalog import ErrorCode
 from api.errors import ApiError
-from config import IMAGE_MAX_BYTES, IMAGE_MAX_PIXELS
+from config import ASSETS_DIR, IMAGE_MAX_BYTES, IMAGE_MAX_PIXELS
 from src.input_validation import (
     ImagenInvalidaError,
     abrir_imagen_validada,
@@ -107,3 +111,33 @@ async def recibir_imagen(
     datos = await imagen.read(settings.IMAGE_UPLOAD_MAX_BYTES + 1)
 
     return await run_in_threadpool(adaptar_imagen, datos, settings=settings)
+
+
+@contextmanager
+def imagen_temporal(
+    datos: bytes,
+    formato: str,
+) -> Iterator[str]:
+    """Almacena una imagen adaptada mientras resulta necesaria."""
+    extensiones = {"JPEG": ".jpg", "PNG": ".png"}
+
+    if formato not in extensiones:
+        raise ValueError("Formato de imagen adaptada inválido.")
+
+    assets = ASSETS_DIR.resolve()
+    directorio = assets / ".api_temporal"
+
+    directorio.mkdir(mode=0o700, exist_ok=True)
+
+    if directorio.is_symlink() or directorio.resolve() != directorio:
+        raise RuntimeError("Directorio temporal no autorizado.")
+
+    with NamedTemporaryFile(
+        mode="wb",
+        suffix=extensiones[formato],
+        dir=directorio,
+    ) as archivo:
+        archivo.write(datos)
+        archivo.flush()
+
+        yield str(Path(archivo.name))

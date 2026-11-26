@@ -19,6 +19,7 @@ from .api_puntos_limpios import (
     buscar_puntos_limpios_cercanos,
 )
 from .describir_imagen import describir_imagen as _describir_imagen
+from .describir_imagen import ImagenNoAdmitidaError
 from .hora_actual import hora_actual as _hora_actual
 from .rag_tool import consultar_rag
 
@@ -159,6 +160,9 @@ def _ejecutar(
 
     try:
         datos = TOOL_BY_NAME[nombre].invoke(args)
+
+    except ImagenNoAdmitidaError as exc:
+        datos = exc.identificacion
 
     except Exception:
         return _fallo(nombre, "Error: no se pudo ejecutar la herramienta.")

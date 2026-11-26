@@ -1,4 +1,3 @@
-
 """Ejecuta herramientas de los especialistas de ReciclaTIA.
 
 Usa una ruta determinista para tareas inequívocas y conserva el
@@ -141,6 +140,9 @@ def _preview_tool(nombre: str, resultado: Mapping[str, Any]) -> str:
         )
 
     if nombre == "describir_imagen":
+        if isinstance(datos, dict):
+            return "Identificación visual no admitida."
+
         return "Descripción visual obtenida."
 
     return "Herramienta completada."
@@ -354,7 +356,19 @@ class _RegistroEjecucion:
         ok = resultado["ok"]
         datos = resultado["datos"]
 
-        if ok and not cache:
+        rechazo_visual = (
+            ok
+            and nombre == "describir_imagen"
+            and isinstance(datos, dict)
+            and datos.get("estado") != "allowed"
+        )
+
+        if rechazo_visual and not cache:
+            self.limitaciones.append(
+                "La identificación visual no ha sido admitida."
+            )
+
+        if ok and not cache and not rechazo_visual:
             copia = deepcopy(datos)
             self.evidencias.append({
                 "rol": self.rol,
@@ -362,9 +376,7 @@ class _RegistroEjecucion:
                 "id_llamada": identificador,
                 "datos": copia,
             })
-            self.observaciones.append(
-                _json_acotado(_vista_tool(nombre, copia))
-            )
+            self.observaciones.append(_json_acotado(_vista_tool(nombre, copia)))
 
             if nombre == "consultar_rag" and isinstance(copia, dict):
                 for fuente in copia.get("fuentes") or []:
@@ -406,9 +418,7 @@ class _RegistroEjecucion:
                 datos.get("fuente") if ok and isinstance(datos, dict)
                 else None
             ),
-            "preview": _preview_tool(
-                nombre, resultado
-            )[:TRACE_PREVIEW_MAX_CHARS],
+            "preview": _preview_tool(nombre, resultado)[:TRACE_PREVIEW_MAX_CHARS],
         })
 
         if not ok:

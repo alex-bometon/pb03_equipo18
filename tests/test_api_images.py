@@ -3,6 +3,7 @@
 import asyncio
 from io import BytesIO
 from random import Random
+from pathlib import Path
 
 import pytest
 from PIL import Image
@@ -12,7 +13,11 @@ from fastapi import UploadFile
 from api.config import ApiSettings
 from api.error_catalog import ErrorCode
 from api.errors import ApiError
-from api.images import adaptar_imagen, recibir_imagen
+from api.images import (
+    adaptar_imagen,
+    imagen_temporal,
+    recibir_imagen,
+)
 
 
 @pytest.fixture
@@ -217,3 +222,84 @@ def test_recibir_imagen_con_extension_enganosa(settings):
             asyncio.run(recibir_imagen(subida, settings=settings))
 
     assert error.value.code == ErrorCode.IMAGE_FORMAT_NOT_ALLOWED
+
+
+@pytest.fixture
+def assets_temporales(tmp_path, monkeypatch):
+    """Aísla el almacenamiento de los archivos reales del proyecto."""
+    assets = tmp_path / "assets"
+    assets.mkdir()
+
+    monkeypatch.setattr("api.images.ASSETS_DIR", assets)
+
+    return assets
+
+@pytest.mark.parametrize("formato, extension", [("JPEG", ".jpg"), ("PNG", ".png")])
+def test_imagen_temporal_creacion_y_limpieza(
+    assets_temporales,
+    formato,
+    extension,
+):
+    """Conserva los datos durante el contexto y luego los elimina."""
+    datos = b"contenido de prueba"
+
+    with imagen_temporal(datos, formato) as ruta:
+        archivo = Path(ruta)
+
+        assert archivo.is_file()
+        assert archivo.suffix == extension
+        assert archivo.read_bytes() == datos
+        assert archivo.parent == assets_temporales / ".api_temporal"
+
+    assert not archivo.exists()
+
+def test_imagen_temporal_limpia_tras_excepcion(assets_temporales):
+    """Elimina el archivo aunque falle la operación que lo utiliza."""
+    with pytest.raises(RuntimeError, match="Fallo simulado"):
+        with imagen_temporal(b"datos", "PNG") as ruta:
+            archivo = Path(ruta)
+
+            assert archivo.exists()
+
+            raise RuntimeError("Fallo simulado")
+
+    assert not archivo.exists()
+
+
+def test_imagen_temporal_genera_nombres_independientes(assets_temporales):
+    """Impide que dos operaciones sobrescriban sus imágenes."""
+    with imagen_temporal(b"primera", "JPEG") as primera:
+        with imagen_temporal(b"segunda", "JPEG") as segunda:
+            assert primera != segunda
+
+            assert Path(primera).read_bytes() == b"primera"
+            assert Path(segunda).read_bytes() == b"segunda"
+
+        assert not Path(segunda).exists()
+        assert Path(primera).exists()
+
+    assert not Path(primera).exists()
+
+
+def test_imagen_temporal_rechaza_directorio_simbolico(assets_temporales, tmp_path):
+    """Impide almacenar imágenes fuera del directorio autorizado."""
+    destino = tmp_path / "externo"
+    destino.mkdir()
+
+    directorio = assets_temporales / ".api_temporal"
+    directorio.symlink_to(destino, target_is_directory=True)
+
+    with pytest.raises(RuntimeError, match="no autorizado"):
+        with imagen_temporal(b"datos", "PNG"):
+            pytest.fail("No debe admitirse el directorio.")
+
+    assert not list(destino.iterdir())
+
+
+def test_imagen_temporal_rechaza_formato_invalido(assets_temporales):
+    """No genera archivos con extensiones no autorizadas."""
+    with pytest.raises(ValueError, match="Formato"):
+        with imagen_temporal(b"datos", "GIF"):
+            pytest.fail("No debe admitirse el formato.")
+
+    assert not (assets_temporales / ".api_temporal").exists()
