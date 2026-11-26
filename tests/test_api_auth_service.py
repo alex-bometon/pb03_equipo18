@@ -17,9 +17,14 @@ from sqlalchemy.exc import (
 from sqlmodel import Session
 
 import api.auth_service as auth_service
+import api.security as security
+from api.config import ApiSettings
 from api.error_catalog import ErrorCode
 from api.errors import ApiError
 from api.schemas import (
+    ApiKeyCreatedOut,
+    ApiKeyCreateIn,
+    IssuableApiKeyRole,
     LoginIn,
     LoginOut,
     PasswordChangeIn,
@@ -30,6 +35,7 @@ from api.security import (
     SessionRecord,
     SessionStore,
     create_dummy_password_hash,
+    hash_secret,
     verify_password,
 )
 from src import db
@@ -939,3 +945,791 @@ def test_concurrent_login_and_password_change(
             auth_store.get(token)
 
         assert exc_info.value.code == ErrorCode.INVALID_SESSION
+
+
+# =========================================================
+# RECURSOS PARA EMISIÓN DE API KEYS
+# =========================================================
+
+
+@pytest.fixture
+def issue_settings(
+    registered_user: UserOut,
+) -> ApiSettings:
+    """Autoriza al usuario de pruebas para emitir claves User."""
+    return ApiSettings(
+        USER_TIER_ALLOWED_USER_IDS=frozenset({
+            registered_user.id,
+        }),
+    )
+
+
+@pytest.fixture
+def registered_token(
+    auth_store: SessionStore,
+    registered_user: UserOut,
+) -> str:
+    """Proporciona una sesión válida para las pruebas."""
+    token, _ = auth_store.create(registered_user.id)
+
+    return token
+
+
+def _issue_registered(
+    engine: Engine,
+    store: SessionStore,
+    token: str,
+    settings: ApiSettings,
+    *,
+    role: IssuableApiKeyRole = ApiKeyRole.FREE,
+) -> ApiKeyCreatedOut:
+    """Emite una clave registrada con dependencias controladas."""
+    return auth_service.issue_user_api_key(
+        engine,
+        store,
+        token,
+        ApiKeyCreateIn(role=role),
+        settings=settings,
+    )
+
+# =========================================================
+# VALIDACIÓN PREVIA DE SESIONES
+# =========================================================
+
+
+def test_issue_invalid_session(
+    auth_store: SessionStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Rechaza una sesión desconocida antes de consultar SQL."""
+    session_factory = Mock()
+
+    monkeypatch.setattr(
+        auth_service,
+        "Session",
+        session_factory,
+    )
+
+    with pytest.raises(ApiError) as exc_info:
+        _issue_registered(
+            Mock(spec=Engine),
+            auth_store,
+            "token-desconocido",
+            ApiSettings(),
+        )
+
+    assert exc_info.value.code == ErrorCode.INVALID_SESSION
+
+    session_factory.assert_not_called()
+
+
+def test_issue_expired_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Rechaza una sesión caducada antes de consultar SQL."""
+    clock = Mock(return_value=1000.0)
+
+    monkeypatch.setattr(security, "monotonic", clock)
+
+    store = SessionStore(ttl_seconds=10)
+    token, _ = store.create(UUID(int=1))
+
+    clock.return_value = 1010.0
+
+    session_factory = Mock()
+
+    monkeypatch.setattr(
+        auth_service,
+        "Session",
+        session_factory,
+    )
+
+    with pytest.raises(ApiError) as exc_info:
+        _issue_registered(
+            Mock(spec=Engine),
+            store,
+            token,
+            ApiSettings(),
+        )
+
+    assert exc_info.value.code == ErrorCode.SESSION_EXPIRED
+
+    session_factory.assert_not_called()
+
+
+# =========================================================
+# EMISIÓN ANÓNIMA
+# =========================================================
+
+
+@pytest.mark.integration
+def test_issue_anonymous_api_key(
+    clean_db: Engine,
+) -> None:
+    """Emite una clave Free sin propietario registrado."""
+    result = auth_service.issue_anonymous_api_key(clean_db)
+
+    assert isinstance(result, ApiKeyCreatedOut)
+    assert result.role == ApiKeyRole.FREE
+    assert result.user_id is None
+    assert result.is_active is True
+    assert result.deleted_at is None
+    assert result.last_used_at is None
+    assert len(result.api_key) == 43
+    assert str(result.id) != result.api_key
+
+    with Session(clean_db) as session:
+        stored = db.get_api_key_by_id(session, result.id)
+
+        assert stored is not None
+        assert stored.user_id is None
+        assert stored.key_hash == hash_secret(result.api_key)
+        assert stored.key_hash != result.api_key
+        assert stored.role == ApiKeyRole.FREE
+        assert db.list_users(session) == []
+
+        public = auth_service.to_api_key_out(stored)
+
+        assert "key_hash" not in public.model_dump()
+        assert "api_key" not in public.model_dump()
+        assert result.api_key not in public.model_dump_json()
+
+    assert "key_hash" not in result.model_dump()
+    assert result.api_key not in repr(result)
+
+
+@pytest.mark.integration
+def test_distinct_anonymous_api_keys(
+    clean_db: Engine,
+) -> None:
+    """Genera credenciales anónimas independientes."""
+    first = auth_service.issue_anonymous_api_key(clean_db)
+    second = auth_service.issue_anonymous_api_key(clean_db)
+
+    assert first.id != second.id
+    assert first.api_key != second.api_key
+
+    with Session(clean_db) as session:
+        assert len(db.list_api_keys(session)) == 2
+
+
+# =========================================================
+# EMISIÓN REGISTRADA
+# =========================================================
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    "role",
+    [ApiKeyRole.FREE, ApiKeyRole.USER],
+)
+def test_issue_registered_api_key(
+    clean_db: Engine,
+    registered_user: UserOut,
+    auth_store: SessionStore,
+    registered_token: str,
+    issue_settings: ApiSettings,
+    role: IssuableApiKeyRole,
+) -> None:
+    """Asocia la clave al propietario de la sesión."""
+    result = _issue_registered(
+        clean_db,
+        auth_store,
+        registered_token,
+        issue_settings,
+        role=role,
+    )
+
+    assert result.user_id == registered_user.id
+    assert result.role == role
+    assert result.is_active is True
+
+    with Session(clean_db) as session:
+        stored = db.get_api_key_by_id(session, result.id)
+
+        assert stored is not None
+        assert stored.user_id == registered_user.id
+        assert stored.role == role
+        assert stored.key_hash == hash_secret(result.api_key)
+
+    assert auth_store.get(
+        registered_token,
+    ).user_id == registered_user.id
+
+
+@pytest.mark.integration
+def test_issue_free_without_allowlist(
+    clean_db: Engine,
+    registered_user: UserOut,
+    auth_store: SessionStore,
+    registered_token: str,
+) -> None:
+    """Permite emitir claves Free sin autorización especial."""
+    result = _issue_registered(
+        clean_db,
+        auth_store,
+        registered_token,
+        ApiSettings(),
+    )
+
+    assert result.role == ApiKeyRole.FREE
+    assert result.user_id == registered_user.id
+
+
+@pytest.mark.integration
+def test_issue_user_not_authorized(
+    clean_db: Engine,
+    auth_store: SessionStore,
+    registered_token: str,
+) -> None:
+    """Rechaza la emisión User sin autorización específica."""
+    with pytest.raises(ApiError) as exc_info:
+        _issue_registered(
+            clean_db,
+            auth_store,
+            registered_token,
+            ApiSettings(),
+            role=ApiKeyRole.USER,
+        )
+
+    assert exc_info.value.code == (
+        ErrorCode.USER_TIER_NOT_AUTHORIZED
+    )
+
+    with Session(clean_db) as session:
+        assert db.list_api_keys(session) == []
+
+
+@pytest.mark.integration
+def test_allowlist_removal(
+    clean_db: Engine,
+    auth_store: SessionStore,
+    registered_token: str,
+    issue_settings: ApiSettings,
+) -> None:
+    """Impide nuevas emisiones sin revocar claves existentes."""
+    existing = _issue_registered(
+        clean_db,
+        auth_store,
+        registered_token,
+        issue_settings,
+        role=ApiKeyRole.USER,
+    )
+
+    with pytest.raises(ApiError) as exc_info:
+        _issue_registered(
+            clean_db,
+            auth_store,
+            registered_token,
+            ApiSettings(),
+            role=ApiKeyRole.USER,
+        )
+
+    assert exc_info.value.code == (
+        ErrorCode.USER_TIER_NOT_AUTHORIZED
+    )
+
+    with Session(clean_db) as session:
+        stored = db.get_api_key_by_id(session, existing.id)
+
+        assert stored is not None
+        assert stored.is_active is True
+        assert stored.deleted_at is None
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("deleted", [False, True])
+def test_issue_inactive_user(
+    clean_db: Engine,
+    registered_user: UserOut,
+    auth_store: SessionStore,
+    registered_token: str,
+    issue_settings: ApiSettings,
+    deleted: bool,
+) -> None:
+    """Impide emitir claves para cuentas no habilitadas."""
+    with Session(clean_db) as session:
+        user = db.get_user_by_id(session, registered_user.id)
+
+        assert user is not None
+
+        if deleted:
+            db.delete_user(user)
+        else:
+            db.set_user_active(user, False)
+
+        session.commit()
+
+    with pytest.raises(ApiError) as exc_info:
+        _issue_registered(
+            clean_db,
+            auth_store,
+            registered_token,
+            issue_settings,
+        )
+
+    assert exc_info.value.code == ErrorCode.USER_INACTIVE
+
+    with Session(clean_db) as session:
+        assert db.list_api_keys(session) == []
+
+
+# =========================================================
+# LÍMITES DE CLAVES ACTIVAS
+# =========================================================
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    ("role", "maximum"),
+    [
+        (ApiKeyRole.FREE, 1),
+        (ApiKeyRole.USER, 5),
+    ],
+)
+def test_active_key_limit(
+    clean_db: Engine,
+    registered_user: UserOut,
+    auth_store: SessionStore,
+    registered_token: str,
+    issue_settings: ApiSettings,
+    role: IssuableApiKeyRole,
+    maximum: int,
+) -> None:
+    """Impide superar el máximo de claves activas por rol."""
+    for _ in range(maximum):
+        _issue_registered(
+            clean_db,
+            auth_store,
+            registered_token,
+            issue_settings,
+            role=role,
+        )
+
+    with pytest.raises(ApiError) as exc_info:
+        _issue_registered(
+            clean_db,
+            auth_store,
+            registered_token,
+            issue_settings,
+            role=role,
+        )
+
+    assert exc_info.value.code == ErrorCode.API_KEY_LIMIT_REACHED
+
+    with Session(clean_db) as session:
+        assert db.count_active_api_keys(
+            session,
+            registered_user.id,
+            role,
+        ) == maximum
+
+
+@pytest.mark.integration
+def test_configurable_active_key_limit(
+    clean_db: Engine,
+    auth_store: SessionStore,
+    registered_token: str,
+) -> None:
+    """Respeta los límites establecidos mediante configuración."""
+    settings = ApiSettings(FREE_MAX_ACTIVE_KEYS=2)
+
+    for _ in range(2):
+        _issue_registered(
+            clean_db,
+            auth_store,
+            registered_token,
+            settings,
+        )
+
+    with pytest.raises(ApiError) as exc_info:
+        _issue_registered(
+            clean_db,
+            auth_store,
+            registered_token,
+            settings,
+        )
+
+    assert exc_info.value.code == ErrorCode.API_KEY_LIMIT_REACHED
+
+
+@pytest.mark.integration
+def test_independent_role_limits(
+    clean_db: Engine,
+    registered_user: UserOut,
+    auth_store: SessionStore,
+    registered_token: str,
+    issue_settings: ApiSettings,
+) -> None:
+    """Mantiene límites independientes para Free y User."""
+    _issue_registered(
+        clean_db,
+        auth_store,
+        registered_token,
+        issue_settings,
+    )
+
+    for _ in range(5):
+        _issue_registered(
+            clean_db,
+            auth_store,
+            registered_token,
+            issue_settings,
+            role=ApiKeyRole.USER,
+        )
+
+    with Session(clean_db) as session:
+        assert db.count_active_api_keys(
+            session,
+            registered_user.id,
+            ApiKeyRole.FREE,
+        ) == 1
+
+        assert db.count_active_api_keys(
+            session,
+            registered_user.id,
+            ApiKeyRole.USER,
+        ) == 5
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("deleted", [False, True])
+def test_inactive_key_frees_capacity(
+    clean_db: Engine,
+    registered_user: UserOut,
+    auth_store: SessionStore,
+    registered_token: str,
+    issue_settings: ApiSettings,
+    deleted: bool,
+) -> None:
+    """Excluye claves desactivadas y eliminadas del límite."""
+    first = _issue_registered(
+        clean_db,
+        auth_store,
+        registered_token,
+        issue_settings,
+    )
+
+    with Session(clean_db) as session:
+        stored = db.get_api_key_by_id(session, first.id)
+
+        assert stored is not None
+
+        if deleted:
+            db.delete_api_key(stored)
+        else:
+            db.set_api_key_active(stored, False)
+
+        session.commit()
+
+    second = _issue_registered(
+        clean_db,
+        auth_store,
+        registered_token,
+        issue_settings,
+    )
+
+    assert first.id != second.id
+
+    with Session(clean_db) as session:
+        assert len(
+            db.list_user_api_keys(
+                session,
+                registered_user.id,
+            )
+        ) == 2
+
+        assert db.count_active_api_keys(
+            session,
+            registered_user.id,
+            ApiKeyRole.FREE,
+        ) == 1
+
+
+# =========================================================
+# COLISIONES Y TRANSACCIONES
+# =========================================================
+
+
+@pytest.mark.integration
+def test_api_key_collision(
+    clean_db: Engine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Impide sobrescribir una clave ante una colisión."""
+    first = auth_service.issue_anonymous_api_key(clean_db)
+
+    generator = Mock(return_value=first.api_key)
+
+    monkeypatch.setattr(
+        auth_service,
+        "generate_secret",
+        generator,
+    )
+
+    with pytest.raises(ApiError) as exc_info:
+        auth_service.issue_anonymous_api_key(clean_db)
+
+    assert exc_info.value.code == ErrorCode.INTERNAL_SERVER_ERROR
+    assert first.api_key not in str(exc_info.value)
+
+    generator.assert_called_once_with()
+
+    with Session(clean_db) as session:
+        keys = db.list_api_keys(session)
+
+        assert len(keys) == 1
+        assert keys[0].id == first.id
+        assert keys[0].key_hash == hash_secret(first.api_key)
+
+
+@pytest.mark.integration
+def test_api_key_output_failure(
+    clean_db: Engine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Revierte la emisión si no puede validar su resultado."""
+    secret = "secreto-ficticio-de-prueba"
+
+    monkeypatch.setattr(
+        auth_service,
+        "generate_secret",
+        Mock(return_value=secret),
+    )
+
+    invalid_output = SimpleNamespace(
+        model_dump=lambda: {},
+    )
+
+    monkeypatch.setattr(
+        auth_service,
+        "to_api_key_out",
+        Mock(return_value=invalid_output),
+    )
+
+    with pytest.raises(ApiError) as exc_info:
+        auth_service.issue_anonymous_api_key(clean_db)
+
+    assert exc_info.value.code == ErrorCode.INTERNAL_SERVER_ERROR
+    assert secret not in str(exc_info.value)
+
+    with Session(clean_db) as session:
+        assert db.list_api_keys(session) == []
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("committed", [False, True])
+def test_api_key_uncertain_commit(
+    clean_db: Engine,
+    monkeypatch: pytest.MonkeyPatch,
+    committed: bool,
+) -> None:
+    """No entrega ni repite una emisión de resultado incierto."""
+    original_commit = Session.commit
+    attempts = 0
+    secret = "secreto-ficticio-de-prueba"
+
+    generator = Mock(return_value=secret)
+
+    def uncertain_commit(session: Session) -> None:
+        """Simula un fallo con resultado relacional incierto."""
+        nonlocal attempts
+
+        attempts += 1
+
+        if committed:
+            original_commit(session)
+
+        raise OperationalError(
+            None,
+            None,
+            DriverError("08006"),
+            connection_invalidated=True,
+        )
+
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            auth_service,
+            "generate_secret",
+            generator,
+        )
+
+        patch.setattr(Session, "commit", uncertain_commit)
+
+        with pytest.raises(ApiError) as exc_info:
+            auth_service.issue_anonymous_api_key(clean_db)
+
+    assert exc_info.value.code == ErrorCode.SERVICE_UNAVAILABLE
+    assert secret not in str(exc_info.value)
+    assert attempts == 1
+
+    generator.assert_called_once_with()
+
+    with Session(clean_db) as session:
+        keys = db.list_api_keys(session)
+
+        if committed:
+            assert len(keys) == 1
+            assert keys[0].key_hash == hash_secret(secret)
+        else:
+            assert keys == []
+
+
+# =========================================================
+# REVOCACIÓN DURANTE LA EMISIÓN
+# =========================================================
+
+
+@pytest.mark.integration
+def test_session_revoked_during_key_issue(
+    clean_db: Engine,
+    auth_store: SessionStore,
+    registered_token: str,
+    issue_settings: ApiSettings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Detecta una revocación anterior a la escritura."""
+    original_count = db.count_active_api_keys
+
+    def count_and_revoke(
+        session: Session,
+        user_id: UUID,
+        role: ApiKeyRole,
+    ) -> int:
+        """Revoca la sesión tras comprobar las claves activas."""
+        count = original_count(
+            session,
+            user_id,
+            role,
+        )
+
+        auth_store.revoke(registered_token)
+
+        return count
+
+    monkeypatch.setattr(
+        db,
+        "count_active_api_keys",
+        count_and_revoke,
+    )
+
+    generator = Mock()
+
+    monkeypatch.setattr(
+        auth_service,
+        "generate_secret",
+        generator,
+    )
+
+    with pytest.raises(ApiError) as exc_info:
+        _issue_registered(
+            clean_db,
+            auth_store,
+            registered_token,
+            issue_settings,
+        )
+
+    assert exc_info.value.code == ErrorCode.INVALID_SESSION
+
+    generator.assert_not_called()
+
+    with Session(clean_db) as session:
+        assert db.list_api_keys(session) == []
+
+
+# =========================================================
+# CONCURRENCIA DE EMISIÓN
+# =========================================================
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    ("role", "maximum"),
+    [
+        (ApiKeyRole.FREE, 1),
+        (ApiKeyRole.USER, 5),
+    ],
+)
+def test_concurrent_api_key_issue(
+    clean_db: Engine,
+    registered_user: UserOut,
+    auth_store: SessionStore,
+    registered_token: str,
+    issue_settings: ApiSettings,
+    monkeypatch: pytest.MonkeyPatch,
+    role: IssuableApiKeyRole,
+    maximum: int,
+) -> None:
+    """Impide superar el límite mediante emisiones concurrentes."""
+    for _ in range(maximum - 1):
+        _issue_registered(
+            clean_db,
+            auth_store,
+            registered_token,
+            issue_settings,
+            role=role,
+        )
+
+    barrier = Barrier(2, timeout=5)
+    original_lookup = db.get_user_by_id
+
+    def synchronized_lookup(
+        session: Session,
+        user_id: UUID,
+        *,
+        for_update: bool = False,
+    ) -> User | None:
+        """Sincroniza las peticiones antes del bloqueo SQL."""
+        if for_update:
+            barrier.wait()
+
+        return original_lookup(
+            session,
+            user_id,
+            for_update=for_update,
+        )
+
+    monkeypatch.setattr(
+        db,
+        "get_user_by_id",
+        synchronized_lookup,
+    )
+
+    def issue() -> ApiKeyCreatedOut | ErrorCode:
+        """Intenta ocupar la última plaza disponible."""
+        try:
+            return _issue_registered(
+                clean_db,
+                auth_store,
+                registered_token,
+                issue_settings,
+                role=role,
+            )
+
+        except ApiError as exc:
+            return exc.code
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(issue)
+        second = pool.submit(issue)
+
+        results = [
+            first.result(timeout=15),
+            second.result(timeout=15),
+        ]
+
+    successful = [
+        result
+        for result in results
+        if isinstance(result, ApiKeyCreatedOut)
+    ]
+
+    assert len(successful) == 1
+    assert ErrorCode.API_KEY_LIMIT_REACHED in results
+
+    with Session(clean_db) as session:
+        assert db.count_active_api_keys(
+            session,
+            registered_user.id,
+            role,
+        ) == maximum

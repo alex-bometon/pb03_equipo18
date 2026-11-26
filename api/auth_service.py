@@ -1,5 +1,8 @@
 """Servicios de autenticación de usuarios de ReciclaTIA."""
 
+from uuid import UUID
+
+from pydantic import ValidationError
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import (
     DBAPIError,
@@ -11,10 +14,14 @@ from sqlalchemy.exc import (
 )
 from sqlmodel import Session
 
+from api.config import ApiSettings
 from api.error_catalog import ErrorCode
 from api.errors import ApiError
-from api.mappers import to_user_out
+from api.mappers import to_api_key_out, to_user_out
 from api.schemas import (
+    ApiKeyCreatedOut,
+    ApiKeyCreateIn,
+    IssuableApiKeyRole,
     LoginIn,
     LoginOut,
     PasswordChangeIn,
@@ -23,11 +30,14 @@ from api.schemas import (
 )
 from api.security import (
     SessionStore,
+    generate_secret,
     hash_password,
+    hash_secret,
     verify_password,
 )
 from src import db
-from src.models import User
+from src.enums import ApiKeyRole
+from src.models import ApiKey, User
 
 
 # =========================================================
@@ -259,6 +269,151 @@ def change_password(
                     raise
 
                 session_store.revoke_user(user_id)
+
+                return result
+
+    except SQLAlchemyError as exc:
+        raise translate_db_error(exc) from None
+    
+
+# =========================================================
+# GENERACIÓN Y EMISIÓN DE API KEYS
+# =========================================================
+
+
+def _check_active_key_limit(
+    session: Session,
+    user_id: UUID,
+    role: IssuableApiKeyRole,
+    settings: ApiSettings,
+) -> None:
+    """Comprueba el límite de claves activas del propietario."""
+    if role == ApiKeyRole.FREE:
+        limit = settings.FREE_MAX_ACTIVE_KEYS
+
+    elif role == ApiKeyRole.USER:
+        limit = settings.USER_MAX_ACTIVE_KEYS
+
+    else:
+        raise ApiError(ErrorCode.INSUFFICIENT_PERMISSIONS)
+
+    active_keys = db.count_active_api_keys(
+        session,
+        user_id,
+        role,
+    )
+
+    if active_keys >= limit:
+        raise ApiError(ErrorCode.API_KEY_LIMIT_REACHED)
+
+
+def _create_issued_api_key(
+    session: Session,
+    role: IssuableApiKeyRole,
+    user_id: UUID | None,
+) -> ApiKeyCreatedOut:
+    """Prepara una nueva credencial sin confirmar la transacción."""
+    if role not in (ApiKeyRole.FREE, ApiKeyRole.USER):
+        raise ApiError(ErrorCode.INSUFFICIENT_PERMISSIONS)
+
+    secret = generate_secret()
+
+    api_key = ApiKey(
+        user_id=user_id,
+        role=role,
+        key_hash=hash_secret(secret),
+    )
+
+    db.create_api_key(session, api_key)
+    session.flush()
+
+    try:
+        public_data = to_api_key_out(api_key)
+
+        return ApiKeyCreatedOut(
+            **public_data.model_dump(),
+            api_key=secret,
+        )
+
+    except ValidationError:
+        raise ApiError(
+            ErrorCode.INTERNAL_SERVER_ERROR,
+        ) from None
+
+
+def issue_anonymous_api_key(
+    engine: Engine,
+) -> ApiKeyCreatedOut:
+    """Emite una API key Free sin propietario registrado."""
+    try:
+        with Session(engine) as session:
+            result = _create_issued_api_key(
+                session,
+                ApiKeyRole.FREE,
+                user_id=None,
+            )
+
+            session.commit()
+
+            return result
+
+    except SQLAlchemyError as exc:
+        raise translate_db_error(exc) from None
+
+
+def issue_user_api_key(
+    engine: Engine,
+    session_store: SessionStore,
+    token: str,
+    body: ApiKeyCreateIn,
+    *,
+    settings: ApiSettings,
+) -> ApiKeyCreatedOut:
+    """Emite una clave ordinaria para un usuario autenticado."""
+    record = session_store.get(token)
+    user_id = record.user_id
+
+    try:
+        with Session(engine) as session:
+            user = db.get_user_by_id(
+                session,
+                user_id,
+                for_update=True,
+            )
+
+            if user is None:
+                raise ApiError(ErrorCode.INVALID_SESSION)
+
+            session_store.get(token)
+            _require_active_user(user)
+
+            if (
+                body.role == ApiKeyRole.USER
+                and user_id not in (
+                    settings.USER_TIER_ALLOWED_USER_IDS
+                )
+            ):
+                raise ApiError(
+                    ErrorCode.USER_TIER_NOT_AUTHORIZED,
+                )
+
+            _check_active_key_limit(
+                session,
+                user_id,
+                body.role,
+                settings,
+            )
+
+            with session_store.locked():
+                session_store.get(token)
+
+                result = _create_issued_api_key(
+                    session,
+                    body.role,
+                    user_id,
+                )
+
+                session.commit()
 
                 return result
 
