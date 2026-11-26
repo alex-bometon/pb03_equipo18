@@ -351,7 +351,7 @@ def buscar_puntos_limpios_cercanos(
         equivalencias = {
             "todos": {"Fijo", "Móvil", "Móvil 24h", "Proximidad"},
             "fijo": {"Fijo"},
-            "movil": {"Móvil", "Móvil 24h"},
+            "movil": {"Móvil"},
             "proximidad": {"Proximidad"},
         }
 

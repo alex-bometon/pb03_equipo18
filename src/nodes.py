@@ -26,6 +26,7 @@ from src.agent_routing import (
 from src.agent_schedule import (
     _hora,
     anexos_temporales,
+    consulta_disponibilidad_actual,
     debe_buscar_puntos_automaticamente,
     requiere_hora
 )
@@ -269,12 +270,7 @@ def _hay_fallo_bloqueante(estado: EstadoGrafo) -> bool:
     if estado.get("error"):
         return True
 
-    pedido = normalizar_texto(estado["pedido"])
-    consulta_actual = bool(re.search(
-        r"\b(?:ahora|hoy|abiert\w*|cerrad\w*|"
-        r"en este momento)\b",
-        pedido,
-    ))
+    consulta_actual = consulta_disponibilidad_actual(estado["pedido"])
 
     necesita_hora = consulta_actual and (
         requiere_hora(estado, "residuos")

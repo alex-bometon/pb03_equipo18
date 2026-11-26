@@ -17,6 +17,8 @@ from src.agent_schedule import (
     _priorizar_abiertos,
     _tipo_normalizado,
     _tipos_admitidos,
+    modalidades_solicitadas,
+    referencia_no_actual,
     estado_horario,
 )
 from src.text_utils import normalizar_texto
@@ -241,9 +243,7 @@ def _plan(
     ]
 
 
-def respuesta_geografica_integrada(
-    estado: Mapping[str, Any],
-) -> tuple[str, list[str]] | None:
+def respuesta_geografica_integrada(estado: Mapping[str, Any]) -> tuple[str, list[str]] | None:
     """Sintetiza un destino útil con RAG + API + hora, sin nuevas tools.
 
     Por defecto: la opción abierta más cercana, hasta otra opción abierta
@@ -263,19 +263,23 @@ def respuesta_geografica_integrada(
         return None
 
     tipos = _tipos_admitidos(estado) if requiere_residuo else None
-    if requiere_residuo and not tipos:
-        return None
+    compatibilidad_confirmada = tipos is not None
 
-    instante = _hora(estado)
-    preferir_abiertos = _priorizar_abiertos(str(estado.get("pedido") or ""))
+    solicitados = modalidades_solicitadas(str(estado.get("pedido") or ""))
+
+    if solicitados:
+        tipos = solicitados if tipos is None else tipos & solicitados
+
+    pedido = str(estado.get("pedido") or "")
+    fecha_distinta = referencia_no_actual(pedido)
+
+    instante = None if fecha_distinta else _hora(estado)
+    preferir_abiertos = _priorizar_abiertos(pedido)
     grupos = _agrupar_puntos(_candidatos(geografia))
     fichas = []
     for grupo in grupos:
         modalidad = _tipo_normalizado(grupo[0])
-        if tipos is not None and not (
-            modalidad in tipos
-            or (modalidad == "movil 24h" and "movil" in tipos)
-        ):
+        if tipos is not None and modalidad not in tipos:
             continue
         fichas.append(_ficha(grupo, instante))
 
@@ -287,7 +291,12 @@ def respuesta_geografica_integrada(
         else "corpus local de respaldo, potencialmente desactualizado"
     )
     prefijo = f"{clasificacion}\n\n" if clasificacion else ""
-    if instante is not None:
+    if fecha_distinta:
+        prefijo += (
+            f"Ubicaciones de la {fuente}. "
+            "Disponibilidad no verificada para la fecha solicitada."
+        )
+    elif instante is not None:
         prefijo += (
             f"**Consulta:** {instante:%d/%m/%Y}, "
             f"{instante:%H:%M} (hora de Madrid). "
@@ -299,7 +308,7 @@ def respuesta_geografica_integrada(
             f"Ubicaciones de la {fuente}; no se puede verificar "
             "disponibilidad por horario."
         )
-    if not requiere_residuo:
+    if not compatibilidad_confirmada:
         prefijo += (
             " No se ha verificado qué residuos acepta cada instalación."
         )
@@ -375,4 +384,10 @@ def respuesta_geografica_integrada(
         "físicamente. Puede haber festivos, cambios o incidencias. "
         "Las distancias son en línea recta."
     )
-    return respuesta, _plan(clasificacion, principal)
+    recomendacion = (
+        principal
+        if not requiere_residuo or compatibilidad_confirmada
+        else None
+    )
+
+    return respuesta, _plan(clasificacion, recomendacion)

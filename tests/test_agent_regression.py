@@ -557,7 +557,8 @@ def test_consulta_compuesta_con_dos_especialistas(aislado):
     ]
 
     assert creador.call_count == 0  # Ruta determinista, sin LLM de selección.
-    sintesis.assert_called_once()
+    sintesis.assert_not_called()
+    assert "No se ha verificado" in estado["respuesta"]
     assert len(estado["evidencias"]) == 3
     assert estado["tool_calls_turno"] == 3
     assert estado["fuentes"]

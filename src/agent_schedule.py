@@ -10,6 +10,7 @@ from __future__ import annotations
 import re
 from datetime import datetime, time, timedelta
 from typing import Any, Mapping
+from zoneinfo import ZoneInfo
 
 from src.text_utils import normalizar_texto
 
@@ -70,79 +71,161 @@ def es_vidrio_envase_confirmado(estado: Mapping[str, Any]) -> bool:
             return True
     return False
 
+def referencia_no_actual(pedido: str) -> bool:
+    """Detecta fechas que no deben evaluarse como el momento actual."""
+    texto = normalizar_texto(pedido)
+
+    return bool(re.search(
+        r"\b(?:manana|ayer|pasado manana|lunes|martes|"
+        r"miercoles|jueves|viernes|sabados?|domingos?)\b"
+        r"|\b\d{1,2}[/\-]\d{1,2}(?:[/\-]\d{2,4})?\b",
+        texto,
+    ))
+
+
+def consulta_disponibilidad_actual(pedido: str) -> bool:
+    """Detecta una solicitud expresa de disponibilidad actual."""
+    texto = normalizar_texto(pedido)
+
+    if referencia_no_actual(pedido):
+        return False
+
+    if re.search(r"\baunque\s+.*\bcerrad\w*\b", texto):
+        return False
+
+    return bool(re.search(
+        r"\b(?:ahora|hoy|abiert\w*|cerrad\w*|"
+        r"en este momento)\b",
+        texto,
+    ))
+
 
 def requiere_hora(estado: Mapping[str, Any], rol: str) -> bool:
-    """Determina necesidad temporal tras consultar las tools primarias."""
+    """Determina si la consulta necesita la hora actual."""
+    pedido = str(estado.get("pedido") or "")
+    consulta = normalizar_texto(pedido)
+
+    if referencia_no_actual(pedido):
+        return False
+
+    disponibilidad = consulta_disponibilidad_actual(pedido)
+
     if rol == "residuos":
-        return es_vidrio_envase_confirmado(estado)
+        horario_documental = bool(re.search(
+            r"\b(?:horarios?|a que hora|cuando)\b",
+            consulta,
+        ))
+
+        return es_vidrio_envase_confirmado(estado) and (
+            disponibilidad or not horario_documental
+        )
 
     if rol != "puntos":
         return False
 
-    for datos in _evidencias(
-        estado, "buscar_puntos_limpios_cercanos", "puntos"
-    ):
+    for datos in _evidencias(estado, "buscar_puntos_limpios_cercanos", "puntos"):
         if isinstance(datos, dict) and datos.get("puntos"):
             return True
 
-    consulta = normalizar_texto(str(estado.get("pedido") or ""))
     hay_documentacion = any(
-        isinstance(datos, dict) and datos.get("abstencion") is False
+        isinstance(datos, dict)
+        and datos.get("abstencion") is False
         for datos in _evidencias(estado, "consultar_rag", "puntos")
     )
-    return bool(
-        re.search(r"\b(?:horarios?|abiert\w*|cerrad\w*|ahora|hoy)\b", consulta)
-        and hay_documentacion
+
+    return disponibilidad and hay_documentacion
+
+
+def _destinos_documentados(estado: Mapping[str, Any]) -> set[str]:
+    """Identifica destinos afirmados mediante evidencia documental."""
+    admitidos: set[str] = set()
+    excluidos: set[str] = set()
+
+    patron = re.compile(
+        r"\bpuntos?\s+limpios?"
+        r"(?:\s+(de\s+proximidad|fijos?|"
+        r"movil(?:es)?(?:\s+(?:de\s+)?24\s*h(?:oras?)?)?))?"
     )
+
+    for datos in _evidencias(estado, "consultar_rag", "residuos"):
+        if (
+            not isinstance(datos, dict)
+            or datos.get("abstencion") is not False
+            or not datos.get("fuentes")
+        ):
+            continue
+
+        texto = normalizar_texto(str(datos.get("respuesta") or ""))
+        texto = re.sub(r"\[c\d+\]", "", texto)
+        fragmentos = re.split(
+            r"[.;!?\n]+|\b(?:pero|sino|sin embargo|en cambio)\b",
+            texto,
+        )
+
+        for fragmento in fragmentos:
+            modalidades: set[str] = set()
+
+            for coincidencia in patron.finditer(fragmento):
+                modalidad = coincidencia.group(1) or "general"
+
+                if "proximidad" in modalidad:
+                    modalidades.add("proximidad")
+                elif "fijo" in modalidad:
+                    modalidades.add("fijo")
+                elif "movil" in modalidad:
+                    modalidades.add("movil 24h" if "24" in modalidad else "movil")
+                else:
+                    modalidades.add("general")
+
+            if re.search(
+                r"\b(?:no|nunca|tampoco|excepto|salvo|"
+                r"prohibid\w*|excluid\w*|rechaz\w*)\b",
+                fragmento,
+            ):
+                excluidos.update(modalidades)
+            elif re.search(
+                r"\b(?:deposit\w*|llev\w*|entreg\w*|"
+                r"admit\w*|acept\w*|destin\w*|"
+                r"tir\w*|ir|van?)\b",
+                fragmento,
+            ) and not re.search(
+                r"\b(?:quizas|probablemente|posiblemente|"
+                r"podria|podrian)\b",
+                fragmento,
+            ):
+                admitidos.update(modalidades)
+
+    return admitidos - excluidos
 
 
 def debe_buscar_puntos_automaticamente(estado: Mapping[str, Any]) -> bool:
-    """Activa cercanía para un destino limpio documentado CON coordenadas.
-
-    Solo se usa tras ejecutar residuos y verificar una clasificación.
-    """
+    """Activa búsquedas para destinos documentados y autorizados."""
     if estado.get("ubicacion") is None:
         return False
+
     consulta = normalizar_texto(str(estado.get("pedido") or ""))
-    if not re.search(r"\b(?:tir\w*|recicl\w*|deposit\w*|desech\w*|donde\s+van?)\b", consulta):
+
+    if not re.search(
+        r"\b(?:tir\w*|recicl\w*|deposit\w*|desech\w*|"
+        r"donde\s+van?)\b",
+        consulta,
+    ):
         return False
 
-    for datos in _evidencias(estado, "consultar_rag", "residuos"):
-        if not isinstance(datos, dict) or datos.get("abstencion") is not False:
-            continue
-        if not datos.get("fuentes"):
-            continue
-        respuesta = normalizar_texto(str(datos.get("respuesta") or ""))
-        if not re.search(r"\bpuntos?\s+limpios?\b", respuesta):
-            continue
-        # Evitar activar puntos a partir de una prohibición/negación.
-        if re.search(r"\b(?:no|nunca)\s+(?:(?:se|debe|van|va|al|en|a)\s+){0,4}(?:los?\s+)?puntos?\s+limpios?\b", respuesta):
-            continue
-        return True
-    return False
+    return bool(_destinos_documentados(estado))
 
 
 
 def tipo_punto_documentado(estado: Mapping[str, Any]) -> str:
-    """Filtra por una modalidad si el RAG documenta exactamente una.
+    """Selecciona un filtro compatible con el contrato geográfico."""
+    modalidades = _destinos_documentados(estado) - {"general"}
 
-    Una clasificación genérica o con varias modalidades mantiene 'todos'.
-    Las instalaciones nunca se inventan a partir de esta información.
-    """
-    modalidades: set[str] = set()
-    for datos in _evidencias(estado, "consultar_rag", "residuos"):
-        if not isinstance(datos, dict) or datos.get("abstencion") is not False:
-            continue
-        texto = normalizar_texto(str(datos.get("respuesta") or ""))
-        if not re.search(r"\bpuntos?\s+limpios?\b", texto):
-            continue
-        if re.search(r"\bpuntos?\s+limpios?\s+(?:movil|moviles)\b", texto):
-            modalidades.add("movil")
-        if re.search(r"\bpuntos?\s+limpios?\s+(?:fijo|fijos)\b", texto):
-            modalidades.add("fijo")
-        if re.search(r"\bpuntos?\s+limpios?\s+de\s+proximidad\b", texto):
-            modalidades.add("proximidad")
-    return next(iter(modalidades)) if len(modalidades) == 1 else "todos"
+    if len(modalidades) != 1:
+        return "todos"
+
+    modalidad = next(iter(modalidades))
+
+    return "todos" if modalidad == "movil 24h" else modalidad
 
 def _hora(estado: Mapping[str, Any]) -> datetime | None:
     for dato in _evidencias(estado, "hora_actual"):
@@ -153,7 +236,7 @@ def _hora(estado: Mapping[str, Any]) -> datetime | None:
         except ValueError:
             continue
         if instante.tzinfo is not None and instante.utcoffset() is not None:
-            return instante
+            return instante.astimezone(ZoneInfo("Europe/Madrid"))
     return None
 
 
@@ -345,24 +428,8 @@ def _situacion_punto(punto: Mapping[str, Any], instante: datetime) -> str:
 
 
 def _tipos_admitidos(estado: Mapping[str, Any]) -> set[str] | None:
-    """Extrae modalidades afirmadas en el RAG; no infiere compatibilidad."""
-    textos = []
-    for datos in _evidencias(estado, "consultar_rag", "residuos"):
-        if (isinstance(datos, dict) and datos.get("abstencion") is False
-                and datos.get("fuentes")):
-            textos.append(normalizar_texto(str(datos.get("respuesta") or "")))
-    if not textos:
-        return None
-    contenido = " ".join(textos)
-    tipos: set[str] = set()
-    if re.search(r"\bpuntos?\s+limpios?\s+de\s+proximidad\b", contenido):
-        tipos.add("proximidad")
-    if re.search(r"\bpuntos?\s+limpios?\s+fijos?\b", contenido):
-        tipos.add("fijo")
-    if re.search(r"\bpuntos?\s+limpios?\s+movil(?:es)?\b", contenido):
-        tipos.add("movil")
-    if re.search(r"\bpuntos?\s+limpios?\s+moviles?\s+24\s*h", contenido):
-        tipos.add("movil 24h")
+    """Devuelve las modalidades respaldadas documentalmente."""
+    tipos = _destinos_documentados(estado) - {"general"}
     return tipos or None
 
 
@@ -373,11 +440,27 @@ def _tipo_normalizado(punto: Mapping[str, Any]) -> str:
     if "fijo" in tipo:
         return "fijo"
     if "movil" in tipo:
-        if "24h" in tipo or "24 h" in tipo:
+        if re.search(r"\b24\s*h(?:oras?)?\b", tipo):
             return "movil 24h"
         return "movil"
     return "otro"
 
+def modalidades_solicitadas(pedido: str) -> set[str]:
+    """Identifica modalidades explícitas en la consulta del usuario."""
+    texto = normalizar_texto(pedido)
+    modalidades = set()
+
+    patron = (
+        r"\bpuntos?\s+limpios?\s+"
+        r"(de\s+proximidad|fijos?|"
+        r"movil(?:es)?(?:\s+(?:de\s+)?24\s*h(?:oras?)?)?)\b"
+    )
+
+    for coincidencia in re.finditer(patron, texto):
+        modalidad = coincidencia.group(1)
+        modalidades.add(_tipo_normalizado({"tipo": modalidad}))
+
+    return modalidades
 
 def priorizar_puntos(
     puntos: list[dict[str, Any]],
@@ -413,10 +496,12 @@ def _priorizar_abiertos(pedido: str) -> bool:
         r"\b(?:mas\s+cercan[oa]s?|ordenad\w*\s+por\s+distancia|"
         r"solo\s+por\s+distancia)\b", texto
     ))
-    pide_abierto = bool(re.search(
-        r"\b(?:abiert\w*|disponible\w*\s+ahora|puedo\s+ir\s+ahora|"
-        r"en\s+este\s+momento)\b", texto
-    ))
+
+    if referencia_no_actual(pedido):
+        return False
+
+    pide_abierto = consulta_disponibilidad_actual(pedido)
+
     return pide_abierto or not pide_mas_cercanos
 
 
@@ -427,8 +512,9 @@ def _horarios_documentales(
 
     Las frases abiertas de Gemini no se tratan como horarios verificados.
     """
-    consulta = normalizar_texto(str(estado.get("pedido") or ""))
-    if not re.search(r"\b(?:horarios?|abiert\w*|cerrad\w*|ahora|hoy)\b", consulta):
+    pedido = str(estado.get("pedido") or "")
+
+    if not consulta_disponibilidad_actual(pedido):
         return []
 
     salida = []
@@ -480,11 +566,18 @@ def _horarios_documentales(
     return salida[:5]
 
 
-def anexos_temporales(
-    estado: Mapping[str, Any]
-) -> tuple[str, list[dict[str, str]]]:
+def anexos_temporales(estado: Mapping[str, Any]) -> tuple[str, list[dict[str, str]]]:
     """Construye verificaciones sin LLM adicional ni horarios inventados."""
+    pedido = str(estado.get("pedido") or "")
+
+    if referencia_no_actual(pedido):
+        return (
+            "La disponibilidad para la fecha solicitada no se ha "
+            "verificado. Consulta los horarios documentados.",
+            [],
+        )
     instante = _hora(estado)
+
     if instante is None:
         if es_vidrio_envase_confirmado(estado) or _evidencias(
             estado, "buscar_puntos_limpios_cercanos", "puntos"
@@ -529,16 +622,30 @@ def anexos_temporales(
         preferir = _priorizar_abiertos(str(estado.get("pedido") or ""))
         # Solo se filtran modalidades si la clasificación ha sido respaldada
         # por las fuentes. Consultas genéricas sobre puntos no se filtran.
-        admitidos = _tipos_admitidos(estado) if estado.get("necesita_residuos") else None
+        admitidos = (
+            _tipos_admitidos(estado)
+            if estado.get("necesita_residuos")
+            else None
+        )
+        compatibilidad_confirmada = admitidos is not None
+        solicitados = modalidades_solicitadas(pedido)
+
+        if solicitados:
+            admitidos = (
+                solicitados
+                if admitidos is None
+                else admitidos & solicitados
+            )
         puntos = priorizar_puntos(
-            candidatos, instante,
+            candidatos, 
+            instante,
             preferir_abiertos=preferir,
             tipos_admitidos=admitidos,
         )
         if puntos:
             etiqueta = (
                 "Opciones de modalidades documentadas para el residuo"
-                if admitidos is not None else
+                if compatibilidad_confirmada else
                 "Instalaciones encontradas (aceptación del residuo no confirmada)"
             )
             if preferir:

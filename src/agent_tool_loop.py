@@ -31,6 +31,7 @@ from config import (
 from src.agent_prompts import PROMPT_PUNTOS, PROMPT_RESIDUOS
 from src.agent_schedule import (
     debe_buscar_puntos_automaticamente,
+    modalidades_solicitadas,
     requiere_hora,
     tipo_punto_documentado,
 )
@@ -225,21 +226,16 @@ def _consulta_temporal(pedido: str) -> bool:
     )
 
 
-def _tipo_geografico(pedido: str) -> str | None:
-    """Determina un filtro único aceptado por la API municipal."""
-    texto = normalizar_texto(pedido)
-    modalidades = set()
-    for tipo, patron in (
-        ("fijo", r"\bfij[oa]s?\b"),
-        ("movil", r"\bmovil(?:es)?\b"),
-        ("proximidad", r"\bde\s+proximidad\b"),
-    ):
-        if re.search(patron, texto):
-            modalidades.add(tipo)
+def _tipo_geografico(pedido: str) -> str:
+    """Selecciona un filtro admitido por la herramienta geográfica."""
+    modalidades = modalidades_solicitadas(pedido)
 
-    if len(modalidades) > 1 or re.search(r"\b24\s*h(?:oras?)?\b", texto):
-        return None
-    return modalidades.pop() if modalidades else "todos"
+    if len(modalidades) != 1:
+        return "todos"
+
+    modalidad = next(iter(modalidades))
+
+    return "todos" if modalidad == "movil 24h" else modalidad
 
 
 def _ruta_directa(
@@ -281,9 +277,11 @@ def _ruta_directa(
             return "", {}
 
         tipo = _tipo_geografico(pedido)
-        if tipo is None:
-            return None
-        if tipo == "todos" and estado.get("necesita_residuos"):
+
+        if (
+            not modalidades_solicitadas(pedido)
+            and estado.get("necesita_residuos")
+        ):
             tipo = tipo_punto_documentado(estado)
         return "buscar_puntos_limpios_cercanos", {"tipo": tipo}
 
