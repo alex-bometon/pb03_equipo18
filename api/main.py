@@ -1,4 +1,3 @@
-
 """Punto de entrada del backend HTTP de ReciclaTÍA."""
 
 from collections.abc import AsyncIterator
@@ -12,6 +11,7 @@ from api.middleware import (
     RequestMiddleware,
     configure_http_logging,
 )
+from api.security import create_dummy_password_hash
 from src.db import (
     check_database,
     create_db_engine,
@@ -55,6 +55,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
         app.state.engine = engine
 
+        try:
+            app.state.dummy_password_hash = create_dummy_password_hash(
+                settings.BCRYPT_ROUNDS,
+            )
+        except Exception:
+            raise RuntimeError(
+                "No se ha podido inicializar la seguridad."
+            ) from None
+
         configure_http_logging(settings.LOG_LEVEL)
 
         yield
@@ -71,6 +80,5 @@ app = FastAPI(
 )
 
 register_exception_handlers(app)
-
 
 app.add_middleware(RequestMiddleware)

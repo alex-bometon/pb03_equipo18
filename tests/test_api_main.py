@@ -31,10 +31,13 @@ def mock_db(monkeypatch):
     checker = Mock()
     initializer = Mock()
 
+    dummy_hash_creator = Mock(return_value="hash-ficticio-de-prueba")
+
     monkeypatch.setattr(api_main, "load_settings", loader)
     monkeypatch.setattr(api_main, "create_db_engine", creator)
     monkeypatch.setattr(api_main, "check_database", checker)
     monkeypatch.setattr(api_main, "ensure_schema", initializer)
+    monkeypatch.setattr(api_main, "create_dummy_password_hash", dummy_hash_creator)
 
     return {
         "settings": settings,
@@ -43,6 +46,7 @@ def mock_db(monkeypatch):
         "creator": creator,
         "checker": checker,
         "initializer": initializer,
+        "dummy_hash_creator": dummy_hash_creator,
     }
 
 
@@ -197,3 +201,40 @@ def test_application_request_id(
 
     assert UUID(request_id).version == 4
     assert str(UUID(request_id)) == request_id
+
+
+# =========================================================
+# INICIALIZACIÓN DE SEGURIDAD
+# =========================================================
+
+
+def test_dummy_hash_initialized(mock_db) -> None:
+    """Genera el hash auxiliar durante la inicialización."""
+    with TestClient(api_main.app) as client:
+        assert client.app.state.dummy_password_hash == (
+            "hash-ficticio-de-prueba"
+        )
+
+        client.get("/docs")
+        client.get("/openapi.json")
+
+    mock_db["dummy_hash_creator"].assert_called_once_with(
+        mock_db["settings"].BCRYPT_ROUNDS,
+    )
+
+
+def test_security_failure_prevents_startup(mock_db) -> None:
+    """Impide arrancar si falla la inicialización de seguridad."""
+    mock_db["dummy_hash_creator"].side_effect = RuntimeError(
+        "informacion-sensible-ficticia",
+    )
+
+    with pytest.raises(RuntimeError) as exc_info:
+        with TestClient(api_main.app):
+            pass
+
+    assert str(exc_info.value) == (
+        "No se ha podido inicializar la seguridad."
+    )
+
+    mock_db["engine"].dispose.assert_called_once()
