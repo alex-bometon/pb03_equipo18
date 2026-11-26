@@ -96,7 +96,7 @@ def translate_db_error(
     return ApiError(ErrorCode.INTERNAL_SERVER_ERROR)
 
 
-def _require_active_user(user: User) -> None:
+def require_active_user(user: User) -> None:
     """Comprueba que la cuenta puede realizar operaciones."""
     if not user.is_active or user.deleted_at is not None:
         raise ApiError(ErrorCode.USER_INACTIVE)
@@ -173,7 +173,7 @@ def login_user(
             if not verify_password(password, user.password_hash):
                 raise ApiError(ErrorCode.INVALID_CREDENTIALS)
 
-            _require_active_user(user)
+            require_active_user(user)
 
             user_id = user.id
             user_out = to_user_out(user)
@@ -235,7 +235,7 @@ def change_password(
                 raise ApiError(ErrorCode.INVALID_SESSION)
 
             session_store.get(token)
-            _require_active_user(user)
+            require_active_user(user)
 
             current_password = (
                 body.current_password.get_secret_value()
@@ -385,7 +385,7 @@ def issue_user_api_key(
                 raise ApiError(ErrorCode.INVALID_SESSION)
 
             session_store.get(token)
-            _require_active_user(user)
+            require_active_user(user)
 
             if (
                 body.role == ApiKeyRole.USER
@@ -476,7 +476,7 @@ def bootstrap_admin_api_key(
                 session.flush()
 
             else:
-                _require_active_user(user)
+                require_active_user(user)
 
                 if not verify_password(
                     password,

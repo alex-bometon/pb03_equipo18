@@ -14,7 +14,13 @@ from api.credential_validation import (
 )
 from api.error_catalog import ERROR_CATALOG, ErrorCode
 from api.errors import ApiError
-from api.request_context import REQUEST_ID_HEADER, get_request_id
+from api.request_context import (
+    API_KEY_CHALLENGE,
+    COMBINED_AUTH_CHALLENGE,
+    REQUEST_ID_HEADER,
+    SESSION_CHALLENGE,
+    get_request_id,
+)
 from api.schemas import ErrorOut
 from src.input_validation import (
     PreguntaDemasiadoLargaError,
@@ -207,6 +213,41 @@ def resolve_validation_error_code(
 # =========================================================
 
 
+def _resolve_auth_challenge(
+    request: Request,
+    code: ErrorCode,
+) -> str | None:
+    """Determina los esquemas de autenticación aplicables."""
+    if code not in {
+        ErrorCode.API_KEY_REQUIRED,
+        ErrorCode.INVALID_API_KEY,
+        ErrorCode.INVALID_SESSION,
+        ErrorCode.SESSION_EXPIRED,
+    }:
+        return None
+
+    challenge = getattr(
+        request.state,
+        "auth_challenge",
+        None,
+    )
+
+    if challenge in {
+        API_KEY_CHALLENGE,
+        SESSION_CHALLENGE,
+        COMBINED_AUTH_CHALLENGE,
+    }:
+        return challenge
+
+    if code in {
+        ErrorCode.INVALID_SESSION,
+        ErrorCode.SESSION_EXPIRED,
+    }:
+        return SESSION_CHALLENGE
+
+    return API_KEY_CHALLENGE
+
+
 def build_error_response(
     request: Request,
     code: ErrorCode,
@@ -227,6 +268,15 @@ def build_error_response(
     headers = {
         REQUEST_ID_HEADER: request_id,
     }
+
+    if definition.status_code == 401:
+        challenge = _resolve_auth_challenge(
+            request,
+            code,
+        )
+
+        if challenge is not None:
+            headers["WWW-Authenticate"] = challenge
 
     if (
         code == ErrorCode.RATE_LIMIT_EXCEEDED
