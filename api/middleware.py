@@ -4,14 +4,23 @@ import json
 import logging
 from datetime import datetime, timezone
 from time import perf_counter
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from tempfile import SpooledTemporaryFile
 
 from fastapi import Request
+from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import MutableHeaders
 from starlette.middleware.cors import CORSMiddleware
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from api.config import IMAGE_MULTIPART_OVERHEAD_BYTES
+from api.errors import ApiError
 from api.error_catalog import ErrorCode
-from api.exception_handlers import handle_unexpected_error
+from api.exception_handlers import (
+    handle_api_error,
+    handle_unexpected_error,
+)
 from api.request_context import REQUEST_ID_HEADER, get_request_id
 
 
@@ -107,6 +116,67 @@ def log_http_request(
     )
 
 
+@asynccontextmanager
+async def _cuerpo_limitado(
+    receive: Receive,
+    max_bytes: int,
+) -> AsyncIterator[Receive | None]:
+    """Recibe y reproduce un cuerpo HTTP de tamaño limitado."""
+    tamano_bloque = 64 * 1024
+
+    with SpooledTemporaryFile(max_size=tamano_bloque, mode="w+b") as temporal:
+        total = 0
+
+        while True:
+            mensaje = await receive()
+
+            if mensaje["type"] == "http.disconnect":
+                yield None
+                return
+
+            bloque = mensaje.get("body", b"")
+            total += len(bloque)
+
+            if total > max_bytes:
+                raise ApiError(ErrorCode.IMAGE_FILE_TOO_LARGE)
+
+            if bloque:
+                await run_in_threadpool(temporal.write, bloque)
+
+            if not mensaje.get("more_body", False):
+                break
+
+        await run_in_threadpool(temporal.seek, 0)
+        pendiente = total
+
+        async def reproducir() -> Message:
+            """Entrega el cuerpo validado a la aplicación interna."""
+            nonlocal pendiente
+
+            if pendiente is None:
+                return await receive()
+
+            bloque = await run_in_threadpool(
+                temporal.read,
+                min(pendiente, tamano_bloque),
+            )
+
+            pendiente -= len(bloque)
+            more_body = pendiente > 0
+
+            if not more_body:
+                pendiente = None
+                await run_in_threadpool(temporal.close)
+
+            return {
+                "type": "http.request",
+                "body": bloque,
+                "more_body": more_body,
+            }
+
+        yield reproducir
+
+
 class RequestMiddleware:
     """Gestiona la trazabilidad y las respuestas HTTP."""
 
@@ -154,13 +224,55 @@ class RequestMiddleware:
             inner_receive: Receive,
             inner_send: Send,
         ) -> None:
-            """Convierte los fallos anteriores a la respuesta."""
+            """Controla la recepción y los fallos de la aplicación."""
             try:
+                if (
+                    request.method == "POST"
+                    and inner_scope["path"] in {"/ask/image", "/ask/image/"}
+                ):
+                    max_bytes = (
+                        settings.IMAGE_UPLOAD_MAX_BYTES
+                        + IMAGE_MULTIPART_OVERHEAD_BYTES
+                    )
+
+                    longitud = request.headers.get("content-length")
+
+                    if longitud is not None:
+                        try:
+                            declarada = int(longitud)
+                        except ValueError:
+                            raise ApiError(ErrorCode.BAD_REQUEST) from None
+
+                        if declarada < 0:
+                            raise ApiError(ErrorCode.BAD_REQUEST)
+
+                        if declarada > max_bytes:
+                            raise ApiError(ErrorCode.IMAGE_FILE_TOO_LARGE)
+
+                    async with _cuerpo_limitado(
+                        inner_receive,
+                        max_bytes,
+                    ) as receptor:
+                        if receptor is None:
+                            return
+
+                        await self.app(inner_scope, receptor, inner_send)
+
+                    return
+
                 await self.app(
                     inner_scope,
                     inner_receive,
                     inner_send,
                 )
+
+            except ApiError as exc:
+                if response_started:
+                    raise
+
+                response = await handle_api_error(request, exc)
+
+                await response(inner_scope, inner_receive, inner_send)
 
             except Exception as exc:
                 if response_started:
@@ -171,11 +283,7 @@ class RequestMiddleware:
                     exc,
                 )
 
-                await response(
-                    inner_scope,
-                    inner_receive,
-                    inner_send,
-                )
+                await response(inner_scope, inner_receive, inner_send)
 
         try:
             settings = request.app.state.settings
@@ -190,10 +298,7 @@ class RequestMiddleware:
                     "Authorization",
                     "X-API-Key-Id",
                 ],
-                expose_headers=[
-                    REQUEST_ID_HEADER,
-                    "Retry-After",
-                ],
+                expose_headers=[REQUEST_ID_HEADER, "Retry-After"],
                 allow_credentials=False,
             )
 
@@ -215,11 +320,7 @@ class RequestMiddleware:
                     exc,
                 )
 
-                await response(
-                    scope,
-                    receive,
-                    send_with_context,
-                )
+                await response(scope, receive, send_with_context)
 
             except Exception:
                 raise RuntimeError(
@@ -229,8 +330,4 @@ class RequestMiddleware:
         finally:
             duration_ms = (perf_counter() - started_at) * 1000
 
-            log_http_request(
-                request,
-                status_code,
-                duration_ms,
-            )
+            log_http_request(request, status_code, duration_ms)

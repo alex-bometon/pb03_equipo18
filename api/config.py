@@ -26,14 +26,13 @@ from config import BASE_DIR, IMAGE_MAX_BYTES, IMAGE_MAX_PIXELS
 
 # Límites del contrato HTTP
 MAX_API_STEPS = 4
+IMAGE_MULTIPART_OVERHEAD_BYTES = 64 * 1024
 
 
 class ApiSettings(SecureBaseModel):
     """Parámetros de configuración del backend."""
 
-    model_config = ConfigDict(
-        frozen=True,
-    )
+    model_config = ConfigDict(frozen=True)
 
     # Servidor
     PORT: int = Field(default=8000, ge=1, le=65535)
@@ -133,9 +132,7 @@ class ApiSettings(SecureBaseModel):
         if value is None:
             return None
 
-        return SecretStr(
-            normalizar_email(value.get_secret_value()),
-        )
+        return SecretStr(normalizar_email(value.get_secret_value()))
 
     @field_validator("ADMIN_PASSWORD")
     @classmethod
@@ -167,9 +164,7 @@ class ApiSettings(SecureBaseModel):
             r"[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]",
             secret,
         ):
-            raise ValueError(
-                "Formato de API_KEY inválido.",
-            )
+            raise ValueError("Formato de API_KEY inválido.")
 
         return value
 
@@ -194,10 +189,7 @@ class ApiSettings(SecureBaseModel):
         except Exception:
             raise ValueError("DATABASE_URL inválida.") from None
 
-        if url.drivername not in {
-            "postgresql",
-            "postgresql+psycopg2",
-        }:
+        if url.drivername not in {"postgresql", "postgresql+psycopg2"}:
             raise ValueError("Se requiere una conexión PostgreSQL.")
 
         if not url.host or not url.database:
@@ -245,10 +237,7 @@ class ApiSettings(SecureBaseModel):
 
         return origins
 
-    @field_validator(
-        "USER_TIER_ALLOWED_USER_IDS",
-        mode="before",
-    )
+    @field_validator("USER_TIER_ALLOWED_USER_IDS", mode="before")
     @classmethod
     def parse_allowed_users(cls, value):
         """Convierte la lista de UUID autorizados."""
@@ -263,11 +252,7 @@ class ApiSettings(SecureBaseModel):
 
     def missing_admin_settings(self) -> tuple[str, ...]:
         """Identifica las credenciales administrativas ausentes."""
-        required = (
-            "ADMIN_EMAIL",
-            "ADMIN_PASSWORD",
-            "API_KEY",
-        )
+        required = ("ADMIN_EMAIL", "ADMIN_PASSWORD", "API_KEY")
 
         return tuple(
             name
@@ -277,10 +262,7 @@ class ApiSettings(SecureBaseModel):
 
     def missing_required_settings(self) -> tuple[str, ...]:
         """Identifica configuraciones imprescindibles ausentes."""
-        required = (
-            "DATABASE_URL",
-            "GEMINI_API_KEY",
-        )
+        required = ("DATABASE_URL", "GEMINI_API_KEY")
 
         missing = tuple(
             name
@@ -315,6 +297,4 @@ def load_settings() -> ApiSettings:
             })
         )
 
-        raise ValueError(
-            f"Configuración del backend inválida: {fields}"
-        ) from None
+        raise ValueError(f"Configuración del backend inválida: {fields}") from None
