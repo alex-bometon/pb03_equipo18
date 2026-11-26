@@ -16,7 +16,7 @@ from uuid import uuid4
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.output_parsers import JsonOutputParser
 
-from config import MAX_CONTEXTO_CARACTERES
+from config import AGENT_TOOLS_BY_ROLE, MAX_CONTEXTO_CARACTERES
 from src.agent_prompts import PROMPT_SINTESIS, PROMPT_SUPERVISOR
 from src.agent_routing import (
     requiere_llm_supervisor,
@@ -281,6 +281,23 @@ def _hay_fallo_bloqueante(estado: EstadoGrafo) -> bool:
             continue
 
         herramienta = traza.get("tool")
+
+        if traza.get("recuperado") is True:
+            continue
+
+        rol = traza.get("nodo")
+
+        if traza.get("causa") == "solicitud":
+            if herramienta not in AGENT_TOOLS_BY_ROLE.get(rol, ()):
+                continue
+
+            if any(
+                evidencia.get("rol") == rol
+                and evidencia.get("herramienta") == herramienta
+                for evidencia in estado["evidencias"]
+                if isinstance(evidencia, dict)
+            ):
+                continue
 
         if herramienta == "hora_actual":
             continue

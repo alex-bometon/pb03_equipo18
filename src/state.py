@@ -61,6 +61,8 @@ class TrazaTool(TypedDict, total=False):
     status: str
     fuente: str | None
     preview: str
+    causa: Literal["solicitud", "presupuesto", "ejecucion"]
+    recuperado: bool
 
 
 class RegistroTurno(TypedDict):

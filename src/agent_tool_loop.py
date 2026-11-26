@@ -334,6 +334,7 @@ class _RegistroEjecucion:
         self.total = estado["tool_calls_turno"]
         self.llamadas_rol = 0
         self.cache: dict[str, dict[str, Any]] = {}
+        self.fallos_pendientes: dict[str, list[int]] = {}
 
         identificacion = estado.get("identificacion_imagen")
 
@@ -356,6 +357,9 @@ class _RegistroEjecucion:
         resultado: dict[str, Any],
         *,
         cache: bool = False,
+        causa: Literal[
+            "solicitud", "presupuesto", "ejecucion"
+        ] = "ejecucion",
     ) -> tuple[str, str]:
         """Registra datos estructurados y produce respuesta del tool."""
         ok = resultado["ok"]
@@ -417,6 +421,11 @@ class _RegistroEjecucion:
                 nombre, resultado
             )[:TRACE_PREVIEW_MAX_CHARS],
         })
+
+        if not ok:
+            self.trazas[-1]["causa"] = causa
+            self.trazas[-1]["recuperado"] = False
+
         self.log = agregar_evento(
             self.log,
             nodo=self.rol,
@@ -474,7 +483,13 @@ class _RegistroEjecucion:
                 "datos": None,
                 "error": fallo,
             }
-            return self._registrar(nombre, identificador, paso, resultado)
+            return self._registrar(
+                nombre,
+                identificador,
+                paso,
+                resultado,
+                causa="solicitud",
+            )
 
         llave = json.dumps(
             {"nombre": nombre, "args": argumentos},
@@ -501,7 +516,13 @@ class _RegistroEjecucion:
                 "datos": None,
                 "error": "Error: presupuesto de herramientas agotado.",
             }
-            return self._registrar(nombre, identificador, paso, resultado)
+            return self._registrar(
+                nombre,
+                identificador,
+                paso,
+                resultado,
+                causa="presupuesto",
+            )
 
         self.llamadas_rol += 1
         self.total += 1
@@ -510,6 +531,12 @@ class _RegistroEjecucion:
 
         if resultado["ok"]:
             self.cache[llave] = resultado
+
+            for indice in self.fallos_pendientes.pop(llave, []):
+                self.trazas[indice]["recuperado"] = True
+
+        else:
+            self.fallos_pendientes.setdefault(llave, []).append(len(self.trazas))
 
         return self._registrar(nombre, identificador, paso, resultado)
 
