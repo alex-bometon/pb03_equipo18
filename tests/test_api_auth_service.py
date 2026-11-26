@@ -3617,3 +3617,135 @@ def test_admin_modify_unknown_resource(
             )
 
     assert exc_info.value.code == code
+
+
+# Concurrencia entre operaciones ordinarias y administrativas
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("reactivate", [False, True])
+def test_concurrent_key_management(
+    clean_db: Engine,
+    registered_user: UserOut,
+    registered_token: str,
+    auth_store: SessionStore,
+    issue_settings: ApiSettings,
+    admin_context: AuthContext,
+    admin_settings: ApiSettings,
+    monkeypatch: pytest.MonkeyPatch,
+    reactivate: bool,
+) -> None:
+    """Impide superar el límite mediante operaciones concurrentes."""
+    user_id = registered_user.id
+    key_id: UUID | None = None
+
+    if reactivate:
+        key = _admin_issue(
+            clean_db, admin_context, admin_settings, user_id,
+        )
+        key_id = key.id
+        auth_service.update_api_key_status(
+            clean_db, admin_context, key_id,
+            ActiveStatusIn(is_active=False), settings=admin_settings,
+        )
+
+    barrier = Barrier(2, timeout=5)
+    original_lookup = db.get_user_by_id
+
+    def synchronized_lookup(
+        session: Session, target_id: UUID, *, for_update: bool = False,
+    ) -> User | None:
+        """Sincroniza los intentos de bloquear al propietario."""
+        if for_update and target_id == user_id:
+            barrier.wait()
+        return original_lookup(session, target_id, for_update=for_update)
+
+    monkeypatch.setattr(db, "get_user_by_id", synchronized_lookup)
+
+    def compete(administrative: bool) -> ErrorCode | None:
+        """Intenta ocupar la última plaza disponible."""
+        try:
+            if not administrative:
+                _issue_registered(
+                    clean_db, auth_store, registered_token, issue_settings,
+                )
+            elif key_id is not None:
+                auth_service.update_api_key_status(
+                    clean_db, admin_context, key_id,
+                    ActiveStatusIn(is_active=True), settings=admin_settings,
+                )
+            else:
+                _admin_issue(
+                    clean_db, admin_context, admin_settings, user_id,
+                )
+        except ApiError as exc:
+            return exc.code
+        return None
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        ordinary = pool.submit(compete, False)
+        administrative = pool.submit(compete, True)
+        results = [ordinary.result(timeout=15),
+                   administrative.result(timeout=15)]
+
+    assert results.count(None) == 1
+    assert results.count(ErrorCode.API_KEY_LIMIT_REACHED) == 1
+
+    with Session(clean_db) as session:
+        assert db.count_active_api_keys(
+            session, user_id, ApiKeyRole.FREE,
+        ) == 1
+
+
+@pytest.mark.integration
+def test_concurrent_login_and_user_deactivation(
+    clean_db: Engine,
+    registered_user: UserOut,
+    registered_token: str,
+    auth_store: SessionStore,
+    dummy_hash: str,
+    admin_context: AuthContext,
+    admin_settings: ApiSettings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Invalida las sesiones creadas durante una desactivación."""
+    user_id = registered_user.id
+    barrier = Barrier(2, timeout=5)
+    original_by_email = db.get_user_by_email
+    original_by_id = db.get_user_by_id
+
+    def login_lookup(
+        session: Session, email: str, *, for_update: bool = False,
+    ) -> User | None:
+        """Detiene el login después de bloquear al usuario."""
+        user = original_by_email(session, email, for_update=for_update)
+        if for_update and email == registered_user.email:
+            barrier.wait()
+        return user
+
+    def admin_lookup(
+        session: Session, target_id: UUID, *, for_update: bool = False,
+    ) -> User | None:
+        """Sincroniza la desactivación antes de adquirir el bloqueo."""
+        if for_update and target_id == user_id:
+            barrier.wait()
+        return original_by_id(session, target_id, for_update=for_update)
+
+    monkeypatch.setattr(db, "get_user_by_email", login_lookup)
+    monkeypatch.setattr(db, "get_user_by_id", admin_lookup)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        login = pool.submit(_login, clean_db, auth_store, dummy_hash)
+        deactivation = pool.submit(
+            auth_service.update_user_status,
+            clean_db, auth_store, admin_context, user_id,
+            ActiveStatusIn(is_active=False), settings=admin_settings,
+        )
+        login_result = login.result(timeout=15)
+        user_result = deactivation.result(timeout=15)
+
+    assert user_result.is_active is False
+    _assert_invalid_session(auth_store, registered_token)
+    _assert_invalid_session(auth_store, login_result.session_token)
+
+
