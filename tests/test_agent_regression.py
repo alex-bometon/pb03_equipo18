@@ -225,7 +225,7 @@ def test_clasificacion_directa_y_aprobacion(aislado):
     assert herramienta.call_args.args[0] == "consultar_rag"
     assert len(estado["fuentes"]) == 1
 
-    estado = aprobar_plan(hilo, True, estado)
+    estado = aprobar_plan(hilo, True, approval_id=estado["approval_id"])
 
     assert estado["done"] is True
     assert estado["pendiente_hitl"] is False
@@ -249,7 +249,7 @@ def test_rechazo_y_reformulacion(aislado):
         hilo,
     )
 
-    estado = aprobar_plan(hilo, False, estado)
+    estado = aprobar_plan(hilo, False, approval_id=estado["approval_id"])
 
     assert estado["done"] is False
     assert estado["pendiente_hitl"] is False
@@ -306,7 +306,7 @@ def test_limite_turnos_tras_rechazo(aislado):
         hilo,
     )
 
-    estado = aprobar_plan(hilo, False, estado)
+    estado = aprobar_plan(hilo, False, approval_id=estado["approval_id"])
 
     with pytest.raises(ValueError, match="límite de turnos"):
         procesar_turno(

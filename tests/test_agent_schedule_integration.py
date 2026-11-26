@@ -62,7 +62,7 @@ def test_vidrio_consulta_rag_y_hora_y_pausa_hitl(entorno):
     assert llamadas == [("consultar_rag", "residuos"), ("hora_actual", "residuos")]
     assert "NO está permitido" in estado["respuesta"]
     assert estado["tool_calls_turno"] == 2
-    final = aprobar_plan(hilo, True, estado)
+    final = aprobar_plan(hilo, True, approval_id=estado["approval_id"])
     assert final["done"] and not final["pendiente_hitl"]
 
 

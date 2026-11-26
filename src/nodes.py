@@ -12,6 +12,7 @@ import re
 from copy import deepcopy
 from math import isfinite
 from typing import Any
+from uuid import uuid4
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.output_parsers import JsonOutputParser
@@ -115,6 +116,7 @@ def supervisor(estado: EstadoGrafo) -> dict[str, Any]:
         "necesita_residuos": decision["necesita_residuos"],
         "necesita_puntos": decision["necesita_puntos"],
         "siguiente": decision["siguiente"],
+        "pendiente_hitl": decision["siguiente"] == "FINISH",
         "iteracion": estado["iteracion"] + 1,
         "log": agregar_evento(
             estado["log"],
@@ -587,6 +589,7 @@ def sintetizar(estado: EstadoGrafo) -> dict[str, Any]:
         "limitaciones": limitaciones,
         "plan_aprobado": None,
         "pendiente_hitl": False,
+        "approval_id": str(uuid4()),
         "done": False,
         "log": agregar_evento(
             estado["log"],
@@ -614,6 +617,7 @@ def aplicar(estado: EstadoGrafo) -> dict[str, Any]:
     cambios: dict[str, Any] = {
         "done": aprobado,
         "pendiente_hitl": False,
+        "approval_id": None,
         "historial_turnos": historial,
         "log": agregar_evento(
             estado["log"],

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from typing import Any
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from src.graph import (
     config_hilo,
@@ -20,6 +20,7 @@ from src.graph import (
 from src.input_validation import validar_pregunta
 from src.state import (
     EstadoProducto,
+    IdentificacionImagen,
     Ubicacion,
     crear_estado_producto,
     estado_desde_grafo,
@@ -79,7 +80,7 @@ def _valores_checkpoint(snapshot: Any) -> Mapping[str, Any]:
 
 def _estado_actual(
     thread_id: str,
-    base: EstadoProducto,
+    base: EstadoProducto | None = None,
 ) -> EstadoProducto:
     """Construye el estado público desde el checkpoint real."""
 
@@ -106,6 +107,7 @@ def procesar_turno(
     max_steps: int | None = None,
     ubicacion: Ubicacion | None = None,
     ruta_imagen: str | None = None,
+    identificacion_imagen: IdentificacionImagen | None = None,
 ) -> EstadoProducto:
     """Ejecuta una consulta hasta el HITL o un fallo técnico.
 
@@ -118,6 +120,21 @@ def procesar_turno(
     # Reutilizamos la validación existente del RAG.
     # Una entrada vacía o inválida no ejecuta el grafo.
     mensaje = validar_pregunta(mensaje)
+
+    if ruta_imagen is not None and identificacion_imagen is not None:
+        raise ValueError(
+            "No se puede proporcionar una ruta y una identificación."
+        )
+
+    if identificacion_imagen is not None:
+        if (
+            not isinstance(identificacion_imagen, dict)
+            or set(identificacion_imagen) != {"estado", "descripcion"}
+            or identificacion_imagen["estado"] != "allowed"
+            or not isinstance(identificacion_imagen["descripcion"], str)
+            or not identificacion_imagen["descripcion"].strip()
+        ):
+            raise ValueError("Identificación visual inválida.")
 
     app = get_app()
     snapshot = app.get_state(configuracion)
@@ -162,6 +179,7 @@ def procesar_turno(
         max_steps=max_steps,
         ubicacion=ubicacion,
         ruta_imagen=ruta_imagen,
+        identificacion_imagen=identificacion_imagen,
     )
 
     # -----------------------------------------------------
@@ -239,7 +257,8 @@ def procesar_turno(
 def aprobar_plan(
     thread_id: str,
     aprobado: bool,
-    estado: EstadoProducto,
+    *,
+    approval_id: str,
 ) -> EstadoProducto:
     """Registra la decisión humana y reanuda el checkpoint.
 
@@ -247,12 +266,18 @@ def aprobar_plan(
     está realmente detenido antes del nodo aplicar.
     """
 
-    configuracion = _validar_hilo(estado, thread_id)
+    configuracion = config_hilo(thread_id)
 
     if type(aprobado) is not bool:
-        raise ValueError(
-            "La decisión debe ser True o False."
-        )
+        raise ValueError("La decisión debe ser True o False.")
+    
+    if not isinstance(approval_id, str):
+        raise ValueError("Identificador de aprobación inválido.")
+
+    try:
+        UUID(approval_id)
+    except ValueError as exc:
+        raise ValueError("Identificador de aprobación inválido.") from exc
 
     app = get_app()
 
@@ -285,33 +310,24 @@ def aprobar_plan(
 
     # Evita que una interfaz desactualizada apruebe
     # un plan distinto del almacenado en LangGraph.
-    if estado.get("plan") != plan:
+    if datos.get("approval_id") != approval_id:
         raise ValueError(
-            "El plan mostrado no coincide con "
-            "el estado actual de la conversación."
+            "La aprobación no corresponde a la propuesta pendiente."
         )
 
     if datos.get("done") is True:
-        raise ValueError(
-            "El plan ya figura como completado."
-        )
+        raise ValueError("El plan ya figura como completado.")
 
     # -----------------------------------------------------
     # ACTUALIZAR EL CHECKPOINT Y REANUDAR
     # -----------------------------------------------------
 
     try:
-        app.update_state(
-            configuracion,
-            {"plan_aprobado": aprobado},
-        )
+        app.update_state(configuracion, {"plan_aprobado": aprobado})
 
         # Continúa desde la interrupción estática
         # anterior a aplicar, sin empezar un turno nuevo.
-        app.invoke(
-            None,
-            config=configuracion,
-        )
+        app.invoke(None, config=configuracion)
 
     except Exception as exc:
         raise RuntimeError(
@@ -325,10 +341,7 @@ def aprobar_plan(
 
     snapshot_final = app.get_state(configuracion)
 
-    resultado = _estado_actual(
-        thread_id,
-        estado,
-    )
+    resultado = _estado_actual(thread_id)
 
     historial = resultado.get("historial_turnos", [])
 
@@ -373,15 +386,11 @@ def run_demo(
     """
 
     if type(auto_aprobar) is not bool:
-        raise ValueError(
-            "auto_aprobar debe ser True o False."
-        )
+        raise ValueError("auto_aprobar debe ser True o False.")
 
     thread_id = nuevo_thread_id()
 
-    estado = crear_estado_producto(
-        thread_id=thread_id,
-    )
+    estado = crear_estado_producto(thread_id=thread_id)
 
     resultado = procesar_turno(
         estado,
@@ -391,11 +400,18 @@ def run_demo(
         ruta_imagen=ruta_imagen,
     )
 
-    if auto_aprobar and resultado["pendiente_hitl"]:
+    approval_id = resultado["approval_id"]
+
+    if (
+        auto_aprobar
+        and resultado["pendiente_hitl"]
+        and resultado["error"] is None
+        and approval_id is not None
+    ):
         resultado = aprobar_plan(
-            thread_id,
-            True,
-            resultado,
+            thread_id=thread_id,
+            aprobado=True,
+            approval_id=approval_id,
         )
 
     return resultado
