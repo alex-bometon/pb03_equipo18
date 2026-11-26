@@ -16,6 +16,7 @@ def to_user_out(user: User) -> UserOut:
         email=user.email,
         created_at=user.created_at,
         is_active=user.is_active,
+        deleted_at=user.deleted_at,
     )
 
 

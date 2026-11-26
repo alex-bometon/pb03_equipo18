@@ -101,6 +101,7 @@ def test_to_user_out(usuario: User) -> None:
         "email": usuario.email,
         "created_at": CREATED_AT_UTC,
         "is_active": True,
+        "deleted_at": None,
     }
 
 
@@ -328,5 +329,31 @@ def test_to_message_out_rechaza_contenido_vacio(
 
     with pytest.raises(ValidationError):
         to_message_out(mensaje)
+
+
+def test_to_user_out_usuario_eliminado(
+    usuario: User,
+) -> None:
+    """Conserva la información de eliminación lógica."""
+    usuario.is_active = False
+    usuario.deleted_at = CREATED_AT
+
+    resultado = to_user_out(usuario)
+
+    assert resultado.is_active is False
+
+    assert resultado.model_dump(mode="json")[
+        "deleted_at"
+    ] == CREATED_AT_UTC
+
+
+def test_to_user_out_rechaza_estado_invalido(
+    usuario: User,
+) -> None:
+    """Rechaza usuarios eliminados que permanecen activos."""
+    usuario.deleted_at = CREATED_AT
+
+    with pytest.raises(ValidationError):
+        to_user_out(usuario)
 
 

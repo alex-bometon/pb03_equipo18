@@ -4,7 +4,7 @@ from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier, Event
 from types import SimpleNamespace
 from unittest.mock import Mock
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 from sqlalchemy.engine import Engine
@@ -21,7 +21,10 @@ import api.security as security
 from api.config import ApiSettings
 from api.error_catalog import ErrorCode
 from api.errors import ApiError
+from api.request_context import AuthContext
 from api.schemas import (
+    ActiveStatusIn,
+    AdminApiKeyCreateIn,
     ApiKeyCreatedOut,
     ApiKeyCreateIn,
     IssuableApiKeyRole,
@@ -2240,3 +2243,1377 @@ def test_admin_bootstrap_rollback(
     with Session(clean_db) as session:
         assert db.list_users(session) == []
         assert db.list_api_keys(session) == []
+
+
+# =========================================================
+# INFRAESTRUCTURA DE ADMINISTRACIÓN
+# =========================================================
+
+
+@pytest.fixture
+def admin_context(
+    clean_db: Engine,
+    admin_settings: ApiSettings,
+) -> AuthContext:
+    """Aprovisiona un administrador exclusivo de pruebas."""
+    auth_service.bootstrap_admin_api_key(
+        clean_db,
+        admin_settings,
+    )
+
+    assert admin_settings.API_KEY is not None
+
+    key_hash = hash_secret(
+        admin_settings.API_KEY.get_secret_value(),
+    )
+
+    with Session(clean_db) as session:
+        api_key = db.get_api_key_by_hash(
+            session,
+            key_hash,
+        )
+
+        assert api_key is not None
+        assert api_key.user_id is not None
+
+        return AuthContext(
+            user_id=api_key.user_id,
+            api_key_id=api_key.id,
+            role=api_key.role,
+        )
+
+
+def _admin_issue(
+    engine: Engine,
+    context: AuthContext,
+    settings: ApiSettings,
+    user_id: UUID | None,
+    *,
+    role: IssuableApiKeyRole = ApiKeyRole.FREE,
+) -> ApiKeyCreatedOut:
+    """Emite una credencial mediante el servicio administrativo."""
+    return auth_service.issue_admin_api_key(
+        engine,
+        context,
+        AdminApiKeyCreateIn(
+            role=role,
+            user_id=user_id,
+        ),
+        settings=settings,
+    )
+
+
+def _assert_invalid_session(
+    store: SessionStore,
+    token: str,
+) -> None:
+    """Comprueba que una sesión ha sido invalidada."""
+    with pytest.raises(ApiError) as exc_info:
+        store.get(token)
+
+    assert exc_info.value.code == ErrorCode.INVALID_SESSION
+
+
+# =========================================================
+# CONSULTA DE CUENTA Y CIERRE DE SESIÓN
+# =========================================================
+
+
+@pytest.mark.integration
+def test_get_user_profile(
+    clean_db: Engine,
+    auth_store: SessionStore,
+    registered_user: UserOut,
+    registered_token: str,
+) -> None:
+    """Recupera únicamente los datos públicos de la cuenta."""
+    profile = auth_service.get_user_profile(
+        clean_db,
+        auth_store,
+        registered_token,
+    )
+
+    assert profile == registered_user
+    assert profile.deleted_at is None
+
+    assert "password_hash" not in profile.model_dump()
+
+
+@pytest.mark.integration
+def test_logout_preserves_other_credentials(
+    clean_db: Engine,
+    auth_store: SessionStore,
+    registered_user: UserOut,
+    registered_token: str,
+    issue_settings: ApiSettings,
+) -> None:
+    """Invalida únicamente la sesión utilizada para salir."""
+    second_token, _ = auth_store.create(registered_user.id)
+
+    api_key = _issue_registered(
+        clean_db,
+        auth_store,
+        second_token,
+        issue_settings,
+    )
+
+    auth_service.logout_user(
+        clean_db,
+        auth_store,
+        registered_token,
+    )
+
+    _assert_invalid_session(auth_store, registered_token)
+
+    assert auth_store.get(second_token).user_id == (
+        registered_user.id
+    )
+
+    with Session(clean_db) as session:
+        key = db.get_api_key_by_id(session, api_key.id)
+        user = db.get_user_by_id(
+            session,
+            registered_user.id,
+        )
+
+        assert key is not None
+        assert key.is_active is True
+        assert user is not None
+        assert user.is_active is True
+
+
+@pytest.mark.parametrize(
+    "operation",
+    [
+        auth_service.get_user_profile,
+        auth_service.logout_user,
+    ],
+)
+def test_account_invalid_session(
+    auth_store: SessionStore,
+    operation,
+) -> None:
+    """Rechaza las operaciones con un token desconocido."""
+    with pytest.raises(ApiError) as exc_info:
+        operation(
+            Mock(spec=Engine),
+            auth_store,
+            security.generate_secret(),
+        )
+
+    assert exc_info.value.code == ErrorCode.INVALID_SESSION
+
+
+# =========================================================
+# CONSULTAS ADMINISTRATIVAS
+# =========================================================
+
+
+@pytest.mark.integration
+def test_admin_user_queries(
+    clean_db: Engine,
+    admin_context: AuthContext,
+    registered_user: UserOut,
+) -> None:
+    """Recupera todos los usuarios sin revelar hashes."""
+    users = auth_service.list_admin_users(
+        clean_db,
+        admin_context,
+    )
+
+    assert {user.id for user in users} == {
+        admin_context.user_id,
+        registered_user.id,
+    }
+
+    user = auth_service.get_admin_user(
+        clean_db,
+        admin_context,
+        registered_user.id,
+    )
+
+    assert user == registered_user
+    assert "password_hash" not in user.model_dump()
+
+
+@pytest.mark.integration
+def test_admin_key_queries(
+    clean_db: Engine,
+    admin_context: AuthContext,
+    admin_settings: ApiSettings,
+    registered_user: UserOut,
+) -> None:
+    """Recupera todas las claves sin revelar credenciales."""
+    created = _admin_issue(
+        clean_db,
+        admin_context,
+        admin_settings,
+        registered_user.id,
+    )
+
+    keys = auth_service.list_admin_api_keys(
+        clean_db,
+        admin_context,
+    )
+
+    assert {key.id for key in keys} == {
+        admin_context.api_key_id,
+        created.id,
+    }
+
+    key = auth_service.get_admin_api_key(
+        clean_db,
+        admin_context,
+        created.id,
+    )
+
+    assert key.id == created.id
+    assert "key_hash" not in key.model_dump()
+    assert "api_key" not in key.model_dump()
+    assert created.api_key not in key.model_dump_json()
+
+
+@pytest.mark.parametrize(
+    "role",
+    [None, ApiKeyRole.FREE, ApiKeyRole.USER],
+)
+def test_admin_queries_require_admin(
+    role: ApiKeyRole | None,
+) -> None:
+    """Rechaza identidades sin autorización administrativa."""
+    context = AuthContext(
+        user_id=uuid4(),
+        api_key_id=uuid4() if role is not None else None,
+        role=role,
+    )
+
+    engine = Mock(spec=Engine)
+
+    for operation in (
+        auth_service.list_admin_users,
+        auth_service.list_admin_api_keys,
+    ):
+        with pytest.raises(ApiError) as exc_info:
+            operation(engine, context)
+
+        assert exc_info.value.code == (
+            ErrorCode.INSUFFICIENT_PERMISSIONS
+        )
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    ("operation", "code"),
+    [
+        (
+            auth_service.get_admin_user,
+            ErrorCode.USER_NOT_FOUND,
+        ),
+        (
+            auth_service.get_admin_api_key,
+            ErrorCode.API_KEY_NOT_FOUND,
+        ),
+    ],
+)
+def test_admin_unknown_resource(
+    clean_db: Engine,
+    admin_context: AuthContext,
+    operation,
+    code: ErrorCode,
+) -> None:
+    """Distingue los recursos administrativos inexistentes."""
+    with pytest.raises(ApiError) as exc_info:
+        operation(
+            clean_db,
+            admin_context,
+            uuid4(),
+        )
+
+    assert exc_info.value.code == code
+
+
+# =========================================================
+# EMISIÓN ADMINISTRATIVA
+# =========================================================
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    ("role", "registered"),
+    [
+        (ApiKeyRole.FREE, False),
+        (ApiKeyRole.FREE, True),
+        (ApiKeyRole.USER, True),
+    ],
+)
+def test_admin_issue_key(
+    clean_db: Engine,
+    admin_context: AuthContext,
+    admin_settings: ApiSettings,
+    registered_user: UserOut,
+    role: IssuableApiKeyRole,
+    registered: bool,
+) -> None:
+    """Emite las modalidades administrativas autorizadas."""
+    user_id = registered_user.id if registered else None
+
+    result = _admin_issue(
+        clean_db,
+        admin_context,
+        admin_settings,
+        user_id,
+        role=role,
+    )
+
+    assert result.user_id == user_id
+    assert result.role == role
+    assert result.is_active is True
+
+    with Session(clean_db) as session:
+        key = db.get_api_key_by_id(session, result.id)
+
+        assert key is not None
+        assert key.key_hash == hash_secret(result.api_key)
+        assert key.key_hash != result.api_key
+
+
+@pytest.mark.integration
+def test_admin_issue_does_not_grant_user_tier(
+    clean_db: Engine,
+    admin_context: AuthContext,
+    admin_settings: ApiSettings,
+    registered_user: UserOut,
+    auth_store: SessionStore,
+    registered_token: str,
+) -> None:
+    """Emitir una clave User no modifica la allowlist."""
+    result = _admin_issue(
+        clean_db,
+        admin_context,
+        admin_settings,
+        registered_user.id,
+        role=ApiKeyRole.USER,
+    )
+
+    assert result.role == ApiKeyRole.USER
+
+    assert registered_user.id not in (
+        admin_settings.USER_TIER_ALLOWED_USER_IDS
+    )
+
+    with pytest.raises(ApiError) as exc_info:
+        _issue_registered(
+            clean_db,
+            auth_store,
+            registered_token,
+            admin_settings,
+            role=ApiKeyRole.USER,
+        )
+
+    assert exc_info.value.code == (
+        ErrorCode.USER_TIER_NOT_AUTHORIZED
+    )
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    ("role", "limit"),
+    [
+        (ApiKeyRole.FREE, 1),
+        (ApiKeyRole.USER, 5),
+    ],
+)
+def test_admin_issue_respects_limit(
+    clean_db: Engine,
+    admin_context: AuthContext,
+    admin_settings: ApiSettings,
+    registered_user: UserOut,
+    role: IssuableApiKeyRole,
+    limit: int,
+) -> None:
+    """Aplica los mismos límites que la emisión ordinaria."""
+    for _ in range(limit):
+        _admin_issue(
+            clean_db,
+            admin_context,
+            admin_settings,
+            registered_user.id,
+            role=role,
+        )
+
+    with pytest.raises(ApiError) as exc_info:
+        _admin_issue(
+            clean_db,
+            admin_context,
+            admin_settings,
+            registered_user.id,
+            role=role,
+        )
+
+    assert exc_info.value.code == ErrorCode.API_KEY_LIMIT_REACHED
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    ("state", "code"),
+    [
+        ("unknown", ErrorCode.USER_NOT_FOUND),
+        ("inactive", ErrorCode.USER_INACTIVE),
+        ("deleted", ErrorCode.USER_DELETED),
+    ],
+)
+def test_admin_issue_invalid_recipient(
+    clean_db: Engine,
+    admin_context: AuthContext,
+    admin_settings: ApiSettings,
+    registered_user: UserOut,
+    state: str,
+    code: ErrorCode,
+) -> None:
+    """Rechaza destinatarios administrativos no autorizados."""
+    user_id = registered_user.id
+
+    if state == "unknown":
+        user_id = uuid4()
+
+    else:
+        with Session(clean_db) as session:
+            user = db.get_user_by_id(session, user_id)
+
+            assert user is not None
+
+            if state == "deleted":
+                db.delete_user(user)
+
+            else:
+                db.set_user_active(user, False)
+
+            session.commit()
+
+    with pytest.raises(ApiError) as exc_info:
+        _admin_issue(
+            clean_db,
+            admin_context,
+            admin_settings,
+            user_id,
+        )
+
+    assert exc_info.value.code == code
+
+    with Session(clean_db) as session:
+        assert len(db.list_api_keys(session)) == 1
+
+
+# =========================================================
+# ADMINISTRACIÓN Y REVOCACIÓN DE USUARIOS
+# =========================================================
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("deleted", [False, True])
+def test_admin_revoke_user(
+    clean_db: Engine,
+    admin_context: AuthContext,
+    admin_settings: ApiSettings,
+    registered_user: UserOut,
+    auth_store: SessionStore,
+    registered_token: str,
+    deleted: bool,
+) -> None:
+    """Revoca las sesiones sin alterar las claves individuales."""
+    user_id = registered_user.id
+
+    second_token, _ = auth_store.create(user_id)
+
+    assert admin_context.user_id is not None
+
+    admin_token, _ = auth_store.create(admin_context.user_id)
+
+    free_key = _admin_issue(
+        clean_db,
+        admin_context,
+        admin_settings,
+        user_id,
+    )
+
+    user_key = _admin_issue(
+        clean_db,
+        admin_context,
+        admin_settings,
+        user_id,
+        role=ApiKeyRole.USER,
+    )
+
+    auth_service.update_api_key_status(
+        clean_db,
+        admin_context,
+        user_key.id,
+        ActiveStatusIn(is_active=False),
+        settings=admin_settings,
+    )
+
+    if deleted:
+        auth_service.delete_user_account(
+            clean_db,
+            auth_store,
+            admin_context,
+            user_id,
+            settings=admin_settings,
+        )
+
+    else:
+        auth_service.update_user_status(
+            clean_db,
+            auth_store,
+            admin_context,
+            user_id,
+            ActiveStatusIn(is_active=False),
+            settings=admin_settings,
+        )
+
+    _assert_invalid_session(auth_store, registered_token)
+    _assert_invalid_session(auth_store, second_token)
+
+    assert auth_store.get(admin_token).user_id == (
+        admin_context.user_id
+    )
+
+    result = auth_service.get_admin_user(
+        clean_db,
+        admin_context,
+        user_id,
+    )
+
+    assert result.is_active is False
+    assert (result.deleted_at is not None) == deleted
+
+    with Session(clean_db) as session:
+        free = db.get_api_key_by_id(session, free_key.id)
+        user = db.get_api_key_by_id(session, user_key.id)
+
+        assert free is not None
+        assert user is not None
+
+        assert free.is_active is True
+        assert user.is_active is False
+
+        assert free.deleted_at is None
+        assert user.deleted_at is None
+
+        assert free.user_id == user_id
+        assert user.user_id == user_id
+
+
+@pytest.mark.integration
+def test_admin_reactivate_user(
+    clean_db: Engine,
+    admin_context: AuthContext,
+    admin_settings: ApiSettings,
+    registered_user: UserOut,
+    auth_store: SessionStore,
+    registered_token: str,
+    dummy_hash: str,
+) -> None:
+    """Reactiva la cuenta sin recuperar sesiones invalidadas."""
+    user_id = registered_user.id
+
+    key = _admin_issue(
+        clean_db,
+        admin_context,
+        admin_settings,
+        user_id,
+    )
+
+    auth_service.update_api_key_status(
+        clean_db,
+        admin_context,
+        key.id,
+        ActiveStatusIn(is_active=False),
+        settings=admin_settings,
+    )
+
+    auth_service.update_user_status(
+        clean_db,
+        auth_store,
+        admin_context,
+        user_id,
+        ActiveStatusIn(is_active=False),
+        settings=admin_settings,
+    )
+
+    result = auth_service.update_user_status(
+        clean_db,
+        auth_store,
+        admin_context,
+        user_id,
+        ActiveStatusIn(is_active=True),
+        settings=admin_settings,
+    )
+
+    assert result.is_active is True
+    assert result.deleted_at is None
+
+    _assert_invalid_session(auth_store, registered_token)
+
+    login = _login(
+        clean_db,
+        auth_store,
+        dummy_hash,
+    )
+
+    assert login.user.id == user_id
+    assert login.session_token != registered_token
+
+    with Session(clean_db) as session:
+        api_key = db.get_api_key_by_id(session, key.id)
+
+        assert api_key is not None
+        assert api_key.is_active is False
+
+
+@pytest.mark.integration
+def test_admin_delete_user_idempotent(
+    clean_db: Engine,
+    admin_context: AuthContext,
+    admin_settings: ApiSettings,
+    registered_user: UserOut,
+    auth_store: SessionStore,
+) -> None:
+    """Conserva la fecha original de eliminación."""
+    user_id = registered_user.id
+
+    for _ in range(2):
+        auth_service.delete_user_account(
+            clean_db,
+            auth_store,
+            admin_context,
+            user_id,
+            settings=admin_settings,
+        )
+
+        result = auth_service.get_admin_user(
+            clean_db,
+            admin_context,
+            user_id,
+        )
+
+        assert result.deleted_at is not None
+
+        if _ == 0:
+            deleted_at = result.deleted_at
+
+        else:
+            assert result.deleted_at == deleted_at
+
+    for is_active in (True, False):
+        with pytest.raises(ApiError) as exc_info:
+            auth_service.update_user_status(
+                clean_db,
+                auth_store,
+                admin_context,
+                user_id,
+                ActiveStatusIn(is_active=is_active),
+                settings=admin_settings,
+            )
+
+        assert exc_info.value.code == ErrorCode.USER_DELETED
+
+
+@pytest.mark.integration
+def test_admin_user_status_idempotent(
+    clean_db: Engine,
+    admin_context: AuthContext,
+    admin_settings: ApiSettings,
+    registered_user: UserOut,
+    auth_store: SessionStore,
+    registered_token: str,
+) -> None:
+    """Permite repetir cambios de estado ya satisfechos."""
+    user_id = registered_user.id
+
+    first = auth_service.update_user_status(
+        clean_db,
+        auth_store,
+        admin_context,
+        user_id,
+        ActiveStatusIn(is_active=True),
+        settings=admin_settings,
+    )
+
+    assert first == registered_user
+
+    assert auth_store.get(registered_token).user_id == user_id
+
+    inactive = auth_service.update_user_status(
+        clean_db,
+        auth_store,
+        admin_context,
+        user_id,
+        ActiveStatusIn(is_active=False),
+        settings=admin_settings,
+    )
+
+    repeated = auth_service.update_user_status(
+        clean_db,
+        auth_store,
+        admin_context,
+        user_id,
+        ActiveStatusIn(is_active=False),
+        settings=admin_settings,
+    )
+
+    assert repeated == inactive
+    assert repeated.is_active is False
+
+    _assert_invalid_session(auth_store, registered_token)
+
+
+# =========================================================
+# ESTADOS ADMINISTRATIVOS DE API KEYS
+# =========================================================
+
+
+@pytest.mark.integration
+def test_admin_key_reactivation_limit(
+    clean_db: Engine,
+    admin_context: AuthContext,
+    admin_settings: ApiSettings,
+    registered_user: UserOut,
+) -> None:
+    """Impide superar el límite mediante una reactivación."""
+    first = _admin_issue(
+        clean_db,
+        admin_context,
+        admin_settings,
+        registered_user.id,
+    )
+
+    auth_service.update_api_key_status(
+        clean_db,
+        admin_context,
+        first.id,
+        ActiveStatusIn(is_active=False),
+        settings=admin_settings,
+    )
+
+    second = _admin_issue(
+        clean_db,
+        admin_context,
+        admin_settings,
+        registered_user.id,
+    )
+
+    with pytest.raises(ApiError) as exc_info:
+        auth_service.update_api_key_status(
+            clean_db,
+            admin_context,
+            first.id,
+            ActiveStatusIn(is_active=True),
+            settings=admin_settings,
+        )
+
+    assert exc_info.value.code == ErrorCode.API_KEY_LIMIT_REACHED
+
+    auth_service.update_api_key_status(
+        clean_db,
+        admin_context,
+        second.id,
+        ActiveStatusIn(is_active=False),
+        settings=admin_settings,
+    )
+
+    result = auth_service.update_api_key_status(
+        clean_db,
+        admin_context,
+        first.id,
+        ActiveStatusIn(is_active=True),
+        settings=admin_settings,
+    )
+
+    repeated = auth_service.update_api_key_status(
+        clean_db,
+        admin_context,
+        first.id,
+        ActiveStatusIn(is_active=True),
+        settings=admin_settings,
+    )
+
+    assert result.is_active is True
+    assert repeated == result
+
+    with Session(clean_db) as session:
+        key = db.get_api_key_by_id(session, first.id)
+
+        assert key is not None
+        assert key.key_hash == hash_secret(first.api_key)
+
+        assert db.count_active_api_keys(
+            session,
+            registered_user.id,
+            ApiKeyRole.FREE,
+        ) == 1
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    ("deleted", "code"),
+    [
+        (False, ErrorCode.USER_INACTIVE),
+        (True, ErrorCode.USER_DELETED),
+    ],
+)
+def test_admin_reactivate_key_inactive_owner(
+    clean_db: Engine,
+    admin_context: AuthContext,
+    admin_settings: ApiSettings,
+    registered_user: UserOut,
+    deleted: bool,
+    code: ErrorCode,
+) -> None:
+    """Exige que el propietario pueda utilizar sus claves."""
+    key = _admin_issue(
+        clean_db,
+        admin_context,
+        admin_settings,
+        registered_user.id,
+    )
+
+    auth_service.update_api_key_status(
+        clean_db,
+        admin_context,
+        key.id,
+        ActiveStatusIn(is_active=False),
+        settings=admin_settings,
+    )
+
+    with Session(clean_db) as session:
+        user = db.get_user_by_id(
+            session,
+            registered_user.id,
+        )
+
+        assert user is not None
+
+        if deleted:
+            db.delete_user(user)
+
+        else:
+            db.set_user_active(user, False)
+
+        session.commit()
+
+    with pytest.raises(ApiError) as exc_info:
+        auth_service.update_api_key_status(
+            clean_db,
+            admin_context,
+            key.id,
+            ActiveStatusIn(is_active=True),
+            settings=admin_settings,
+        )
+
+    assert exc_info.value.code == code
+
+
+@pytest.mark.integration
+def test_admin_delete_key_idempotent(
+    clean_db: Engine,
+    admin_context: AuthContext,
+    admin_settings: ApiSettings,
+    registered_user: UserOut,
+    auth_store: SessionStore,
+    registered_token: str,
+) -> None:
+    """Elimina una clave sin invalidar la sesión del propietario."""
+    created = _admin_issue(
+        clean_db,
+        admin_context,
+        admin_settings,
+        registered_user.id,
+    )
+
+    auth_service.delete_api_key_credential(
+        clean_db,
+        admin_context,
+        created.id,
+        settings=admin_settings,
+    )
+
+    first = auth_service.get_admin_api_key(
+        clean_db,
+        admin_context,
+        created.id,
+    )
+
+    auth_service.delete_api_key_credential(
+        clean_db,
+        admin_context,
+        created.id,
+        settings=admin_settings,
+    )
+
+    second = auth_service.get_admin_api_key(
+        clean_db,
+        admin_context,
+        created.id,
+    )
+
+    assert first == second
+    assert first.deleted_at is not None
+    assert first.is_active is False
+
+    assert auth_store.get(registered_token).user_id == (
+        registered_user.id
+    )
+
+    for is_active in (True, False):
+        with pytest.raises(ApiError) as exc_info:
+            auth_service.update_api_key_status(
+                clean_db,
+                admin_context,
+                created.id,
+                ActiveStatusIn(is_active=is_active),
+                settings=admin_settings,
+            )
+
+        assert exc_info.value.code == ErrorCode.API_KEY_DELETED
+
+
+@pytest.mark.integration
+def test_admin_reactivate_anonymous_key(
+    clean_db: Engine,
+    admin_context: AuthContext,
+    admin_settings: ApiSettings,
+) -> None:
+    """Reactiva una credencial Free sin propietario registrado."""
+    created = _admin_issue(
+        clean_db,
+        admin_context,
+        admin_settings,
+        None,
+    )
+
+    auth_service.update_api_key_status(
+        clean_db,
+        admin_context,
+        created.id,
+        ActiveStatusIn(is_active=False),
+        settings=admin_settings,
+    )
+
+    result = auth_service.update_api_key_status(
+        clean_db,
+        admin_context,
+        created.id,
+        ActiveStatusIn(is_active=True),
+        settings=admin_settings,
+    )
+
+    assert result.is_active is True
+    assert result.user_id is None
+    assert result.role == ApiKeyRole.FREE
+
+
+# =========================================================
+# PROTECCIÓN DEL APROVISIONAMIENTO
+# =========================================================
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    "operation",
+    [
+        "disable_user",
+        "delete_user",
+        "disable_key",
+        "delete_key",
+    ],
+)
+def test_protect_bootstrap_credentials(
+    clean_db: Engine,
+    admin_context: AuthContext,
+    admin_settings: ApiSettings,
+    auth_store: SessionStore,
+    operation: str,
+) -> None:
+    """Impide revocar las credenciales de aprovisionamiento."""
+    user_id = admin_context.user_id
+    api_key_id = admin_context.api_key_id
+
+    assert user_id is not None
+    assert api_key_id is not None
+
+    with pytest.raises(ApiError) as exc_info:
+        if operation == "disable_user":
+            auth_service.update_user_status(
+                clean_db,
+                auth_store,
+                admin_context,
+                user_id,
+                ActiveStatusIn(is_active=False),
+                settings=admin_settings,
+            )
+
+        elif operation == "delete_user":
+            auth_service.delete_user_account(
+                clean_db,
+                auth_store,
+                admin_context,
+                user_id,
+                settings=admin_settings,
+            )
+
+        elif operation == "disable_key":
+            auth_service.update_api_key_status(
+                clean_db,
+                admin_context,
+                api_key_id,
+                ActiveStatusIn(is_active=False),
+                settings=admin_settings,
+            )
+
+        else:
+            auth_service.delete_api_key_credential(
+                clean_db,
+                admin_context,
+                api_key_id,
+                settings=admin_settings,
+            )
+
+    assert exc_info.value.code == (
+        ErrorCode.INSUFFICIENT_PERMISSIONS
+    )
+
+    auth_service.bootstrap_admin_api_key(
+        clean_db,
+        admin_settings,
+    )
+
+
+@pytest.mark.integration
+def test_revoke_previous_admin_key_after_rotation(
+    clean_db: Engine,
+    admin_context: AuthContext,
+    admin_settings: ApiSettings,
+) -> None:
+    """Permite revocar una clave Admin que ya no está configurada."""
+    previous_id = admin_context.api_key_id
+
+    assert previous_id is not None
+
+    new_secret = security.generate_secret()
+
+    new_settings = ApiSettings(
+        ADMIN_EMAIL=admin_settings.ADMIN_EMAIL,
+        ADMIN_PASSWORD=admin_settings.ADMIN_PASSWORD,
+        API_KEY=new_secret,
+        BCRYPT_ROUNDS=TEST_ROUNDS,
+    )
+
+    auth_service.bootstrap_admin_api_key(
+        clean_db,
+        new_settings,
+    )
+
+    with Session(clean_db) as session:
+        key = db.get_api_key_by_hash(
+            session,
+            hash_secret(new_secret),
+        )
+
+        assert key is not None
+
+        new_context = AuthContext(
+            user_id=key.user_id,
+            api_key_id=key.id,
+            role=key.role,
+        )
+
+    result = auth_service.update_api_key_status(
+        clean_db,
+        new_context,
+        previous_id,
+        ActiveStatusIn(is_active=False),
+        settings=new_settings,
+    )
+
+    assert result.is_active is False
+
+    auth_service.bootstrap_admin_api_key(
+        clean_db,
+        new_settings,
+    )
+
+
+# =========================================================
+# REVALIDACIÓN DE LA AUTORIDAD ADMINISTRATIVA
+# =========================================================
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    ("resource", "code"),
+    [
+        ("key", ErrorCode.API_KEY_INACTIVE),
+        ("user", ErrorCode.USER_INACTIVE),
+    ],
+)
+def test_admin_mutation_revalidates_actor(
+    clean_db: Engine,
+    admin_context: AuthContext,
+    admin_settings: ApiSettings,
+    registered_user: UserOut,
+    resource: str,
+    code: ErrorCode,
+) -> None:
+    """Rechaza un contexto Admin que ha perdido su validez."""
+    with Session(clean_db) as session:
+        if resource == "key":
+            assert admin_context.api_key_id is not None
+
+            api_key = db.get_api_key_by_id(
+                session,
+                admin_context.api_key_id,
+            )
+
+            assert api_key is not None
+
+            db.set_api_key_active(api_key, False)
+
+        else:
+            assert admin_context.user_id is not None
+
+            user = db.get_user_by_id(
+                session,
+                admin_context.user_id,
+            )
+
+            assert user is not None
+
+            db.set_user_active(user, False)
+
+        session.commit()
+
+    with pytest.raises(ApiError) as exc_info:
+        _admin_issue(
+            clean_db,
+            admin_context,
+            admin_settings,
+            registered_user.id,
+        )
+
+    assert exc_info.value.code == code
+
+    with Session(clean_db) as session:
+        assert len(db.list_api_keys(session)) == 1
+
+
+@pytest.mark.integration
+def test_admin_cannot_issue_admin_key(
+    clean_db: Engine,
+    admin_context: AuthContext,
+    admin_settings: ApiSettings,
+    registered_user: UserOut,
+) -> None:
+    """Protege también la emisión ante entradas internas inválidas."""
+    body = AdminApiKeyCreateIn.model_construct(
+        role=ApiKeyRole.ADMIN,
+        user_id=registered_user.id,
+    )
+
+    with pytest.raises(ApiError) as exc_info:
+        auth_service.issue_admin_api_key(
+            clean_db,
+            admin_context,
+            body,
+            settings=admin_settings,
+        )
+
+    assert exc_info.value.code == (
+        ErrorCode.INSUFFICIENT_PERMISSIONS
+    )
+
+
+# =========================================================
+# TRANSACCIONES Y REVOCACIÓN ADMINISTRATIVA
+# =========================================================
+
+
+@pytest.mark.integration
+def test_admin_revocation_failure_before_commit(
+    clean_db: Engine,
+    admin_context: AuthContext,
+    admin_settings: ApiSettings,
+    registered_user: UserOut,
+    auth_store: SessionStore,
+    registered_token: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Conserva las sesiones si se revierte la modificación."""
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            auth_service,
+            "to_user_out",
+            Mock(
+                side_effect=ApiError(
+                    ErrorCode.INTERNAL_SERVER_ERROR,
+                ),
+            ),
+        )
+
+        with pytest.raises(ApiError) as exc_info:
+            auth_service.update_user_status(
+                clean_db,
+                auth_store,
+                admin_context,
+                registered_user.id,
+                ActiveStatusIn(is_active=False),
+                settings=admin_settings,
+            )
+
+    assert exc_info.value.code == ErrorCode.INTERNAL_SERVER_ERROR
+
+    assert auth_store.get(registered_token).user_id == (
+        registered_user.id
+    )
+
+    with Session(clean_db) as session:
+        user = db.get_user_by_id(
+            session,
+            registered_user.id,
+        )
+
+        assert user is not None
+        assert user.is_active is True
+        assert user.deleted_at is None
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("deleted", [False, True])
+def test_admin_revocation_uncertain_commit(
+    clean_db: Engine,
+    admin_context: AuthContext,
+    admin_settings: ApiSettings,
+    registered_user: UserOut,
+    auth_store: SessionStore,
+    registered_token: str,
+    monkeypatch: pytest.MonkeyPatch,
+    deleted: bool,
+) -> None:
+    """Invalida sesiones si no puede confirmarse el commit."""
+    second_token, _ = auth_store.create(registered_user.id)
+
+    original_commit = Session.commit
+
+    def uncertain_commit(session: Session) -> None:
+        """Simula una pérdida de conexión tras confirmar."""
+        original_commit(session)
+
+        raise OperationalError(
+            None,
+            None,
+            DriverError("08006"),
+            connection_invalidated=True,
+        )
+
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            Session,
+            "commit",
+            uncertain_commit,
+        )
+
+        with pytest.raises(ApiError) as exc_info:
+            if deleted:
+                auth_service.delete_user_account(
+                    clean_db,
+                    auth_store,
+                    admin_context,
+                    registered_user.id,
+                    settings=admin_settings,
+                )
+
+            else:
+                auth_service.update_user_status(
+                    clean_db,
+                    auth_store,
+                    admin_context,
+                    registered_user.id,
+                    ActiveStatusIn(is_active=False),
+                    settings=admin_settings,
+                )
+
+    assert exc_info.value.code == ErrorCode.SERVICE_UNAVAILABLE
+
+    _assert_invalid_session(auth_store, registered_token)
+    _assert_invalid_session(auth_store, second_token)
+
+    with Session(clean_db) as session:
+        user = db.get_user_by_id(
+            session,
+            registered_user.id,
+        )
+
+        assert user is not None
+        assert user.is_active is False
+        assert (user.deleted_at is not None) == deleted
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    ("operation", "code"),
+    [
+        ("update_user", ErrorCode.USER_NOT_FOUND),
+        ("delete_user", ErrorCode.USER_NOT_FOUND),
+        ("update_key", ErrorCode.API_KEY_NOT_FOUND),
+        ("delete_key", ErrorCode.API_KEY_NOT_FOUND),
+    ],
+)
+def test_admin_modify_unknown_resource(
+    clean_db: Engine,
+    admin_context: AuthContext,
+    admin_settings: ApiSettings,
+    auth_store: SessionStore,
+    operation: str,
+    code: ErrorCode,
+) -> None:
+    """Rechaza modificaciones de recursos inexistentes."""
+    resource_id = uuid4()
+
+    with pytest.raises(ApiError) as exc_info:
+        if operation == "update_user":
+            auth_service.update_user_status(
+                clean_db,
+                auth_store,
+                admin_context,
+                resource_id,
+                ActiveStatusIn(is_active=False),
+                settings=admin_settings,
+            )
+
+        elif operation == "delete_user":
+            auth_service.delete_user_account(
+                clean_db,
+                auth_store,
+                admin_context,
+                resource_id,
+                settings=admin_settings,
+            )
+
+        elif operation == "update_key":
+            auth_service.update_api_key_status(
+                clean_db,
+                admin_context,
+                resource_id,
+                ActiveStatusIn(is_active=False),
+                settings=admin_settings,
+            )
+
+        else:
+            auth_service.delete_api_key_credential(
+                clean_db,
+                admin_context,
+                resource_id,
+                settings=admin_settings,
+            )
+
+    assert exc_info.value.code == code

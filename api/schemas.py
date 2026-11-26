@@ -1,4 +1,4 @@
-"""Contratos públicos HTTP de ReciclaTÍA."""
+"""Contratos públicos HTTP de ReciclaTIA."""
 
 from datetime import datetime, timezone
 from typing import Annotated, Literal, Self
@@ -244,29 +244,19 @@ class PuntoLimpioOut(ApiSchema):
     """Representación pública de una instalación municipal."""
 
     tipo: NonBlankText
-
     direccion: NonBlankText
-
     distrito: StrictStr | None = None
-
     latitud: Latitude
-
     longitud: Longitude
-
     distancia_metros: float = Field(
         strict=True,
         ge=0,
         allow_inf_nan=False,
     )
-
     horario_apertura: StrictStr | None = None
-
     horario_cierre: StrictStr | None = None
-
     dia_semana: StrictStr | None = None
-
     turno: StrictStr | None = None
-
     documento_origen: StrictStr | None = None
 
 
@@ -274,65 +264,38 @@ class GeografiaOut(ApiSchema):
     """Resultado público de una búsqueda geográfica."""
 
     fuente: Literal["api", "corpus_local"]
-
-    tipo_solicitado: Literal[
-        "todos",
-        "fijo",
-        "movil",
-        "proximidad",
-    ]
-
+    tipo_solicitado: Literal["todos", "fijo", "movil", "proximidad"]
     radio_metros: StrictInt = Field(
         ge=GEO_MIN_RADIUS_METERS,
         le=GEO_MAX_RADIUS_METERS,
     )
-
     total_encontrados: StrictInt = Field(ge=0)
-
-    puntos: list[PuntoLimpioOut] = Field(
-        max_length=GEO_MAX_RESULTS,
-    )
-
+    puntos: list[PuntoLimpioOut] = Field(max_length=GEO_MAX_RESULTS)
     aviso: StrictStr | None = None
 
     @model_validator(mode="after")
     def validar_coherencia_geografica(self) -> Self:
         """Comprueba la coherencia del resultado geográfico."""
 
-        cantidad_esperada = min(
-            self.total_encontrados,
-            GEO_MAX_RESULTS,
-        )
+        cantidad_esperada = min(self.total_encontrados, GEO_MAX_RESULTS)
 
         if len(self.puntos) != cantidad_esperada:
             raise ValueError(
                 "El número de puntos no coincide con el total esperado."
             )
 
-        distancias = [
-            punto.distancia_metros
-            for punto in self.puntos
-        ]
+        distancias = [punto.distancia_metros for punto in self.puntos]
 
         if distancias != sorted(distancias):
-            raise ValueError(
-                "Los puntos deben estar ordenados por distancia."
-            )
+            raise ValueError("Los puntos deben estar ordenados por distancia.")
 
-        if any(
-            distancia > self.radio_metros
-            for distancia in distancias
-        ):
-            raise ValueError(
-                "Existen puntos fuera del radio consultado."
-            )
+        if any(distancia > self.radio_metros for distancia in distancias):
+            raise ValueError("Existen puntos fuera del radio consultado.")
 
         if self.fuente == "corpus_local" and (
             self.aviso is None or not self.aviso.strip()
         ):
-            raise ValueError(
-                "El respaldo local requiere un aviso."
-            )
+            raise ValueError("El respaldo local requiere un aviso.")
 
         return self
 
@@ -341,37 +304,19 @@ class AskOut(ApiSchema):
     """Respuesta pública satisfactoria del asistente."""
 
     thread_id: UUIDText | None
-
     respuesta: NonBlankText
-
     plan: list[NonBlankText]
-
     plan_aprobado: StrictBool | None
-
     done: StrictBool
-
     pendiente_hitl: StrictBool
-
     fuentes: list[FuenteOut]
-
     geografia: list[GeografiaOut]
-
     abstencion: StrictBool
-
     motivo: StrictStr | None
-
-    estado_evidencia: Literal[
-        "suficiente",
-        "parcial",
-        "insuficiente",
-    ]
-
+    estado_evidencia: Literal["suficiente", "parcial", "insuficiente"]
     limitaciones: list[StrictStr]
-
     turnos_consumidos: StrictInt = Field(ge=0)
-
     error: StrictStr | None
-
     approval_id: UUIDText | None
 
     @model_validator(mode="after")
@@ -379,14 +324,10 @@ class AskOut(ApiSchema):
         """Comprueba las invariantes públicas del asistente."""
 
         if self.error is not None:
-            raise ValueError(
-                "Una respuesta satisfactoria no puede contener errores."
-            )
+            raise ValueError("Una respuesta satisfactoria no puede contener errores.")
 
         if self.thread_id is None and self.turnos_consumidos != 0:
-            raise ValueError(
-                "No pueden existir turnos sin conversación."
-            )
+            raise ValueError("No pueden existir turnos sin conversación.")
 
         if self.pendiente_hitl:
             self._validar_propuesta_pendiente()
@@ -406,14 +347,10 @@ class AskOut(ApiSchema):
         """Comprueba los datos comunes de una ejecución de LangGraph."""
 
         if self.thread_id is None:
-            raise ValueError(
-                "Un turno ejecutado requiere una conversación."
-            )
+            raise ValueError("Un turno ejecutado requiere una conversación.")
 
         if self.turnos_consumidos < 1:
-            raise ValueError(
-                "Un turno ejecutado debe estar contabilizado."
-            )
+            raise ValueError("Un turno ejecutado debe estar contabilizado.")
 
     def _validar_propuesta_pendiente(self) -> None:
         """Comprueba una propuesta pendiente de aprobación."""
@@ -426,9 +363,7 @@ class AskOut(ApiSchema):
             or self.approval_id is None
             or len(self.plan) < 2
         ):
-            raise ValueError(
-                "La propuesta pendiente es inconsistente."
-            )
+            raise ValueError("La propuesta pendiente es inconsistente.")
 
     def _validar_plan_aprobado(self) -> None:
         """Comprueba una propuesta aprobada."""
@@ -440,9 +375,7 @@ class AskOut(ApiSchema):
             or self.approval_id is not None
             or len(self.plan) < 2
         ):
-            raise ValueError(
-                "El plan aprobado es inconsistente."
-            )
+            raise ValueError("El plan aprobado es inconsistente.")
 
     def _validar_plan_rechazado(self) -> None:
         """Comprueba una propuesta rechazada."""
@@ -454,9 +387,7 @@ class AskOut(ApiSchema):
             or self.approval_id is not None
             or self.plan
         ):
-            raise ValueError(
-                "El plan rechazado es inconsistente."
-            )
+            raise ValueError("El plan rechazado es inconsistente.")
 
     def _validar_respuesta_previa(self) -> None:
         """Comprueba una respuesta anterior a LangGraph."""
@@ -470,9 +401,7 @@ class AskOut(ApiSchema):
             or not self.abstencion
             or self.estado_evidencia != "insuficiente"
         ):
-            raise ValueError(
-                "La respuesta previa al agente es inconsistente."
-            )
+            raise ValueError("La respuesta previa al agente es inconsistente.")
 
 
 # =========================================================
@@ -483,7 +412,6 @@ class RegisterIn(ApiSchema):
     """Solicitud de registro de una cuenta."""
 
     email: EmailText
-
     password: NewPasswordText
 
 
@@ -491,7 +419,6 @@ class LoginIn(ApiSchema):
     """Credenciales de inicio de sesión."""
 
     email: EmailText
-
     password: PasswordText
 
 
@@ -499,7 +426,6 @@ class PasswordChangeIn(ApiSchema):
     """Solicitud de cambio de contraseña."""
 
     current_password: PasswordText
-
     new_password: NewPasswordText
 
 
@@ -513,7 +439,6 @@ class AdminApiKeyCreateIn(ApiSchema):
     """Solicitud administrativa de emisión de una API key."""
 
     role: IssuableApiKeyRole
-
     user_id: UUID | None = None
 
     @model_validator(mode="after")
@@ -524,9 +449,7 @@ class AdminApiKeyCreateIn(ApiSchema):
             self.role == ApiKeyRole.USER
             and self.user_id is None
         ):
-            raise ValueError(
-                "Una API key User requiere un propietario."
-            )
+            raise ValueError("Una API key User requiere un propietario.")
 
         return self
 
@@ -543,27 +466,27 @@ class ActiveStatusIn(ApiSchema):
 
 class UserOut(ApiSchema):
     """Representación pública de un usuario."""
-
     id: UUID
-
-    email: NonBlankText = Field(
-        max_length=EMAIL_MAX_LENGTH,
-    )
-
+    email: NonBlankText = Field(max_length=EMAIL_MAX_LENGTH)
     created_at: UTCDateTime
-
     is_active: StrictBool
+    deleted_at: UTCDateTime | None
+
+    @model_validator(mode="after")
+    def validar_estado_usuario(self) -> Self:
+        """Comprueba las invariantes del estado del usuario."""
+        if self.deleted_at is not None and self.is_active:
+            raise ValueError("Un usuario eliminado no puede estar activo.")
+
+        return self
 
 
 class LoginOut(ApiSchema):
     """Resultado de una autenticación satisfactoria."""
 
     session_token: CredentialOutText
-
     token_type: Literal["Bearer"]
-
     expires_at: UTCDateTime
-
     user: UserOut
 
 
@@ -571,17 +494,11 @@ class ApiKeyOut(ApiSchema):
     """Representación pública de una API key."""
 
     id: UUID
-
     role: ApiKeyRole
-
     user_id: UUID | None
-
     is_active: StrictBool
-
     created_at: UTCDateTime
-
     last_used_at: UTCDateTime | None
-
     deleted_at: UTCDateTime | None
 
     @model_validator(mode="after")
@@ -592,14 +509,10 @@ class ApiKeyOut(ApiSchema):
             self.role != ApiKeyRole.FREE
             and self.user_id is None
         ):
-            raise ValueError(
-                "La API key requiere un propietario."
-            )
+            raise ValueError("La API key requiere un propietario.")
 
         if self.deleted_at is not None and self.is_active:
-            raise ValueError(
-                "Una API key eliminada no puede estar activa."
-            )
+            raise ValueError("Una API key eliminada no puede estar activa.")
 
         return self
 
@@ -608,7 +521,6 @@ class ApiKeyCreatedOut(ApiKeyOut):
     """Resultado de la emisión de una API key."""
 
     role: IssuableApiKeyRole
-
     api_key: CredentialOutText
 
 

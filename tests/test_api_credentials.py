@@ -40,6 +40,7 @@ def usuario_valido():
         "email": EMAIL,
         "created_at": CREATED_AT,
         "is_active": True,
+        "deleted_at": None,
     }
 
 
@@ -420,7 +421,7 @@ def test_user_out_valido(usuario_valido):
 
 @pytest.mark.parametrize(
     "campo",
-    ["password", "password_hash", "deleted_at"],
+    ["password", "password_hash"],
 )
 def test_user_out_rechaza_campos_no_publicos(
     usuario_valido,
@@ -631,3 +632,43 @@ def test_api_key_created_out_rechaza_credencial_invalida(
             **api_key_valida,
             api_key=api_key,
         )
+
+
+@pytest.mark.parametrize(
+    ("is_active", "deleted_at", "valid"),
+    [
+        (True, None, True),
+        (False, None, True),
+        (False, CREATED_AT, True),
+        (True, CREATED_AT, False),
+    ],
+)
+def test_user_out_deleted_state(
+    usuario_valido: dict,
+    is_active: bool,
+    deleted_at: datetime | None,
+    valid: bool,
+) -> None:
+    """Comprueba las combinaciones del estado de usuario."""
+    usuario_valido["is_active"] = is_active
+    usuario_valido["deleted_at"] = deleted_at
+
+    if valid:
+        user = UserOut(**usuario_valido)
+
+        assert user.is_active == is_active
+        assert user.deleted_at == deleted_at
+
+    else:
+        with pytest.raises(ValidationError):
+            UserOut(**usuario_valido)
+
+
+def test_user_out_requires_deleted_at(
+    usuario_valido: dict,
+) -> None:
+    """Exige el campo aunque su valor pueda ser nulo."""
+    del usuario_valido["deleted_at"]
+
+    with pytest.raises(ValidationError):
+        UserOut(**usuario_valido)
