@@ -220,21 +220,23 @@ Retirar un UUID de la lista impedirá nuevas emisiones ordinarias, pero no revoc
 
 ### 5.4. Aprovisionamiento Admin
 
-La primera API key administrativa deberá poder aprovisionarse sin depender de otra clave Admin.
-
-Se utilizará API_KEY como secreto de aprovisionamiento, asociado mediante un procedimiento interno a una cuenta administrativa existente y controlada.
+El backend exigirá ADMIN_EMAIL, ADMIN_PASSWORD y API_KEY para aprovisionar su identidad administrativa durante el arranque.
 
 El procedimiento deberá:
 
-- Utilizar una credencial de elevada entropía.
-- Registrar exclusivamente su hash.
-- Asociar el rol Admin en PostgreSQL.
+- Crear la cuenta administrativa cuando no exista.
+- Generar secretos independientes de elevada entropía.
+- Almacenar exclusivamente los hashes correspondientes.
+- Verificar la contraseña, propiedad, rol y estado de los registros.
 - Ser idempotente.
-- Evitar credenciales predeterminadas.
-- No reactivar claves desactivadas o eliminadas.
-- Detectar discrepancias de configuración sin sobrescribir registros existentes.
+- Impedir la elevación de privilegios de cuentas ordinarias.
+- Rechazar discrepancias sin sobrescribir ni reactivar registros.
 
-API_KEY no constituirá un mecanismo alternativo que permita omitir las comprobaciones de PostgreSQL.
+La rotación de API keys administrativas se realizará mediante una nueva configuración y un aprovisionamiento satisfactorio.
+
+Las credenciales administrativas anteriores no se revocarán automáticamente.
+
+Si se modifica la contraseña administrativa, deberá sincronizarse ADMIN_PASSWORD antes del siguiente arranque.
 
 Ningún endpoint permitirá emitir claves Admin.
 
@@ -376,6 +378,18 @@ La reactivación de una clave exigirá que no esté eliminada, que su propietari
 
 Reactivar una cuenta no recuperará sesiones invalidadas ni reactivará claves desactivadas individualmente.
 
+La cuenta y la API key configuradas para el aprovisionamiento no podrán desactivarse ni eliminarse mediante operaciones administrativas.
+
+Repetir una modificación de estado ya satisfecha no consumirá otra plaza de clave activa. Repetir una eliminación conservará la fecha deleted_at original.
+
+Las modificaciones de recursos eliminados devolverán USER_DELETED o API_KEY_DELETED, según corresponda.
+
+Las modificaciones administrativas revalidarán al administrador dentro de la transacción. Los bloqueos de usuarios precederán a los de API keys y al bloqueo del gestor de sesiones.
+
+Los registros de cada entidad se bloquearán por orden de UUID.
+
+Ante un commit incierto de desactivación o eliminación de usuario, sus sesiones se invalidarán preventivamente.
+
 ### 8.2. Operaciones en curso
 
 Antes de entregar una respuesta del asistente o persistir un turno se comprobará nuevamente la autorización aplicable, incluyendo la vigencia de la sesión cuando corresponda.
@@ -423,6 +437,8 @@ El núcleo RAG y la CLI permanecerán independientes de las credenciales HTTP.
 | FREE_MAX_ACTIVE_KEYS | 1 |
 | USER_MAX_ACTIVE_KEYS | 5 |
 | USER_TIER_ALLOWED_USER_IDS | Lista vacía |
+| ADMIN_EMAIL | Email administrativo obligatorio |
+| ADMIN_PASSWORD | Contraseña administrativa obligatoria |
 
 La lista de usuarios autorizados deberá contener exclusivamente UUID válidos.
 

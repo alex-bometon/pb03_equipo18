@@ -3747,5 +3747,3 @@ def test_concurrent_login_and_user_deactivation(
     assert user_result.is_active is False
     _assert_invalid_session(auth_store, registered_token)
     _assert_invalid_session(auth_store, login_result.session_token)
-
-

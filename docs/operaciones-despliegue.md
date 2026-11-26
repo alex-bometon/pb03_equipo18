@@ -460,6 +460,8 @@ Configurar en Render:
 | DATABASE_URL | URL interna de PostgreSQL |
 | GEMINI_API_KEY | Credencial autorizada de Gemini |
 | API_KEY | Secreto de aprovisionamiento administrativo |
+| ADMIN_EMAIL | Email administrativo obligatorio |
+| ADMIN_PASSWORD | Contraseña administrativa obligatoria |
 | CORS_ORIGINS | Orígenes autorizados |
 
 Los restantes parámetros se obtendrán de .env.example y las especificaciones 14 y 15.

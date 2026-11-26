@@ -28,6 +28,12 @@ La selección mediante sesión únicamente estará disponible para claves propia
 
 Las claves Admin requerirán siempre su credencial original.
 
+Las cabeceras de autenticación duplicadas o incompatibles devolverán 422 AMBIGUOUS_CREDENTIALS.
+
+Los endpoints de cuenta exigirán una sesión sin selección de clave. Los endpoints del asistente exigirán una API key original o una clave propia seleccionada mediante sesión.
+
+Los endpoints administrativos exigirán una API key Admin original.
+
 Las reglas de autenticación, autorización y propiedad se establecen en [14-autenticacion-autorizacion.md](14-autenticacion-autorizacion.md).
 
 ## 3. Endpoints
@@ -348,6 +354,9 @@ Las condiciones de emisión, modificación y validación se establecen en [14-au
 | email | str |
 | created_at | datetime |
 | is_active | bool |
+| deleted_at | datetime o None |
+
+deleted_at será obligatorio y admitirá None. Un usuario eliminado no podrá tener is_active=True.
 
 ### 5.3. LoginOut
 
@@ -669,6 +678,7 @@ No se devolverá HTTP 200 ante resultados estructuralmente inválidos, fallos t�
 | X-Request-ID | Todas las peticiones HTTP |
 | Retry-After | HTTP 429 cuando pueda determinarse |
 | Cache-Control: no-store | Emisión de credenciales originales |
+| WWW-Authenticate | Errores 401 asociados a API key o sesión |
 
 request_id será generado por el backend y coincidirá con el incluido en ErrorOut.
 

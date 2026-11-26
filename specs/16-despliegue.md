@@ -236,6 +236,8 @@ No se asumirá que la infraestructura gratuita resulta suficiente para una explo
 | API_KEY | Aprovisionamiento administrativo |
 | CORS_ORIGINS | Orígenes web autorizados |
 | LOG_LEVEL | Nivel de logging |
+| ADMIN_EMAIL | Email administrativo obligatorio |
+| ADMIN_PASSWORD | Contraseña administrativa obligatoria |
 
 Los parámetros de autenticación, incluyendo USER_TIER_ALLOWED_USER_IDS, se definen en [14-autenticacion-autorizacion.md](14-autenticacion-autorizacion.md).
 

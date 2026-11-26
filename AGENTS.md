@@ -103,8 +103,10 @@ Consultar las especificaciones 11 a 16 antes de modificar la arquitectura MLOps.
 - No duplicar constantes, validaciones, contratos ni lógica.
 - Evitar la fragmentación excesiva del código.
 - Justificar la creación de archivos, clases y abstracciones.
-- Facilitar la evolución del proyecto sin anticipar necesidades
-  hipotéticas.
+- Facilitar la evolución del proyecto sin anticipar necesidades hipotéticas.
+- Limitar cada fase a su alcance y evitar implementar componentes cuya integración corresponda a fases posteriores.
+- Dimensionar las pruebas según el riesgo y las garantías exigidas, evitando combinaciones redundantes de escenarios ya cubiertos.
+- Revisar la teoría, implementaciones, workouts y Live Review pertinentes antes de proponer cambios.
 
 La arquitectura deberá mantener un equilibrio entre facilidad
 de implementación, escalabilidad y coste de mantenimiento.
@@ -112,6 +114,8 @@ de implementación, escalabilidad y coste de mantenimiento.
 ## 5. Convenciones de programación
 
 - Seguir PEP 8.
+- Evitar fragmentar expresiones que puedan escribirse de forma legible dentro del límite de 79 caracteres.
+- Utilizar únicamente los saltos de línea y espacios en blanco necesarios para la legibilidad y el cumplimiento de PEP 8.
 - Utilizar snake_case para funciones, variables y módulos.
 - Utilizar PascalCase para clases.
 - Utilizar UPPER_CASE para constantes.
@@ -123,8 +127,7 @@ de implementación, escalabilidad y coste de mantenimiento.
 - Seguir PEP 257 para las cadenas de documentación.
 - Limitar las líneas de código Python a 79 caracteres.
 - Limitar comentarios y docstrings a 72 caracteres.
-- Agrupar las importaciones en biblioteca estándar, dependencias
-  externas y módulos propios.
+- Agrupar las importaciones en biblioteca estándar, dependencias externas y módulos propios.
 - Evitar líneas en blanco innecesarias entre atributos de clases.
 - Redactar comentarios y docstrings en español.
 
