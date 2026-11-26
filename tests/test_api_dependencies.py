@@ -18,8 +18,19 @@ import api.dependencies as dependencies
 import api.security as security
 from api.config import ApiSettings
 from api.error_catalog import ERROR_CATALOG, ErrorCode
+from api.errors import ApiError
 from api.exception_handlers import register_exception_handlers
+from api.mappers import (
+    to_api_key_out,
+    to_conversation_out,
+    to_message_out,
+)
 from api.request_context import AuthContext
+from api.schemas import (
+    ApiKeyOut,
+    ConversationOut,
+    MessageOut,
+)
 from api.security import (
     SessionStore,
     generate_secret,
@@ -88,6 +99,206 @@ def app() -> FastAPI:
         ],
     ) -> dict[str, int]:
         return {"port": config.PORT}
+
+    @application.get("/test/image")
+    def image(
+        auth: Annotated[
+            AuthContext,
+            Depends(
+                dependencies.require_roles(
+                    ApiKeyRole.USER,
+                    ApiKeyRole.ADMIN,
+                ),
+            ),
+        ],
+    ) -> AuthContext:
+        return auth
+
+    @application.get("/test/admin")
+    def admin(
+        auth: Annotated[
+            AuthContext,
+            Depends(dependencies.require_admin),
+        ],
+    ) -> AuthContext:
+        return auth
+
+    @application.get("/test/operation/{thread_id}")
+    def operation(
+        thread_id: UUID,
+        auth: Annotated[
+            AuthContext,
+            Depends(
+                dependencies.require_roles(
+                    ApiKeyRole.FREE,
+                    ApiKeyRole.USER,
+                    ApiKeyRole.ADMIN,
+                ),
+            ),
+        ],
+        session: Annotated[
+            Session,
+            Depends(dependencies.get_session),
+        ],
+    ) -> ConversationOut:
+        conversation = dependencies.require_thread_access(
+            session,
+            auth,
+            thread_id,
+        )
+
+        return to_conversation_out(conversation)
+
+    @application.get("/test/threads")
+    def threads(
+        auth: Annotated[
+            AuthContext,
+            Depends(
+                dependencies.require_roles(
+                    ApiKeyRole.USER,
+                    ApiKeyRole.ADMIN,
+                ),
+            ),
+        ],
+        session: Annotated[
+            Session,
+            Depends(dependencies.get_session),
+        ],
+    ) -> list[ConversationOut]:
+        conversations = dependencies.list_authorized_threads(
+            session,
+            auth,
+        )
+
+        return [
+            to_conversation_out(conversation)
+            for conversation in conversations
+        ]
+
+    @application.get("/test/threads/{thread_id}/messages")
+    def messages(
+        thread_id: UUID,
+        auth: Annotated[
+            AuthContext,
+            Depends(
+                dependencies.require_roles(
+                    ApiKeyRole.USER,
+                    ApiKeyRole.ADMIN,
+                ),
+            ),
+        ],
+        session: Annotated[
+            Session,
+            Depends(dependencies.get_session),
+        ],
+    ) -> list[MessageOut]:
+        conversation = dependencies.require_thread_access(
+            session,
+            auth,
+            thread_id,
+        )
+
+        return [
+            to_message_out(message)
+            for message in db.list_messages(
+                session,
+                conversation.id,
+            )
+        ]
+
+    @application.get("/test/keys")
+    def keys(
+        auth: Annotated[
+            AuthContext,
+            Depends(dependencies.get_current_user),
+        ],
+        session: Annotated[
+            Session,
+            Depends(dependencies.get_session),
+        ],
+    ) -> list[ApiKeyOut]:
+        api_keys = dependencies.list_owned_api_keys(
+            session,
+            auth,
+        )
+
+        return [
+            to_api_key_out(api_key)
+            for api_key in api_keys
+        ]
+
+    @application.get("/test/keys/{api_key_id}")
+    def key(
+        api_key_id: UUID,
+        auth: Annotated[
+            AuthContext,
+            Depends(dependencies.get_current_user),
+        ],
+        session: Annotated[
+            Session,
+            Depends(dependencies.get_session),
+        ],
+    ) -> ApiKeyOut:
+        api_key = dependencies.require_session_api_key(
+            session,
+            auth,
+            api_key_id,
+        )
+
+        return to_api_key_out(api_key)
+
+    @application.get("/test/keys/{api_key_id}/threads")
+    def session_threads(
+        api_key_id: UUID,
+        auth: Annotated[
+            AuthContext,
+            Depends(dependencies.get_current_user),
+        ],
+        session: Annotated[
+            Session,
+            Depends(dependencies.get_session),
+        ],
+    ) -> list[ConversationOut]:
+        conversations = dependencies.list_session_threads(
+            session,
+            auth,
+            api_key_id,
+        )
+
+        return [
+            to_conversation_out(conversation)
+            for conversation in conversations
+        ]
+
+    @application.get(
+        "/test/keys/{api_key_id}/threads/{thread_id}/messages",
+    )
+    def session_messages(
+        api_key_id: UUID,
+        thread_id: UUID,
+        auth: Annotated[
+            AuthContext,
+            Depends(dependencies.get_current_user),
+        ],
+        session: Annotated[
+            Session,
+            Depends(dependencies.get_session),
+        ],
+    ) -> list[MessageOut]:
+        conversation = dependencies.require_session_thread_access(
+            session,
+            auth,
+            api_key_id,
+            thread_id,
+        )
+
+        return [
+            to_message_out(message)
+            for message in db.list_messages(
+                session,
+                conversation.id,
+            )
+        ]
 
     return application
 
@@ -1232,3 +1443,1155 @@ def test_authentication_does_not_update_last_used(
 
         assert api_key is not None
         assert api_key.last_used_at is None
+
+
+# =========================================================
+# AUTORIZACIÓN POR ROLES
+# =========================================================
+
+
+@pytest.mark.parametrize(
+    ("role", "allowed"),
+    [
+        (ApiKeyRole.FREE, False),
+        (ApiKeyRole.USER, True),
+        (ApiKeyRole.ADMIN, True),
+    ],
+)
+def test_require_roles(
+    role: ApiKeyRole,
+    allowed: bool,
+) -> None:
+    """Comprueba la autorización mediante roles permitidos."""
+    context = AuthContext(
+        user_id=uuid4(),
+        api_key_id=uuid4(),
+        role=role,
+    )
+
+    dependency = dependencies.require_roles(
+        ApiKeyRole.USER,
+        ApiKeyRole.ADMIN,
+    )
+
+    if allowed:
+        assert dependency(context) is context
+
+    else:
+        with pytest.raises(ApiError) as exc_info:
+            dependency(context)
+
+        assert exc_info.value.code == (
+            ErrorCode.INSUFFICIENT_PERMISSIONS
+        )
+
+
+def test_require_roles_without_api_key() -> None:
+    """Impide autorizar operaciones con una sesión sin clave."""
+    context = AuthContext(
+        user_id=uuid4(),
+        api_key_id=None,
+        role=None,
+    )
+
+    dependency = dependencies.require_roles(
+        ApiKeyRole.USER,
+        ApiKeyRole.ADMIN,
+    )
+
+    with pytest.raises(ApiError) as exc_info:
+        dependency(context)
+
+    assert exc_info.value.code == ErrorCode.API_KEY_REQUIRED
+
+
+def test_require_roles_without_allowed_roles() -> None:
+    """No concede permisos si no se ha autorizado ningún rol."""
+    context = AuthContext(
+        user_id=uuid4(),
+        api_key_id=uuid4(),
+        role=ApiKeyRole.ADMIN,
+    )
+
+    dependency = dependencies.require_roles()
+
+    with pytest.raises(ApiError) as exc_info:
+        dependency(context)
+
+    assert exc_info.value.code == (
+        ErrorCode.INSUFFICIENT_PERMISSIONS
+    )
+
+
+@pytest.mark.parametrize(
+    "role",
+    [
+        ApiKeyRole.FREE,
+        ApiKeyRole.USER,
+        ApiKeyRole.ADMIN,
+    ],
+)
+def test_session_history_requires_session(
+    role: ApiKeyRole,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No admite una identidad de clave como sesión ordinaria."""
+    context = AuthContext(
+        user_id=uuid4(),
+        api_key_id=uuid4(),
+        role=role,
+    )
+
+    query = Mock()
+
+    monkeypatch.setattr(
+        db,
+        "get_api_key_by_id",
+        query,
+    )
+
+    with pytest.raises(ApiError) as exc_info:
+        dependencies.require_session_api_key(
+            Mock(spec=Session),
+            context,
+            uuid4(),
+        )
+
+    assert exc_info.value.code == (
+        ErrorCode.INSUFFICIENT_PERMISSIONS
+    )
+
+    query.assert_not_called()
+
+
+def test_free_cannot_list_threads(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Rechaza el listado Free antes de consultar conversaciones."""
+    context = AuthContext(
+        user_id=uuid4(),
+        api_key_id=uuid4(),
+        role=ApiKeyRole.FREE,
+    )
+
+    query = Mock()
+
+    monkeypatch.setattr(
+        db,
+        "list_api_key_conversations",
+        query,
+    )
+
+    with pytest.raises(ApiError) as exc_info:
+        dependencies.list_authorized_threads(
+            Mock(spec=Session),
+            context,
+        )
+
+    assert exc_info.value.code == (
+        ErrorCode.INSUFFICIENT_PERMISSIONS
+    )
+
+    query.assert_not_called()
+
+
+# =========================================================
+# INFRAESTRUCTURA DE AUTORIZACIÓN
+# =========================================================
+
+
+@pytest.fixture
+def thread_data(
+    auth_data: dict[str, str],
+    clean_db: Engine,
+) -> dict[str, str]:
+    """Prepara conversaciones de distintas claves y usuarios."""
+    data = auth_data.copy()
+
+    with Session(clean_db) as session:
+        secret = generate_secret()
+
+        second_key = ApiKey(
+            user_id=UUID(data["user_id"]),
+            role=ApiKeyRole.USER,
+            key_hash=hash_secret(secret),
+        )
+
+        db.create_api_key(session, second_key)
+        session.flush()
+
+        data["id_user2"] = str(second_key.id)
+        data["secret_user2"] = secret
+
+        for name in (
+            "anon",
+            "free",
+            "user",
+            "user2",
+            "other",
+            "admin",
+        ):
+            thread_id = uuid4()
+
+            db.create_conversation(
+                session,
+                thread_id,
+                UUID(data[f"id_{name}"]),
+            )
+
+            session.flush()
+
+            db.save_turn(
+                session,
+                thread_id,
+                1,
+                f"Pregunta {name}",
+                f"Respuesta {name}",
+            )
+
+            data[f"thread_{name}"] = str(thread_id)
+
+        session.commit()
+
+    return data
+
+
+# =========================================================
+# PERMISOS MULTIMODALES Y ADMINISTRATIVOS
+# =========================================================
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    ("name", "expected_status"),
+    [
+        ("anon", 403),
+        ("free", 403),
+        ("user", 200),
+        ("other", 200),
+        ("admin", 200),
+    ],
+)
+def test_image_permissions(
+    client: TestClient,
+    auth_data: dict[str, str],
+    name: str,
+    expected_status: int,
+) -> None:
+    """Aplica los roles permitidos para consultas multimodales."""
+    response = client.get(
+        "/test/image",
+        headers={
+            "X-API-Key": auth_data[f"secret_{name}"],
+        },
+    )
+
+    assert response.status_code == expected_status
+
+    if expected_status == 403:
+        assert_error(
+            response,
+            ErrorCode.INSUFFICIENT_PERMISSIONS,
+        )
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    ("name", "expected_status"),
+    [
+        ("free", 403),
+        ("user", 200),
+    ],
+)
+def test_image_permissions_selected_key(
+    client: TestClient,
+    auth_data: dict[str, str],
+    name: str,
+    expected_status: int,
+) -> None:
+    """Conserva los permisos al seleccionar una clave propia."""
+    response = client.get(
+        "/test/image",
+        headers=_bearer_headers(auth_data, name),
+    )
+
+    assert response.status_code == expected_status
+
+    if expected_status == 403:
+        assert_error(
+            response,
+            ErrorCode.INSUFFICIENT_PERMISSIONS,
+        )
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    ("name", "expected_status"),
+    [
+        ("anon", 403),
+        ("free", 403),
+        ("user", 403),
+        ("other", 403),
+        ("admin", 200),
+    ],
+)
+def test_admin_permissions(
+    client: TestClient,
+    auth_data: dict[str, str],
+    name: str,
+    expected_status: int,
+) -> None:
+    """Restringe la administración a claves Admin originales."""
+    response = client.get(
+        "/test/admin",
+        headers={
+            "X-API-Key": auth_data[f"secret_{name}"],
+        },
+    )
+
+    assert response.status_code == expected_status
+
+    if expected_status == 403:
+        assert_error(
+            response,
+            ErrorCode.INSUFFICIENT_PERMISSIONS,
+        )
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("name", [None, "free", "user"])
+def test_admin_rejects_session(
+    client: TestClient,
+    auth_data: dict[str, str],
+    name: str | None,
+) -> None:
+    """No concede privilegios Admin mediante sesión."""
+    response = client.get(
+        "/test/admin",
+        headers=_bearer_headers(auth_data, name),
+    )
+
+    assert_error(
+        response,
+        ErrorCode.INSUFFICIENT_PERMISSIONS,
+    )
+
+
+@pytest.mark.integration
+def test_admin_key_cannot_be_selected(
+    client: TestClient,
+    auth_data: dict[str, str],
+) -> None:
+    """Impide seleccionar una clave Admin mediante sesión."""
+    response = client.get(
+        "/test/admin",
+        headers=_bearer_headers(auth_data, "admin"),
+    )
+
+    assert_error(response, ErrorCode.API_KEY_NOT_FOUND)
+
+
+def test_admin_openapi_security(
+    client: TestClient,
+) -> None:
+    """Documenta exclusivamente la autenticación por API key."""
+    document = client.get("/openapi.json").json()
+
+    operation = document["paths"]["/test/admin"]["get"]
+
+    assert operation["security"] == [
+        {"ApiKeyAuth": []},
+    ]
+
+
+# =========================================================
+# PROPIEDAD DE CONVERSACIONES
+# =========================================================
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    ("credential", "target", "allowed"),
+    [
+        ("anon", "anon", True),
+        ("anon", "free", False),
+        ("free", "free", True),
+        ("free", "anon", False),
+        ("free", "user", False),
+        ("user", "user", True),
+        ("user", "free", False),
+        ("user", "user2", False),
+        ("user2", "user", False),
+        ("user2", "user2", True),
+        ("user", "other", False),
+        ("other", "user", False),
+        ("other", "other", True),
+        ("admin", "anon", True),
+        ("admin", "free", True),
+        ("admin", "user", True),
+        ("admin", "user2", True),
+        ("admin", "other", True),
+        ("admin", "admin", True),
+    ],
+)
+def test_thread_access(
+    client: TestClient,
+    thread_data: dict[str, str],
+    credential: str,
+    target: str,
+    allowed: bool,
+) -> None:
+    """Comprueba el aislamiento operativo de las conversaciones."""
+    thread_id = thread_data[f"thread_{target}"]
+
+    response = client.get(
+        f"/test/operation/{thread_id}",
+        headers={
+            "X-API-Key": thread_data[f"secret_{credential}"],
+        },
+    )
+
+    if allowed:
+        assert response.status_code == 200
+        assert response.json()["thread_id"] == thread_id
+
+        assert response.json()["api_key_id"] == (
+            thread_data[f"id_{target}"]
+        )
+
+    else:
+        assert_error(response, ErrorCode.THREAD_NOT_FOUND)
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    ("credential", "target", "allowed"),
+    [
+        ("free", "free", True),
+        ("free", "user", False),
+        ("user", "user", True),
+        ("user", "user2", False),
+        ("user2", "user2", True),
+        ("user2", "other", False),
+    ],
+)
+def test_selected_key_thread_access(
+    client: TestClient,
+    thread_data: dict[str, str],
+    credential: str,
+    target: str,
+    allowed: bool,
+) -> None:
+    """Conserva el aislamiento mediante una clave seleccionada."""
+    thread_id = thread_data[f"thread_{target}"]
+
+    response = client.get(
+        f"/test/operation/{thread_id}",
+        headers=_bearer_headers(
+            thread_data,
+            credential,
+        ),
+    )
+
+    if allowed:
+        assert response.status_code == 200
+        assert response.json()["thread_id"] == thread_id
+
+    else:
+        assert_error(response, ErrorCode.THREAD_NOT_FOUND)
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    "credential",
+    [
+        "anon",
+        "free",
+        "user",
+        "admin",
+    ],
+)
+def test_unknown_thread(
+    client: TestClient,
+    auth_data: dict[str, str],
+    credential: str,
+) -> None:
+    """Aplica el mismo error a conversaciones inexistentes."""
+    response = client.get(
+        f"/test/operation/{uuid4()}",
+        headers={
+            "X-API-Key": auth_data[f"secret_{credential}"],
+        },
+    )
+
+    assert_error(response, ErrorCode.THREAD_NOT_FOUND)
+
+
+# =========================================================
+# HISTORIAL MEDIANTE API KEY
+# =========================================================
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    ("credential", "expected"),
+    [
+        ("user", {"user"}),
+        ("user2", {"user2"}),
+        ("other", {"other"}),
+        (
+            "admin",
+            {
+                "anon",
+                "free",
+                "user",
+                "user2",
+                "other",
+                "admin",
+            },
+        ),
+    ],
+)
+def test_authorized_thread_listing(
+    client: TestClient,
+    thread_data: dict[str, str],
+    credential: str,
+    expected: set[str],
+) -> None:
+    """Lista exclusivamente las conversaciones autorizadas."""
+    response = client.get(
+        "/test/threads",
+        headers={
+            "X-API-Key": thread_data[f"secret_{credential}"],
+        },
+    )
+
+    assert response.status_code == 200
+
+    thread_ids = [
+        item["thread_id"]
+        for item in response.json()
+    ]
+
+    expected_ids = {
+        thread_data[f"thread_{name}"]
+        for name in expected
+    }
+
+    assert set(thread_ids) == expected_ids
+    assert len(thread_ids) == len(expected_ids)
+
+
+@pytest.mark.integration
+def test_selected_user_thread_listing(
+    client: TestClient,
+    thread_data: dict[str, str],
+) -> None:
+    """Limita el listado a la clave User seleccionada."""
+    response = client.get(
+        "/test/threads",
+        headers=_bearer_headers(
+            thread_data,
+            "user",
+        ),
+    )
+
+    assert response.status_code == 200
+
+    assert [
+        item["thread_id"]
+        for item in response.json()
+    ] == [
+        thread_data["thread_user"],
+    ]
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    "credential",
+    [
+        "anon",
+        "free",
+        "selected_free",
+    ],
+)
+def test_free_history_denied(
+    client: TestClient,
+    thread_data: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+    credential: str,
+) -> None:
+    """Deniega el historial Free antes de consultar sus datos."""
+    queries = {
+        name: Mock()
+        for name in (
+            "list_api_key_conversations",
+            "list_conversations",
+            "get_conversation_by_id",
+            "get_conversation_by_owner",
+            "list_messages",
+        )
+    }
+
+    for name, query in queries.items():
+        monkeypatch.setattr(db, name, query)
+
+    if credential == "selected_free":
+        headers = _bearer_headers(
+            thread_data,
+            "free",
+        )
+
+    else:
+        headers = {
+            "X-API-Key": thread_data[f"secret_{credential}"],
+        }
+
+    thread_id = thread_data["thread_free"]
+
+    for path in (
+        "/test/threads",
+        f"/test/threads/{thread_id}/messages",
+    ):
+        response = client.get(
+            path,
+            headers=headers,
+        )
+
+        assert_error(
+            response,
+            ErrorCode.INSUFFICIENT_PERMISSIONS,
+        )
+
+    for query in queries.values():
+        query.assert_not_called()
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    ("credential", "target", "allowed"),
+    [
+        ("user", "user", True),
+        ("user", "user2", False),
+        ("user", "free", False),
+        ("user", "other", False),
+        ("admin", "anon", True),
+        ("admin", "other", True),
+    ],
+)
+def test_authorized_messages(
+    client: TestClient,
+    thread_data: dict[str, str],
+    credential: str,
+    target: str,
+    allowed: bool,
+) -> None:
+    """Protege el contenido de las conversaciones ajenas."""
+    thread_id = thread_data[f"thread_{target}"]
+
+    response = client.get(
+        f"/test/threads/{thread_id}/messages",
+        headers={
+            "X-API-Key": thread_data[f"secret_{credential}"],
+        },
+    )
+
+    if not allowed:
+        assert_error(response, ErrorCode.THREAD_NOT_FOUND)
+        return
+
+    assert response.status_code == 200
+
+    messages = response.json()
+
+    assert len(messages) == 2
+
+    assert [
+        message["role"]
+        for message in messages
+    ] == ["user", "assistant"]
+
+    assert [
+        message["content"]
+        for message in messages
+    ] == [
+        f"Pregunta {target}",
+        f"Respuesta {target}",
+    ]
+
+
+# =========================================================
+# API KEYS PROPIAS MEDIANTE SESIÓN
+# =========================================================
+
+
+@pytest.mark.integration
+def test_owned_key_listing(
+    client: TestClient,
+    thread_data: dict[str, str],
+) -> None:
+    """Excluye claves ajenas, anónimas y administrativas."""
+    response = client.get(
+        "/test/keys",
+        headers=_bearer_headers(thread_data),
+    )
+
+    assert response.status_code == 200
+
+    api_keys = response.json()
+
+    assert {
+        item["id"]
+        for item in api_keys
+    } == {
+        thread_data["id_free"],
+        thread_data["id_user"],
+        thread_data["id_user2"],
+    }
+
+    assert len(api_keys) == 3
+
+    for api_key in api_keys:
+        assert api_key["user_id"] == thread_data["user_id"]
+        assert api_key["role"] in {"free", "user"}
+        assert "key_hash" not in api_key
+        assert "api_key" not in api_key
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    ("name", "allowed"),
+    [
+        ("free", True),
+        ("user", True),
+        ("admin", False),
+        ("anon", False),
+        ("other", False),
+    ],
+)
+def test_owned_key_detail(
+    client: TestClient,
+    auth_data: dict[str, str],
+    name: str,
+    allowed: bool,
+) -> None:
+    """Protege la consulta individual de API keys."""
+    api_key_id = auth_data[f"id_{name}"]
+
+    response = client.get(
+        f"/test/keys/{api_key_id}",
+        headers=_bearer_headers(auth_data),
+    )
+
+    if allowed:
+        assert response.status_code == 200
+
+        data = response.json()
+
+        assert data["id"] == api_key_id
+        assert data["user_id"] == auth_data["user_id"]
+        assert "key_hash" not in data
+        assert "api_key" not in data
+
+    else:
+        assert_error(response, ErrorCode.API_KEY_NOT_FOUND)
+
+
+# =========================================================
+# HISTORIAL MEDIANTE SESIÓN
+# =========================================================
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    "name",
+    [
+        "free",
+        "user",
+        "user2",
+    ],
+)
+def test_session_thread_listing(
+    client: TestClient,
+    thread_data: dict[str, str],
+    name: str,
+) -> None:
+    """Permite consultar el historial de cada clave propia."""
+    api_key_id = thread_data[f"id_{name}"]
+
+    response = client.get(
+        f"/test/keys/{api_key_id}/threads",
+        headers=_bearer_headers(thread_data),
+    )
+
+    assert response.status_code == 200
+
+    conversations = response.json()
+
+    assert len(conversations) == 1
+
+    assert conversations[0]["thread_id"] == (
+        thread_data[f"thread_{name}"]
+    )
+
+    assert conversations[0]["api_key_id"] == api_key_id
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    ("key_name", "target", "expected_error"),
+    [
+        ("free", "free", None),
+        ("user", "user", None),
+        ("user2", "user2", None),
+        ("free", "user", ErrorCode.THREAD_NOT_FOUND),
+        ("user", "user2", ErrorCode.THREAD_NOT_FOUND),
+        ("user", "other", ErrorCode.THREAD_NOT_FOUND),
+        ("other", "other", ErrorCode.API_KEY_NOT_FOUND),
+        ("anon", "anon", ErrorCode.API_KEY_NOT_FOUND),
+        ("admin", "admin", ErrorCode.API_KEY_NOT_FOUND),
+    ],
+)
+def test_session_messages_access(
+    client: TestClient,
+    thread_data: dict[str, str],
+    key_name: str,
+    target: str,
+    expected_error: ErrorCode | None,
+) -> None:
+    """Comprueba tanto la propiedad de la clave como del hilo."""
+    api_key_id = thread_data[f"id_{key_name}"]
+    thread_id = thread_data[f"thread_{target}"]
+
+    path = (
+        f"/test/keys/{api_key_id}"
+        f"/threads/{thread_id}/messages"
+    )
+
+    response = client.get(
+        path,
+        headers=_bearer_headers(thread_data),
+    )
+
+    if expected_error is not None:
+        assert_error(response, expected_error)
+        return
+
+    assert response.status_code == 200
+
+    assert [
+        message["content"]
+        for message in response.json()
+    ] == [
+        f"Pregunta {target}",
+        f"Respuesta {target}",
+    ]
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    "name",
+    [
+        "anon",
+        "other",
+        "admin",
+    ],
+)
+def test_session_history_checks_key_first(
+    client: TestClient,
+    thread_data: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+    name: str,
+) -> None:
+    """No consulta conversaciones de claves no autorizadas."""
+    query = Mock()
+
+    monkeypatch.setattr(
+        db,
+        "get_conversation_by_owner",
+        query,
+    )
+
+    api_key_id = thread_data[f"id_{name}"]
+    thread_id = thread_data[f"thread_{name}"]
+
+    path = (
+        f"/test/keys/{api_key_id}"
+        f"/threads/{thread_id}/messages"
+    )
+
+    response = client.get(
+        path,
+        headers=_bearer_headers(thread_data),
+    )
+
+    assert_error(response, ErrorCode.API_KEY_NOT_FOUND)
+
+    query.assert_not_called()
+
+
+@pytest.mark.integration
+def test_session_unknown_key(
+    client: TestClient,
+    auth_data: dict[str, str],
+) -> None:
+    """Oculta las claves inexistentes en consultas ordinarias."""
+    response = client.get(
+        f"/test/keys/{uuid4()}/threads",
+        headers=_bearer_headers(auth_data),
+    )
+
+    assert_error(response, ErrorCode.API_KEY_NOT_FOUND)
+
+
+@pytest.mark.integration
+def test_session_unknown_thread(
+    client: TestClient,
+    auth_data: dict[str, str],
+) -> None:
+    """Rechaza hilos inexistentes de una clave autorizada."""
+    api_key_id = auth_data["id_user"]
+
+    path = (
+        f"/test/keys/{api_key_id}"
+        f"/threads/{uuid4()}/messages"
+    )
+
+    response = client.get(
+        path,
+        headers=_bearer_headers(auth_data),
+    )
+
+    assert_error(response, ErrorCode.THREAD_NOT_FOUND)
+
+
+@pytest.mark.integration
+def test_empty_authorized_history(
+    client: TestClient,
+    auth_data: dict[str, str],
+    clean_db: Engine,
+) -> None:
+    """Distingue un historial vacío de un recurso inexistente."""
+    api_key_id = auth_data["id_user"]
+    thread_id = uuid4()
+
+    with Session(clean_db) as session:
+        db.create_conversation(
+            session,
+            thread_id,
+            UUID(api_key_id),
+        )
+
+        session.commit()
+
+    response = client.get(
+        f"/test/threads/{thread_id}/messages",
+        headers={
+            "X-API-Key": auth_data["secret_user"],
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+# =========================================================
+# ESTADOS DE CREDENCIALES E HISTORIAL
+# =========================================================
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("name", ["free", "user"])
+@pytest.mark.parametrize("deleted", [False, True])
+def test_session_history_key_states(
+    client: TestClient,
+    thread_data: dict[str, str],
+    clean_db: Engine,
+    name: str,
+    deleted: bool,
+) -> None:
+    """Aplica las restricciones de historial según el estado."""
+    api_key_id = thread_data[f"id_{name}"]
+    thread_id = thread_data[f"thread_{name}"]
+
+    with Session(clean_db) as session:
+        api_key = db.get_api_key_by_id(
+            session,
+            UUID(api_key_id),
+        )
+
+        assert api_key is not None
+
+        if deleted:
+            db.delete_api_key(api_key)
+        else:
+            db.set_api_key_active(api_key, False)
+
+        session.commit()
+
+    headers = _bearer_headers(thread_data)
+
+    key_path = f"/test/keys/{api_key_id}"
+    threads_path = f"{key_path}/threads"
+    messages_path = f"{threads_path}/{thread_id}/messages"
+
+    for path in (
+        key_path,
+        threads_path,
+        messages_path,
+    ):
+        response = client.get(
+            path,
+            headers=headers,
+        )
+
+        if deleted:
+            assert_error(
+                response,
+                ErrorCode.API_KEY_NOT_FOUND,
+            )
+
+        else:
+            assert response.status_code == 200
+
+    response = client.get(
+        "/test/keys",
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+
+    visible_ids = {
+        item["id"]
+        for item in response.json()
+    }
+
+    assert (api_key_id in visible_ids) == (not deleted)
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("deleted", [False, True])
+def test_admin_history_revoked_key(
+    client: TestClient,
+    thread_data: dict[str, str],
+    clean_db: Engine,
+    deleted: bool,
+) -> None:
+    """Conserva el acceso global al historial de claves revocadas."""
+    api_key_id = thread_data["id_other"]
+    thread_id = thread_data["thread_other"]
+
+    with Session(clean_db) as session:
+        api_key = db.get_api_key_by_id(
+            session,
+            UUID(api_key_id),
+        )
+
+        assert api_key is not None
+
+        if deleted:
+            db.delete_api_key(api_key)
+        else:
+            db.set_api_key_active(api_key, False)
+
+        session.commit()
+
+    headers = {
+        "X-API-Key": thread_data["secret_admin"],
+    }
+
+    listing = client.get(
+        "/test/threads",
+        headers=headers,
+    )
+
+    assert listing.status_code == 200
+
+    assert thread_id in {
+        item["thread_id"]
+        for item in listing.json()
+    }
+
+    response = client.get(
+        f"/test/threads/{thread_id}/messages",
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+
+    assert len(response.json()) == 2
+
+    with Session(clean_db) as session:
+        conversation = db.get_conversation_by_id(
+            session,
+            UUID(thread_id),
+        )
+
+        api_key = db.get_api_key_by_id(
+            session,
+            UUID(api_key_id),
+        )
+
+        assert conversation is not None
+        assert api_key is not None
+
+        assert conversation.api_key_id == UUID(api_key_id)
+        assert api_key.is_active is False
+        assert (api_key.deleted_at is not None) == deleted
+
+
+# =========================================================
+# ROBUSTEZ DE LA AUTORIZACIÓN
+# =========================================================
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    ("exception", "code"),
+    [
+        (
+            OperationalError(
+                None,
+                None,
+                Exception("detalle-sensible-ficticio"),
+            ),
+            ErrorCode.SERVICE_UNAVAILABLE,
+        ),
+        (
+            SQLAlchemyError("detalle-sensible-ficticio"),
+            ErrorCode.INTERNAL_SERVER_ERROR,
+        ),
+    ],
+)
+def test_authorization_database_failure(
+    client: TestClient,
+    thread_data: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+    exception: SQLAlchemyError,
+    code: ErrorCode,
+) -> None:
+    """No confunde fallos relacionales con recursos inexistentes."""
+    query = Mock(side_effect=exception)
+
+    monkeypatch.setattr(
+        db,
+        "get_conversation_by_owner",
+        query,
+    )
+
+    secret = thread_data["secret_user"]
+    thread_id = thread_data["thread_user"]
+
+    response = client.get(
+        f"/test/operation/{thread_id}",
+        headers={
+            "X-API-Key": secret,
+        },
+    )
+
+    assert_error(response, code)
+
+    query.assert_called_once()
+
+    assert secret not in response.text
+    assert "detalle-sensible-ficticio" not in response.text

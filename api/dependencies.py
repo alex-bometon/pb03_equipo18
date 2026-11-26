@@ -1,7 +1,7 @@
 """Dependencias de autenticación HTTP de ReciclaTIA."""
 
 import re
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from typing import Annotated
 from uuid import UUID
 
@@ -31,6 +31,7 @@ from api.request_context import (
 from api.security import SessionStore, hash_secret
 from src import db
 from src.enums import ApiKeyRole
+from src.models import ApiKey, Conversation
 
 
 # =========================================================
@@ -283,6 +284,46 @@ def _authenticate_user_session(
         raise translate_db_error(exc) from None
 
 
+def _is_owned_ordinary_key(
+    api_key: ApiKey,
+    user_id: UUID,
+) -> bool:
+    """Comprueba si una clave pertenece al ámbito del usuario."""
+    return (
+        api_key.user_id == user_id
+        and api_key.role in (
+            ApiKeyRole.FREE,
+            ApiKeyRole.USER,
+        )
+        and api_key.deleted_at is None
+    )
+
+
+def require_owned_api_key(
+    session: Session,
+    user_id: UUID,
+    api_key_id: UUID,
+    *,
+    require_active: bool = True,
+) -> ApiKey:
+    """Recupera una clave ordinaria autorizada para su dueño."""
+    api_key = db.get_api_key_by_id(
+        session,
+        api_key_id,
+    )
+
+    if api_key is None or not _is_owned_ordinary_key(
+        api_key,
+        user_id,
+    ):
+        raise ApiError(ErrorCode.API_KEY_NOT_FOUND)
+
+    if require_active and not api_key.is_active:
+        raise ApiError(ErrorCode.API_KEY_INACTIVE)
+
+    return api_key
+
+
 def _authenticate_selected_key(
     session: Session,
     user_id: UUID,
@@ -295,24 +336,11 @@ def _authenticate_selected_key(
     except ValueError:
         raise ApiError(ErrorCode.VALIDATION_ERROR) from None
 
-    api_key = db.get_api_key_by_id(
+    api_key = require_owned_api_key(
         session,
+        user_id,
         api_key_id,
     )
-
-    if (
-        api_key is None
-        or api_key.user_id != user_id
-        or api_key.role not in (
-            ApiKeyRole.FREE,
-            ApiKeyRole.USER,
-        )
-        or api_key.deleted_at is not None
-    ):
-        raise ApiError(ErrorCode.API_KEY_NOT_FOUND)
-
-    if not api_key.is_active:
-        raise ApiError(ErrorCode.API_KEY_INACTIVE)
 
     return AuthContext(
         user_id=user_id,
@@ -444,3 +472,234 @@ def require_api_key_context(
         raise ApiError(ErrorCode.API_KEY_REQUIRED)
 
     return context
+
+
+# =========================================================
+# AUTORIZACIÓN POR ROLES
+# =========================================================
+
+
+def _check_roles(
+    context: AuthContext,
+    *allowed_roles: ApiKeyRole,
+) -> AuthContext:
+    """Comprueba que la identidad dispone de un rol autorizado."""
+    if context.api_key_id is None:
+        raise ApiError(ErrorCode.API_KEY_REQUIRED)
+
+    if context.role not in allowed_roles:
+        raise ApiError(ErrorCode.INSUFFICIENT_PERMISSIONS)
+
+    return context
+
+
+def require_roles(
+    *allowed_roles: ApiKeyRole,
+) -> Callable[[AuthContext], AuthContext]:
+    """Construye una dependencia de autorización por roles."""
+
+    def dependency(
+        context: Annotated[
+            AuthContext,
+            Depends(require_api_key_context),
+        ],
+    ) -> AuthContext:
+        """Comprueba los permisos de la identidad autenticada."""
+        return _check_roles(
+            context,
+            *allowed_roles,
+        )
+
+    return dependency
+
+
+def require_admin(
+    context: Annotated[
+        AuthContext,
+        Depends(get_current_api_key),
+    ],
+) -> AuthContext:
+    """Exige una API key administrativa original y activa."""
+    return _check_roles(
+        context,
+        ApiKeyRole.ADMIN,
+    )
+
+
+# =========================================================
+# AUTORIZACIÓN SOBRE CONVERSACIONES
+# =========================================================
+
+
+def _require_owned_thread(
+    session: Session,
+    api_key_id: UUID,
+    thread_id: UUID,
+) -> Conversation:
+    """Recupera una conversación perteneciente a una clave."""
+    conversation = db.get_conversation_by_owner(
+        session,
+        thread_id,
+        api_key_id,
+    )
+
+    if conversation is None:
+        raise ApiError(ErrorCode.THREAD_NOT_FOUND)
+
+    return conversation
+
+
+def require_thread_access(
+    session: Session,
+    context: AuthContext,
+    thread_id: UUID,
+) -> Conversation:
+    """Comprueba el acceso operativo a una conversación."""
+    _check_roles(
+        context,
+        ApiKeyRole.FREE,
+        ApiKeyRole.USER,
+        ApiKeyRole.ADMIN,
+    )
+
+    if context.role == ApiKeyRole.ADMIN:
+        conversation = db.get_conversation_by_id(
+            session,
+            thread_id,
+        )
+
+        if conversation is None:
+            raise ApiError(ErrorCode.THREAD_NOT_FOUND)
+
+        return conversation
+
+    api_key_id = context.api_key_id
+
+    if api_key_id is None:
+        raise ApiError(ErrorCode.API_KEY_REQUIRED)
+
+    return _require_owned_thread(
+        session,
+        api_key_id,
+        thread_id,
+    )
+
+
+def list_authorized_threads(
+    session: Session,
+    context: AuthContext,
+) -> list[Conversation]:
+    """Recupera las conversaciones visibles mediante API key."""
+    _check_roles(
+        context,
+        ApiKeyRole.USER,
+        ApiKeyRole.ADMIN,
+    )
+
+    if context.role == ApiKeyRole.ADMIN:
+        return db.list_conversations(session)
+
+    api_key_id = context.api_key_id
+
+    if api_key_id is None:
+        raise ApiError(ErrorCode.API_KEY_REQUIRED)
+
+    return db.list_api_key_conversations(
+        session,
+        api_key_id,
+    )
+
+
+# =========================================================
+# RECURSOS PROPIOS MEDIANTE SESIÓN
+# =========================================================
+
+
+def _require_session_user_id(
+    context: AuthContext,
+) -> UUID:
+    """Exige una identidad de sesión sin selección de clave."""
+    if (
+        context.user_id is None
+        or context.api_key_id is not None
+        or context.role is not None
+    ):
+        raise ApiError(ErrorCode.INSUFFICIENT_PERMISSIONS)
+
+    return context.user_id
+
+
+def require_session_api_key(
+    session: Session,
+    context: AuthContext,
+    api_key_id: UUID,
+) -> ApiKey:
+    """Recupera una clave ordinaria visible para su propietario."""
+    user_id = _require_session_user_id(context)
+
+    return require_owned_api_key(
+        session,
+        user_id,
+        api_key_id,
+        require_active=False,
+    )
+
+
+def list_owned_api_keys(
+    session: Session,
+    context: AuthContext,
+) -> list[ApiKey]:
+    """Lista las claves ordinarias no eliminadas del usuario."""
+    user_id = _require_session_user_id(context)
+
+    api_keys = db.list_user_api_keys(
+        session,
+        user_id,
+    )
+
+    return [
+        api_key
+        for api_key in api_keys
+        if _is_owned_ordinary_key(
+            api_key,
+            user_id,
+        )
+    ]
+
+
+def list_session_threads(
+    session: Session,
+    context: AuthContext,
+    api_key_id: UUID,
+) -> list[Conversation]:
+    """Lista el historial de una clave propia no eliminada."""
+    api_key = require_session_api_key(
+        session,
+        context,
+        api_key_id,
+    )
+
+    return db.list_api_key_conversations(
+        session,
+        api_key.id,
+    )
+
+
+def require_session_thread_access(
+    session: Session,
+    context: AuthContext,
+    api_key_id: UUID,
+    thread_id: UUID,
+) -> Conversation:
+    """Comprueba el acceso al historial mediante una sesión."""
+    api_key = require_session_api_key(
+        session,
+        context,
+        api_key_id,
+    )
+
+    return _require_owned_thread(
+        session,
+        api_key.id,
+        thread_id,
+    )
