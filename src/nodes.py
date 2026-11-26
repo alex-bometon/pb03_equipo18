@@ -8,7 +8,6 @@ La aprobación humana corresponde a ``src.agent``.
 from __future__ import annotations
 
 import json
-import re
 from copy import deepcopy
 from math import isfinite
 from typing import Any
@@ -33,11 +32,11 @@ from src.agent_schedule import (
 from src.agent_resultado import respuesta_geografica_integrada
 from src.agent_tool_loop import (
     _consulta_proximidad,
+    _solo_descripcion,
     ejecutar_especialista,
 )
 from src.llm import get_llm
 from src.state import EstadoGrafo, agregar_evento, registrar_turno
-from src.text_utils import normalizar_texto
 
 
 # =========================================================
@@ -81,7 +80,7 @@ def supervisor(estado: EstadoGrafo) -> dict[str, Any]:
         entrada = {
             "pedido": estado["pedido"],
             "contexto_revision": estado["contexto_revision"],
-            "hay_imagen": bool(estado["ruta_imagen"]),
+            "hay_imagen": bool(estado["ruta_imagen"] or estado["identificacion_imagen"]),
             "hay_ubicacion": estado["ubicacion"] is not None,
             "necesita_residuos": estado["necesita_residuos"],
             "necesita_puntos": estado["necesita_puntos"],
@@ -183,24 +182,6 @@ def _requiere_proximidad(estado: EstadoGrafo) -> bool:
     return _consulta_proximidad(estado["pedido"])
 
 
-def _solo_descripcion(estado: EstadoGrafo) -> bool:
-    """Distingue descripción de imagen de clasificación de residuos."""
-    if not estado.get("ruta_imagen"):
-        return False
-
-    pedido = normalizar_texto(estado["pedido"])
-    describe = re.search(
-        r"\b(?:describe|descripcion|identifica|que ves)\b",
-        pedido,
-    )
-    clasifica = re.search(
-        r"\b(?:recicl\w*|tir\w*|contenedor\w*|"
-        r"deposit\w*|destino\w*|clasific\w*|separ\w*)\b",
-        pedido,
-    )
-    return bool(describe and not clasifica)
-
-
 def _evidencia_suficiente(estado: EstadoGrafo,) -> tuple[str, str | None]:
     """Distingue evidencia suficiente, parcial y ausente."""
     soporte = {"residuos": False, "puntos": False}
@@ -249,6 +230,21 @@ def _evidencia_suficiente(estado: EstadoGrafo,) -> tuple[str, str | None]:
             ):
                 soporte["residuos"] = True
 
+    hay_imagen = bool(estado["ruta_imagen"] or estado["identificacion_imagen"])
+
+    if hay_imagen:
+        hay_descripcion = any(
+            e.get("rol") == "residuos"
+            and e.get("herramienta") == "describir_imagen"
+            and isinstance(e.get("datos"), str)
+            and e["datos"].strip()
+            for e in estado["evidencias"]
+            if isinstance(e, dict)
+        )
+
+        if not hay_descripcion:
+            soporte["residuos"] = False
+    
     if _requiere_proximidad(estado):
         soporte["puntos"] = False
 
@@ -347,7 +343,7 @@ def _sintesis_directa(
         and datos["respuesta"].strip()
         and isinstance(datos.get("fuentes"), list)
         and datos["fuentes"]
-        and not estado.get("ruta_imagen")
+        and not (estado.get("ruta_imagen") or estado.get("identificacion_imagen"))
     ):
         if rol == "residuos" and not estado["necesita_puntos"]:
             plan = [

@@ -98,18 +98,14 @@ def _necesidades_texto(
     return residuos, puntos
 
 
-def _senales_iniciales(
-    estado: Mapping[str, Any],
-) -> tuple[bool, bool, bool]:
+def _senales_iniciales(estado: Mapping[str, Any]) -> tuple[bool, bool, bool]:
     """Devuelve necesidades reconocidas y posible ambigüedad.
 
     No llama al LLM ni realiza cambios en el estado.
     """
     pedido = estado.get("pedido", "")
 
-    texto = normalizar_texto(
-        pedido if isinstance(pedido, str) else ""
-    )
+    texto = normalizar_texto(pedido if isinstance(pedido, str) else "")
 
     residuos, puntos = _necesidades_texto(texto)
 
@@ -127,8 +123,8 @@ def _senales_iniciales(
         if isinstance(contexto, str):
             residuos, puntos = _necesidades_texto(contexto)
 
-    # Una imagen proporcionada activa residuos.
-    if estado.get("ruta_imagen"):
+    # Una imagen o identificación previa activa residuos.
+    if estado.get("ruta_imagen") or estado.get("identificacion_imagen"):
         residuos = True
 
     return residuos, puntos, ubicacion_indefinida

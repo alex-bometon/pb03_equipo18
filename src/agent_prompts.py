@@ -92,6 +92,10 @@ es responsabilidad del otro especialista.
 - Si el usuario ha proporcionado una ruta de imagen validable y hace falta
   identificar el objeto, usa la herramienta visual. Su descripción NO basta
   para asignar destino: consulta después el RAG con el objeto identificado.
+- Si existe una identificación visual previa, reutiliza su descripción.
+  No vuelvas a solicitar la identificación de la misma imagen.
+- Si solo se solicita una descripción, no consultes innecesariamente el RAG.
+  Si se solicita un destino, utiliza el RAG con el objeto identificado.
 - Conserva las excepciones, condiciones y límites de las fuentes.
 - Si el RAG se abstiene, comunica la falta de evidencia o pregunta el dato
   decisivo. No reinterpretes la abstención como una clasificación positiva.
