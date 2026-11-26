@@ -225,7 +225,7 @@ def test_clasificacion_directa_y_aprobacion(aislado):
     assert herramienta.call_args.args[0] == "consultar_rag"
     assert len(estado["fuentes"]) == 1
 
-    estado = aprobar_plan(hilo, True, estado)
+    estado = aprobar_plan(hilo, True, approval_id=estado["approval_id"])
 
     assert estado["done"] is True
     assert estado["pendiente_hitl"] is False
@@ -249,7 +249,7 @@ def test_rechazo_y_reformulacion(aislado):
         hilo,
     )
 
-    estado = aprobar_plan(hilo, False, estado)
+    estado = aprobar_plan(hilo, False, approval_id=estado["approval_id"])
 
     assert estado["done"] is False
     assert estado["pendiente_hitl"] is False
@@ -306,7 +306,7 @@ def test_limite_turnos_tras_rechazo(aislado):
         hilo,
     )
 
-    estado = aprobar_plan(hilo, False, estado)
+    estado = aprobar_plan(hilo, False, approval_id=estado["approval_id"])
 
     with pytest.raises(ValueError, match="límite de turnos"):
         procesar_turno(
@@ -557,7 +557,8 @@ def test_consulta_compuesta_con_dos_especialistas(aislado):
     ]
 
     assert creador.call_count == 0  # Ruta determinista, sin LLM de selección.
-    sintesis.assert_called_once()
+    sintesis.assert_not_called()
+    assert "No se ha verificado" in estado["respuesta"]
     assert len(estado["evidencias"]) == 3
     assert estado["tool_calls_turno"] == 3
     assert estado["fuentes"]

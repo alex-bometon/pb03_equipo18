@@ -179,17 +179,17 @@ def _decidir(
 ) -> EstadoProducto:
     """Delega la decisión HITL en el orquestador compartido."""
     if estado["error"]:
-        raise ValueError(
-            "El turno contiene un error; no puede aprobarse."
-        )
+        raise ValueError("El turno contiene un error; no puede aprobarse.")
 
-    if not estado["pendiente_hitl"]:
+    approval_id = estado["approval_id"]
+
+    if not estado["pendiente_hitl"] or approval_id is None:
         raise ValueError("No hay ningún plan pendiente.")
 
     return aprobar_plan(
         estado["thread_id"],
         aprobar,
-        estado,
+        approval_id=approval_id,
     )
 
 

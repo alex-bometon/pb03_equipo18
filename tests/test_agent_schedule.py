@@ -124,7 +124,7 @@ def test_geo_dia_cerrado_y_horario_desconocido():
 
 
 def test_rag_horario_documental_movil_con_citas():
-    estado = _base("¿Qué horario tiene el punto limpio móvil de Calle Ejemplo?")
+    estado = _base("¿Está abierto ahora el punto limpio móvil de Calle Ejemplo?")
     estado["evidencias"] = [{
         "rol": "puntos", "herramienta": "consultar_rag",
         "datos": {
@@ -149,7 +149,7 @@ def test_rag_horario_documental_movil_con_citas():
 
 
 def test_rag_horario_no_evaluable_sin_hora_completa():
-    estado = _base("¿Qué horario tiene el punto limpio móvil de Calle Ejemplo?")
+    estado = _base("¿Está abierto ahora el punto limpio móvil de Calle Ejemplo?")
     estado["evidencias"] = [{
         "rol": "puntos", "herramienta": "consultar_rag",
         "datos": {
@@ -189,6 +189,7 @@ def test_modalidad_compatible_documentada():
                   "Las pilas se depositan en el punto limpio móvil [C1].")
     assert tipo_punto_documentado(estado) == "movil"
     estado["evidencias"][0]["datos"]["respuesta"] = (
-        "Punto limpio fijo o punto limpio móvil [C1]."
+        "Las pilas se depositan en el punto limpio fijo "
+        "o en el punto limpio móvil [C1]."
     )
     assert tipo_punto_documentado(estado) == "todos"

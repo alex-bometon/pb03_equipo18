@@ -329,10 +329,12 @@ def buscar_puntos_limpios_cercanos(
     configurado e identifica la fuente utilizada.
     """
 
-    tipo_normalizado = tipo.strip().lower() if isinstance(tipo, str) else tipo
+    tipo_normalizado = (
+        tipo.strip().lower() if isinstance(tipo, str) else tipo
+    )
+    avisos: list[str] = []
 
     try:
-        # Fuente principal: API municipal.
         registros = _consultar_api_puntos_limpios(
             latitud=latitud,
             longitud=longitud,
@@ -341,26 +343,41 @@ def buscar_puntos_limpios_cercanos(
         )
 
     except RuntimeError:
-        # Solo se activa ante fallos técnicos de la API.
-        # Los errores de validación siguen propagándose.
+        puntos = None
 
+    else:
+        puntos = _preparar_puntos_cercanos(
+            registros,
+            latitud,
+            longitud,
+        )
+
+        if registros and not puntos:
+            puntos = None
+        elif len(puntos) < len(registros):
+            descartados = len(registros) - len(puntos)
+            avisos.append(
+                f"Se descartaron {descartados} registros inválidos "
+                "de la API municipal."
+            )
+
+    if puntos is None:
         registros_locales = consultar_puntos_limpios_locales(
-            abrir_coleccion=_abrir_coleccion
+            abrir_coleccion=_abrir_coleccion,
+            avisos=avisos,
         )
 
         equivalencias = {
             "todos": {"Fijo", "Móvil", "Móvil 24h", "Proximidad"},
             "fijo": {"Fijo"},
-            "movil": {"Móvil", "Móvil 24h"},
+            "movil": {"Móvil"},
             "proximidad": {"Proximidad"},
         }
 
         tipos_permitidos = equivalencias[tipo_normalizado]
-
         puntos = []
 
         for punto in registros_locales:
-
             if punto["tipo"] not in tipos_permitidos:
                 continue
 
@@ -379,21 +396,16 @@ def buscar_puntos_limpios_cercanos(
                 "distancia_metros": round(distancia, 2),
             })
 
-        puntos.sort(
-            key=lambda punto: punto["distancia_metros"]
-        )
+        puntos.sort(key=lambda punto: punto["distancia_metros"])
 
         fuente = "corpus_local"
-
-    else:
-        # La API respondió correctamente.
-        # Los errores de procesamiento no activan el fallback.
-        puntos = _preparar_puntos_cercanos(
-            registros,
-            latitud,
-            longitud,
+        avisos.insert(
+            0,
+            "Datos del corpus local indexado; "
+            "pueden estar desactualizados.",
         )
 
+    else:
         fuente = "api"
 
     # Comprobación final del radio, también para la API.
@@ -411,11 +423,6 @@ def buscar_puntos_limpios_cercanos(
         # Candidatos adicionales para priorizar horarios sin sacrificar
         # el contrato original de 10 puntos más cercanos para la UI.
         "puntos_candidatos": cercanos[:GEO_MAX_RESULTS * 6],
-        "aviso": (
-            "Datos del corpus local indexado; "
-            "pueden estar desactualizados."
-            if fuente == "corpus_local"
-            else None
-        ),
+        "aviso": " ".join(avisos) or None,
     }
 

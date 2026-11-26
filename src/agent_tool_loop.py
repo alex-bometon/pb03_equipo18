@@ -31,13 +31,18 @@ from config import (
 from src.agent_prompts import PROMPT_PUNTOS, PROMPT_RESIDUOS
 from src.agent_schedule import (
     debe_buscar_puntos_automaticamente,
+    modalidades_solicitadas,
     requiere_hora,
     tipo_punto_documentado,
 )
 from src.llm import get_llm
 from src.state import EstadoGrafo, agregar_evento
 from src.text_utils import normalizar_texto
-from src.tools import TOOL_BY_NAME, ejecutar_tool_estructurado
+from src.tools import (
+    TOOL_BY_NAME,
+    ejecutar_tool_estructurado,
+    validar_solicitud_tool,
+)
 
 
 Rol = Literal["residuos", "puntos"]
@@ -151,6 +156,7 @@ def _entrada(estado: Mapping[str, Any], rol: Rol) -> str:
         "pedido": estado["pedido"],
         "ubicacion_proporcionada": estado.get("ubicacion"),
         "ruta_imagen_proporcionada": estado.get("ruta_imagen"),
+        "identificacion_imagen": estado.get("identificacion_imagen"),
         "contexto_revision": estado.get("contexto_revision", ""),
         "historial": estado.get("historial_turnos", []),
     }
@@ -225,21 +231,35 @@ def _consulta_temporal(pedido: str) -> bool:
     )
 
 
-def _tipo_geografico(pedido: str) -> str | None:
-    """Determina un filtro único aceptado por la API municipal."""
-    texto = normalizar_texto(pedido)
-    modalidades = set()
-    for tipo, patron in (
-        ("fijo", r"\bfij[oa]s?\b"),
-        ("movil", r"\bmovil(?:es)?\b"),
-        ("proximidad", r"\bde\s+proximidad\b"),
-    ):
-        if re.search(patron, texto):
-            modalidades.add(tipo)
+def _tipo_geografico(pedido: str) -> str:
+    """Selecciona un filtro admitido por la herramienta geográfica."""
+    modalidades = modalidades_solicitadas(pedido)
 
-    if len(modalidades) > 1 or re.search(r"\b24\s*h(?:oras?)?\b", texto):
-        return None
-    return modalidades.pop() if modalidades else "todos"
+    if len(modalidades) != 1:
+        return "todos"
+
+    modalidad = next(iter(modalidades))
+
+    return "todos" if modalidad == "movil 24h" else modalidad
+
+def _solo_descripcion(estado: Mapping[str, Any]) -> bool:
+    """Distingue descripción visual de clasificación de residuos."""
+    if not estado.get("ruta_imagen") or estado.get("identificacion_imagen"):
+        return False
+
+    pedido = normalizar_texto(estado["pedido"])
+
+    describe = re.search(
+        r"\b(?:describe|descripcion|identifica|que ves)\b",
+        pedido,
+    )
+    clasifica = re.search(
+        r"\b(?:recicl\w*|tir\w*|contenedor\w*|"
+        r"deposit\w*|destino\w*|clasific\w*|separ\w*)\b",
+        pedido,
+    )
+
+    return bool(describe and not clasifica)
 
 
 def _ruta_directa(
@@ -255,7 +275,7 @@ def _ruta_directa(
     if not isinstance(pedido, str) or not pedido.strip():
         return None
 
-    if estado.get("ruta_imagen"):
+    if estado.get("ruta_imagen") or estado.get("identificacion_imagen"):
         return None
 
     texto = normalizar_texto(pedido)
@@ -281,9 +301,11 @@ def _ruta_directa(
             return "", {}
 
         tipo = _tipo_geografico(pedido)
-        if tipo is None:
-            return None
-        if tipo == "todos" and estado.get("necesita_residuos"):
+
+        if (
+            not modalidades_solicitadas(pedido)
+            and estado.get("necesita_residuos")
+        ):
             tipo = tipo_punto_documentado(estado)
         return "buscar_puntos_limpios_cercanos", {"tipo": tipo}
 
@@ -312,6 +334,20 @@ class _RegistroEjecucion:
         self.total = estado["tool_calls_turno"]
         self.llamadas_rol = 0
         self.cache: dict[str, dict[str, Any]] = {}
+        self.fallos_pendientes: dict[str, list[int]] = {}
+
+        identificacion = estado.get("identificacion_imagen")
+
+        if rol == "residuos" and identificacion is not None:
+            descripcion = identificacion["descripcion"]
+
+            self.evidencias.append({
+                "rol": "residuos",
+                "herramienta": "describir_imagen",
+                "datos": descripcion,
+                "origen": "identificacion_previa",
+            })
+            self.observaciones.append(descripcion)
 
     def _registrar(
         self,
@@ -321,6 +357,9 @@ class _RegistroEjecucion:
         resultado: dict[str, Any],
         *,
         cache: bool = False,
+        causa: Literal[
+            "solicitud", "presupuesto", "ejecucion"
+        ] = "ejecucion",
     ) -> tuple[str, str]:
         """Registra datos estructurados y produce respuesta del tool."""
         ok = resultado["ok"]
@@ -382,6 +421,11 @@ class _RegistroEjecucion:
                 nombre, resultado
             )[:TRACE_PREVIEW_MAX_CHARS],
         })
+
+        if not ok:
+            self.trazas[-1]["causa"] = causa
+            self.trazas[-1]["recuperado"] = False
+
         self.log = agregar_evento(
             self.log,
             nodo=self.rol,
@@ -399,6 +443,70 @@ class _RegistroEjecucion:
         identificador: str,
     ) -> tuple[str, str]:
         """Autoriza, limita, ejecuta y registra una herramienta."""
+        identificacion = self.estado.get("identificacion_imagen")
+
+        if (
+            self.rol == "residuos"
+            and nombre == "describir_imagen"
+            and identificacion is not None
+            and isinstance(args, dict)
+            and not set(args) - {"ruta_imagen"}
+            and ("ruta_imagen" not in args or isinstance(args["ruta_imagen"], str))
+        ):
+            resultado = {
+                "ok": True,
+                "nombre": nombre,
+                "datos": identificacion["descripcion"],
+                "error": None,
+            }
+
+            return self._registrar(
+                nombre,
+                identificador,
+                paso,
+                resultado,
+                cache=True,
+            )
+
+        argumentos, fallo = _preparar_args(nombre, args, self.estado)
+
+        if fallo is None:
+            fallo = validar_solicitud_tool(
+                nombre,
+                argumentos,
+                rol=self.rol,
+            )
+
+        if fallo is not None:
+            resultado = {
+                "ok": False,
+                "datos": None,
+                "error": fallo,
+            }
+            return self._registrar(
+                nombre,
+                identificador,
+                paso,
+                resultado,
+                causa="solicitud",
+            )
+
+        llave = json.dumps(
+            {"nombre": nombre, "args": argumentos},
+            ensure_ascii=False,
+            sort_keys=True,
+            default=str,
+        )
+
+        if llave in self.cache:
+            return self._registrar(
+                nombre,
+                identificador,
+                paso,
+                self.cache[llave],
+                cache=True,
+            )
+
         if (
             self.llamadas_rol >= MAX_TOOL_CALLS_PER_SPECIALIST
             or self.total >= MAX_TOOL_CALLS_PER_TURN
@@ -409,42 +517,28 @@ class _RegistroEjecucion:
                 "error": "Error: presupuesto de herramientas agotado.",
             }
             return self._registrar(
-                nombre, identificador, paso, resultado
-            )
-
-        argumentos, fallo = _preparar_args(
-            nombre, args, self.estado
-        )
-        if fallo:
-            resultado = {"ok": False, "datos": None, "error": fallo}
-            return self._registrar(
-                nombre, identificador, paso, resultado
-            )
-
-        llave = json.dumps(
-            {"nombre": nombre, "args": argumentos},
-            ensure_ascii=False,
-            sort_keys=True,
-            default=str,
-        )
-        if llave in self.cache:
-            return self._registrar(
                 nombre,
                 identificador,
                 paso,
-                self.cache[llave],
-                cache=True,
+                resultado,
+                causa="presupuesto",
             )
 
         self.llamadas_rol += 1
         self.total += 1
-        resultado = ejecutar_tool_estructurado(
-            nombre, argumentos, rol=self.rol
-        )
-        self.cache[llave] = resultado
-        return self._registrar(
-            nombre, identificador, paso, resultado
-        )
+
+        resultado = ejecutar_tool_estructurado(nombre, argumentos, rol=self.rol)
+
+        if resultado["ok"]:
+            self.cache[llave] = resultado
+
+            for indice in self.fallos_pendientes.pop(llave, []):
+                self.trazas[indice]["recuperado"] = True
+
+        else:
+            self.fallos_pendientes.setdefault(llave, []).append(len(self.trazas))
+
+        return self._registrar(nombre, identificador, paso, resultado)
 
     def finalizar(self) -> dict[str, Any]:
         """Actualiza el estado sin mutar listas del checkpoint."""
@@ -490,9 +584,7 @@ class _RegistroEjecucion:
 # =========================================================
 
 
-def _respuesta_concluyente(
-    registro: _RegistroEjecucion,
-) -> bool:
+def _respuesta_concluyente(registro: _RegistroEjecucion) -> bool:
     """Evita otra ronda LLM cuando las tools ya fundamentan la salida."""
     evidencias = [
         evidencia for evidencia in registro.evidencias
@@ -502,10 +594,22 @@ def _respuesta_concluyente(
         return False
 
     if registro.rol == "residuos":
-        if registro.estado.get("ruta_imagen") and not any(
-            e.get("herramienta") == "describir_imagen" for e in evidencias
-        ):
+        hay_imagen = bool(
+            registro.estado.get("ruta_imagen")
+            or registro.estado.get("identificacion_imagen")
+        )
+        hay_descripcion = any(
+            e.get("herramienta") == "describir_imagen"
+            and isinstance(e.get("datos"), str)
+            and e["datos"].strip()
+            for e in evidencias
+        )
+
+        if hay_imagen and not hay_descripcion:
             return False
+
+        if _solo_descripcion(registro.estado):
+            return hay_descripcion
         return any(
             e.get("herramienta") == "consultar_rag"
             and isinstance(e.get("datos"), dict)
@@ -627,6 +731,14 @@ def ejecutar_especialista(
         raise RuntimeError("Hay herramientas configuradas no registradas.")
 
     registro = _RegistroEjecucion(estado, rol)
+    
+    if (
+        rol == "residuos"
+        and estado.get("identificacion_imagen") is not None
+        and _solo_descripcion(estado)
+    ):
+        return registro.finalizar()
+    
     directa = _ruta_directa(estado, rol)
 
     try:
@@ -672,10 +784,8 @@ def ejecutar_especialista(
             detalle=registro.error,
         )
 
-    estado_con_evidencia = {
-        **estado,
-        "evidencias": registro.evidencias,
-    }
+    estado_con_evidencia = {**estado, "evidencias": registro.evidencias}
+    
     if (
         requiere_hora(estado_con_evidencia, rol)
         and not any(
@@ -684,8 +794,6 @@ def ejecutar_especialista(
             if isinstance(e, dict)
         )
     ):
-        registro.ejecutar(
-            "hora_actual", {}, paso=0, identificador="hora-auto"
-        )
+        registro.ejecutar("hora_actual", {}, paso=0, identificador="hora-auto")
 
     return registro.finalizar()

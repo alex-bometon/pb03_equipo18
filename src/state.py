@@ -36,6 +36,18 @@ EstadoEvidencia = Literal[
 ]
 
 
+class IdentificacionImagen(TypedDict):
+    """Resultado estructurado de la identificación visual."""
+
+    estado: Literal[
+        "allowed",
+        "out_of_domain",
+        "policy_violation",
+        "uncertain",
+    ]
+    descripcion: str
+
+
 class EventoLog(TypedDict):
     nodo: str
     accion: str
@@ -49,6 +61,8 @@ class TrazaTool(TypedDict, total=False):
     status: str
     fuente: str | None
     preview: str
+    causa: Literal["solicitud", "presupuesto", "ejecucion"]
+    recuperado: bool
 
 
 class RegistroTurno(TypedDict):
@@ -71,6 +85,7 @@ class EstadoGrafo(TypedDict):
     contexto_revision: str
     ubicacion: Ubicacion | None
     ruta_imagen: str | None
+    identificacion_imagen: IdentificacionImagen | None
 
     # Selección y progreso de especialistas.
     necesita_residuos: bool
@@ -95,6 +110,7 @@ class EstadoGrafo(TypedDict):
     plan: list[str]
     plan_aprobado: bool | None
     pendiente_hitl: bool
+    approval_id: str | None
     done: bool
     error: str | None
 
@@ -151,6 +167,7 @@ def crear_estado_grafo(
     max_turns: int = MAX_TURNS_DEFAULT,
     ubicacion: Ubicacion | None = None,
     ruta_imagen: str | None = None,
+    identificacion_imagen: IdentificacionImagen | None = None,
 ) -> EstadoGrafo:
     """Crea un estado completo con valores independientes."""
 
@@ -163,6 +180,7 @@ def crear_estado_grafo(
         "contexto_revision": "",
         "ubicacion": deepcopy(ubicacion),
         "ruta_imagen": ruta_imagen,
+        "identificacion_imagen": deepcopy(identificacion_imagen),
 
         "necesita_residuos": False,
         "necesita_puntos": False,
@@ -184,6 +202,7 @@ def crear_estado_grafo(
         "plan": [],
         "plan_aprobado": None,
         "pendiente_hitl": False,
+        "approval_id": None,
         "done": False,
         "error": None,
 
@@ -227,6 +246,7 @@ def preparar_nuevo_turno(
     max_steps: int | None = None,
     ubicacion: Ubicacion | None = None,
     ruta_imagen: str | None = None,
+    identificacion_imagen: IdentificacionImagen | None = None,
 ) -> EstadoGrafo:
     """Reinicia los datos del turno sin perder el contexto permitido.
 
@@ -235,19 +255,13 @@ def preparar_nuevo_turno(
     """
 
     if estado["done"]:
-        raise ValueError(
-            "La conversación ya ha finalizado."
-        )
+        raise ValueError("La conversación ya ha finalizado.")
 
     if estado["pendiente_hitl"]:
-        raise ValueError(
-            "Hay un plan pendiente de aprobación o rechazo."
-        )
+        raise ValueError("Hay un plan pendiente de aprobación o rechazo.")
 
     if estado["turnos_consumidos"] >= estado["max_turns"]:
-        raise ValueError(
-            "Se ha alcanzado el límite de turnos."
-        )
+        raise ValueError("Se ha alcanzado el límite de turnos.")
 
     nuevo = crear_estado_grafo(
         mensaje,
@@ -259,15 +273,14 @@ def preparar_nuevo_turno(
         max_turns=estado["max_turns"],
         ubicacion=ubicacion,
         ruta_imagen=ruta_imagen,
+        identificacion_imagen=identificacion_imagen,
     )
 
-    nuevo["turnos_consumidos"] = (
-        estado["turnos_consumidos"] + 1
-    )
+    nuevo["turnos_consumidos"] = estado["turnos_consumidos"] + 1
 
     nuevo["historial_turnos"] = deepcopy(
         estado["historial_turnos"][-MAX_HISTORY_TURNS:]
-    )
+        )
 
     nuevo["contexto_revision"] = estado["contexto_revision"]
 

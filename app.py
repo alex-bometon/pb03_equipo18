@@ -285,7 +285,12 @@ def _consultar(mensaje: str, archivo: Any) -> None:
 def _resolver_hitl(aprobado: bool) -> None:
     """Reanuda el checkpoint real y actualiza la decisión visible."""
     estado = _estado()
-    if estado.get("error") or not estado.get("pendiente_hitl"):
+    approval_id = estado["approval_id"]
+    if (
+        estado.get("error")
+        or not estado.get("pendiente_hitl")
+        or approval_id is None
+    ):
         st.session_state.rt_aviso = (
             "error", "No existe un plan válido pendiente de decisión."
         )
@@ -295,7 +300,7 @@ def _resolver_hitl(aprobado: bool) -> None:
             resultado = aprobar_plan(
                 st.session_state.rt_thread_id,
                 aprobado,
-                estado,
+                approval_id=approval_id,
             )
     except (ValueError, RuntimeError, OSError) as exc:
         st.session_state.rt_aviso = ("error", str(exc))

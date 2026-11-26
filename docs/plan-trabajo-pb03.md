@@ -188,7 +188,7 @@ sin fallos ni omisiones.
 **Finalización:** identidades, permisos y gestión de credenciales
 implementados y validados.
 
-**Integración:** pendiente de pull request hacia develop.
+**Integración:** PR #6 integrado en develop.
 
 **Referencia:** especificaciones 12, 13, 14 y 15.
 
@@ -198,26 +198,39 @@ se integrarán en la fase 08.
 
 ### Fase 05 — Adaptación del núcleo
 
-**Rama:** refactor/agent-execution.
+**Rama:** refactor/execution.
 
 **Dependencia:** fase 00.
 
-- [ ] Incorporar approval_id e identificacion_imagen al estado.
-- [ ] Adaptar procesar_turno() y aprobar_plan().
-- [ ] Reforzar las comprobaciones del checkpoint y las transiciones HITL.
-- [ ] Adaptar la preparación de turnos y el contexto posterior al rechazo.
-- [ ] Corregir la detección de fallos técnicos bloqueantes.
-- [ ] Corregir la interpretación de modalidades, compatibilidad y horarios.
-- [ ] Diferenciar búsquedas vacías de resultados técnicamente inválidos.
-- [ ] Adaptar presupuestos internos y validaciones de herramientas.
-- [ ] Adaptar la integración multimodal y la CLI.
-- [ ] Ejecutar las pruebas de regresión.
+- [x] Incorporar approval_id e identificacion_imagen al estado.
+- [x] Adaptar procesar_turno() y aprobar_plan().
+- [x] Reforzar las comprobaciones del checkpoint y las transiciones HITL.
+- [x] Adaptar la preparación de turnos y el contexto posterior al rechazo.
+- [x] Corregir la detección de fallos técnicos bloqueantes.
+- [x] Corregir la interpretación de modalidades, compatibilidad y horarios.
+- [x] Diferenciar búsquedas vacías de resultados técnicamente inválidos.
+- [x] Adaptar presupuestos internos y validaciones de herramientas.
+- [x] Adaptar la integración multimodal y la CLI.
+- [x] Ejecutar las pruebas de regresión.
 
-**Archivos principales:** config.py, src/state.py, src/graph.py, src/agent.py, src/nodes.py, src/agent_routing.py, src/agent_resultado.py, src/agent_schedule.py, src/agent_tool_loop.py, src/tools/ y CLI.
+**Archivos principales:** config.py, src/state.py, src/agent.py,
+src/nodes.py, src/agent_routing.py, src/agent_resultado.py,
+src/agent_schedule.py, src/agent_tool_loop.py, src/agent_prompts.py,
+src/retrieve_structured.py, src/tools/, src/cli_agent.py y app.py.
 
-**Finalización:** núcleo adaptado, funcional e independiente, conservando la topología y el HITL obligatorio.
+**Validación:** 1680 pruebas superadas en la regresión completa.
 
-**Referencias:** especificaciones 01 a 06 y 10.
+**Evidencias:** [Validación de la fase 05](../entregables/evidencias/fase-05-adaptacion-nucleo.md).
+
+**Finalización:** núcleo adaptado a los contratos del PB03, conservando la topología, la independencia del backend y el HITL obligatorio.
+
+**Integración:** pendiente de pull request hacia develop.
+
+**Referencias:** especificaciones 01 a 06, 10, 12 y 15.
+
+La recepción y adaptación de imágenes, la identificación visual estructurada y el filtrado previo se implementarán en la fase 06.
+La coordinación temporal y concurrente se implementará en la fase 07.
+La integración definitiva con FastAPI se realizará en la fase 08.
 
 ### Fase 06 — Filtrado previo y multimodalidad
 

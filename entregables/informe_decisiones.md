@@ -96,6 +96,42 @@ La aplicación cubre Madrid ciudad con el corpus incluido. Las distancias son ge
 
 Una versión posterior podría incorporar una base persistente de conversaciones, actualización controlada de las fuentes, geocodificación y cálculo de itinerarios. Esas funciones no están incluidas en esta fase del proyecto.
 
+## Adaptación del núcleo al PB03 — Fase 05
+
+La adaptación del núcleo conserva la arquitectura multiagente del PB02 y su independencia respecto a FastAPI y PostgreSQL.
+
+### Decisiones de implementación
+
+| Componente | Decisión |
+|---|---|
+| HITL | Identificador UUID independiente para cada propuesta. |
+| Checkpoint | Fuente de autoridad para resolver aprobaciones. |
+| Rechazo | Retirada de la propuesta y conservación del contexto autorizado. |
+| Fallos técnicos | Diferenciación entre errores bloqueantes, solicitudes rechazadas y operaciones recuperadas. |
+| Compatibilidad | Evidencia documental afirmativa para recomendar modalidades de depósito. |
+| Geografía | Diferenciación entre búsquedas vacías y registros inválidos. |
+| Horarios | Separación entre horarios publicados y disponibilidad actual. |
+| Presupuestos | Validación previa y contabilización de invocaciones efectivas. |
+| Multimodalidad | Reutilización de identificaciones visuales previamente admitidas. |
+| CLI | Conservación de la ejecución local y del HITL manual y automático. |
+
+### Límites internos
+
+| Parámetro | Valor |
+|---|---:|
+| MAX_ITER | 4 |
+| MAX_STEPS_DEFAULT | 3 |
+| MAX_STEPS_LIMIT | 4 |
+| MAX_TOOL_CALLS_PER_SPECIALIST | 4 |
+| MAX_TOOL_CALLS_PER_TURN | 6 |
+| GRAPH_RECURSION_LIMIT | 16 |
+
+Se conservan las cuatro herramientas existentes, sin incorporar nuevas dependencias ni modificar la topología del grafo.
+
+La regresión completa ha superado las 1680 pruebas existentes.
+
+La integración HTTP, la coordinación concurrente y la identificación visual previa se completarán en las fases correspondientes.
+
 ## Material de consulta
 
 - [README](../README.md): entrada al proyecto e instalación.

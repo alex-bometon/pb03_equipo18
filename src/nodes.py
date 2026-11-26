@@ -8,32 +8,35 @@ La aprobación humana corresponde a ``src.agent``.
 from __future__ import annotations
 
 import json
-import re
 from copy import deepcopy
 from math import isfinite
 from typing import Any
+from uuid import uuid4
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.output_parsers import JsonOutputParser
 
-from config import MAX_CONTEXTO_CARACTERES
+from config import AGENT_TOOLS_BY_ROLE, MAX_CONTEXTO_CARACTERES
 from src.agent_prompts import PROMPT_SINTESIS, PROMPT_SUPERVISOR
 from src.agent_routing import (
     requiere_llm_supervisor,
     resolver_enrutamiento,
 )
 from src.agent_schedule import (
+    _hora,
     anexos_temporales,
+    consulta_disponibilidad_actual,
     debe_buscar_puntos_automaticamente,
+    requiere_hora
 )
 from src.agent_resultado import respuesta_geografica_integrada
 from src.agent_tool_loop import (
     _consulta_proximidad,
+    _solo_descripcion,
     ejecutar_especialista,
 )
 from src.llm import get_llm
 from src.state import EstadoGrafo, agregar_evento, registrar_turno
-from src.text_utils import normalizar_texto
 
 
 # =========================================================
@@ -77,7 +80,7 @@ def supervisor(estado: EstadoGrafo) -> dict[str, Any]:
         entrada = {
             "pedido": estado["pedido"],
             "contexto_revision": estado["contexto_revision"],
-            "hay_imagen": bool(estado["ruta_imagen"]),
+            "hay_imagen": bool(estado["ruta_imagen"] or estado["identificacion_imagen"]),
             "hay_ubicacion": estado["ubicacion"] is not None,
             "necesita_residuos": estado["necesita_residuos"],
             "necesita_puntos": estado["necesita_puntos"],
@@ -115,6 +118,7 @@ def supervisor(estado: EstadoGrafo) -> dict[str, Any]:
         "necesita_residuos": decision["necesita_residuos"],
         "necesita_puntos": decision["necesita_puntos"],
         "siguiente": decision["siguiente"],
+        "pendiente_hitl": decision["siguiente"] == "FINISH",
         "iteracion": estado["iteracion"] + 1,
         "log": agregar_evento(
             estado["log"],
@@ -178,24 +182,6 @@ def _requiere_proximidad(estado: EstadoGrafo) -> bool:
     return _consulta_proximidad(estado["pedido"])
 
 
-def _solo_descripcion(estado: EstadoGrafo) -> bool:
-    """Distingue descripción de imagen de clasificación de residuos."""
-    if not estado.get("ruta_imagen"):
-        return False
-
-    pedido = normalizar_texto(estado["pedido"])
-    describe = re.search(
-        r"\b(?:describe|descripcion|identifica|que ves)\b",
-        pedido,
-    )
-    clasifica = re.search(
-        r"\b(?:recicl\w*|tir\w*|contenedor\w*|"
-        r"deposit\w*|destino\w*|clasific\w*|separ\w*)\b",
-        pedido,
-    )
-    return bool(describe and not clasifica)
-
-
 def _evidencia_suficiente(estado: EstadoGrafo,) -> tuple[str, str | None]:
     """Distingue evidencia suficiente, parcial y ausente."""
     soporte = {"residuos": False, "puntos": False}
@@ -244,6 +230,21 @@ def _evidencia_suficiente(estado: EstadoGrafo,) -> tuple[str, str | None]:
             ):
                 soporte["residuos"] = True
 
+    hay_imagen = bool(estado["ruta_imagen"] or estado["identificacion_imagen"])
+
+    if hay_imagen:
+        hay_descripcion = any(
+            e.get("rol") == "residuos"
+            and e.get("herramienta") == "describir_imagen"
+            and isinstance(e.get("datos"), str)
+            and e["datos"].strip()
+            for e in estado["evidencias"]
+            if isinstance(e, dict)
+        )
+
+        if not hay_descripcion:
+            soporte["residuos"] = False
+    
     if _requiere_proximidad(estado):
         soporte["puntos"] = False
 
@@ -261,25 +262,59 @@ def _evidencia_suficiente(estado: EstadoGrafo,) -> tuple[str, str | None]:
 
 
 def _hay_fallo_bloqueante(estado: EstadoGrafo) -> bool:
-    """Reconoce errores técnicos sin confundirlos con datos ausentes."""
+    """Distingue los fallos imprescindibles de los auxiliares."""
     if estado.get("error"):
+        return True
+
+    consulta_actual = consulta_disponibilidad_actual(estado["pedido"])
+
+    necesita_hora = consulta_actual and (
+        requiere_hora(estado, "residuos")
+        or requiere_hora(estado, "puntos")
+    )
+
+    if necesita_hora and _hora(estado) is None:
         return True
 
     for traza in estado["traza_tools"]:
         if traza.get("status") != "error":
             continue
-        if traza.get("tool") == "hora_actual":
-            continue  # Fallo auxiliar: conservar evidencia RAG/API.
+
+        herramienta = traza.get("tool")
+
+        if traza.get("recuperado") is True:
+            continue
+
+        rol = traza.get("nodo")
+
+        if traza.get("causa") == "solicitud":
+            if herramienta not in AGENT_TOOLS_BY_ROLE.get(rol, ()):
+                continue
+
+            if any(
+                evidencia.get("rol") == rol
+                and evidencia.get("herramienta") == herramienta
+                for evidencia in estado["evidencias"]
+                if isinstance(evidencia, dict)
+            ):
+                continue
+
+        if herramienta == "hora_actual":
+            continue
+
         if (
-            traza.get("tool") == "buscar_puntos_limpios_cercanos"
+            herramienta == "buscar_puntos_limpios_cercanos"
             and estado["ubicacion"] is None
         ):
             continue
+
         if (
-            traza.get("tool") == "describir_imagen"
+            herramienta == "describir_imagen"
             and not estado["ruta_imagen"]
+            and estado["identificacion_imagen"] is None
         ):
             continue
+
         return True
 
     return False
@@ -299,7 +334,7 @@ def _sintesis_directa(
     No combina evidencias distintas ni reformula clasificaciones del RAG.
     Los casos complejos continúan utilizando el prompt de síntesis.
     """
-    if evidencia != "suficiente" or _hay_fallo_bloqueante(estado):
+    if evidencia != "suficiente":
         return None
 
     principales = [
@@ -325,7 +360,7 @@ def _sintesis_directa(
         and datos["respuesta"].strip()
         and isinstance(datos.get("fuentes"), list)
         and datos["fuentes"]
-        and not estado.get("ruta_imagen")
+        and not (estado.get("ruta_imagen") or estado.get("identificacion_imagen"))
     ):
         if rol == "residuos" and not estado["necesita_puntos"]:
             plan = [
@@ -482,11 +517,14 @@ def sintetizar(estado: EstadoGrafo) -> dict[str, Any]:
 
     if estado["siguiente"] != "sintetizar":
         raise RuntimeError("Síntesis fuera de la ruta autorizada.")
+    
+    if _hay_fallo_bloqueante(estado):
+        raise RuntimeError("No se pudo completar la consulta por un fallo técnico.")
 
     evidencia, motivo = _evidencia_suficiente(estado)
     integrada = (
         respuesta_geografica_integrada(estado)
-        if evidencia == "suficiente" and not _hay_fallo_bloqueante(estado)
+        if evidencia == "suficiente"
         else None
     )
     limitaciones = deepcopy(estado["limitaciones"])
@@ -496,11 +534,6 @@ def sintetizar(estado: EstadoGrafo) -> dict[str, Any]:
         respuesta, plan = integrada
         modo = "integrado"
     elif evidencia == "insuficiente":
-        if _hay_fallo_bloqueante(estado):
-            raise RuntimeError(
-                "No se pudo obtener evidencia por un fallo técnico."
-            )
-
         respuesta = _respuesta_sin_evidencia(estado)
         plan = [
             "Aclarar los datos necesarios para responder la consulta.",
@@ -587,6 +620,7 @@ def sintetizar(estado: EstadoGrafo) -> dict[str, Any]:
         "limitaciones": limitaciones,
         "plan_aprobado": None,
         "pendiente_hitl": False,
+        "approval_id": str(uuid4()),
         "done": False,
         "log": agregar_evento(
             estado["log"],
@@ -614,6 +648,7 @@ def aplicar(estado: EstadoGrafo) -> dict[str, Any]:
     cambios: dict[str, Any] = {
         "done": aprobado,
         "pendiente_hitl": False,
+        "approval_id": None,
         "historial_turnos": historial,
         "log": agregar_evento(
             estado["log"],
@@ -637,6 +672,7 @@ def aplicar(estado: EstadoGrafo) -> dict[str, Any]:
             "fuentes": [],
             "notas_residuos": "",
             "notas_puntos": "",
+            "limitaciones": [],
             "estado_evidencia": "insuficiente",
             "abstencion": True,
             "motivo": None,
