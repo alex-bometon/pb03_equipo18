@@ -23,6 +23,7 @@ from api.credential_validation import (
     validar_nueva_password,
     validar_password_verificacion,
 )
+from api.error_catalog import ErrorCode
 from config import (
     EMAIL_MAX_LENGTH,
     GEO_MAX_LATITUDE,
@@ -640,3 +641,15 @@ class HealthOut(ApiSchema):
 
     status: Literal["ok"]
     storage: Literal["postgres"]
+
+
+# =========================================================
+# CONTRATO DE ERRORES
+# =========================================================
+
+class ErrorOut(ApiSchema):
+    """Representación pública de un error HTTP."""
+
+    code: ErrorCode
+    message: NonBlankText
+    request_id: UUIDText

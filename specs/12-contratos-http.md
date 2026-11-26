@@ -568,6 +568,49 @@ Cuando no pueda determinarse una causa técnica más específica, se utilizará 
 
 No se utilizarán mensajes generados por el LLM para determinar códigos HTTP.
 
+### 8.8. Protocolo HTTP
+
+| HTTP | Código | Situación |
+|---|---|---|
+| 400 | BAD_REQUEST | Petición no interpretable |
+| 404 | ROUTE_NOT_FOUND | Ruta inexistente |
+| 405 | METHOD_NOT_ALLOWED | Método HTTP no permitido |
+
+Los errores generados por el framework se adaptarán a ErrorOut.
+
+Se conservarán las cabeceras necesarias del protocolo, como Allow
+y WWW-Authenticate, cuando corresponda.
+
+No se expondrán directamente los detalles internos de las excepciones
+del framework.
+
+### 8.9. Catálogo y tratamiento centralizado
+
+Los códigos públicos, estados HTTP y mensajes se centralizarán
+en api/error_catalog.py.
+
+Los errores controlados de la API se representarán mediante ApiError,
+sin permitir mensajes públicos personalizados.
+
+El contrato ErrorOut utilizará códigos reconocidos por el catálogo,
+mensajes no vacíos e identificadores UUID en formato canónico.
+
+Los errores de validación del núcleo y de las credenciales se
+traducirán según su tipo y contexto, sin interpretar mensajes
+de excepciones.
+
+Los incumplimientos de la política de creación de contraseñas
+devolverán INVALID_PASSWORD.
+
+Las contraseñas incorrectas o incompatibles utilizadas para
+autenticación devolverán INVALID_CREDENTIALS.
+
+Retry-After podrá proporcionarse mediante un entero no negativo
+cuando se produzca RATE_LIMIT_EXCEEDED.
+
+Los manejadores utilizarán un mecanismo común de construcción de
+respuestas de error.
+
 ## 9. Resultados válidos y falsos éxitos
 
 No constituyen errores HTTP:
