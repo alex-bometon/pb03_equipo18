@@ -28,6 +28,7 @@ fastapi>=0.165,<1
 uvicorn>=0.54,<1
 pydantic>=2.10,<3
 python-multipart>=0.0.34,<1
+starlette
 
 # Persistencia relacional
 sqlmodel>=0.0.49,<0.1

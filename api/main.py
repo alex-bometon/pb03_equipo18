@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from api.config import load_settings
+from api.exception_handlers import register_exception_handlers
 from src.db import (
     check_database,
     create_db_engine,
@@ -62,3 +63,5 @@ app = FastAPI(
     description="API REST del asistente de gestión de residuos de Madrid.",
     lifespan=lifespan,
 )
+
+register_exception_handlers(app)
