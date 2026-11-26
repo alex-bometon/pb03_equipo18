@@ -180,3 +180,20 @@ def test_application_error_response(client: TestClient) -> None:
     }
 
     assert str(UUID(request_id)) == request_id
+
+
+@pytest.mark.parametrize(
+    "path",
+    ["/docs", "/openapi.json", "/ruta-inexistente"],
+)
+def test_application_request_id(
+    client: TestClient,
+    path: str,
+) -> None:
+    """Comprueba la trazabilidad de la aplicación real."""
+    response = client.get(path)
+
+    request_id = response.headers[REQUEST_ID_HEADER]
+
+    assert UUID(request_id).version == 4
+    assert str(UUID(request_id)) == request_id

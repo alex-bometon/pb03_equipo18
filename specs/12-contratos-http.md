@@ -611,6 +611,8 @@ cuando se produzca RATE_LIMIT_EXCEEDED.
 Los manejadores utilizarán un mecanismo común de construcción de
 respuestas de error.
 
+Las respuestas de rechazo preflight generadas por CORSMiddleware conservarán su formato nativo. Incluirán X-Request-ID, pero no estarán sujetas a ErrorOut.
+
 ## 9. Resultados válidos y falsos éxitos
 
 No constituyen errores HTTP:
