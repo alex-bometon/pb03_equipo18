@@ -1733,3 +1733,510 @@ def test_concurrent_api_key_issue(
             registered_user.id,
             role,
         ) == maximum
+
+
+# =========================================================
+# APROVISIONAMIENTO ADMINISTRATIVO
+# =========================================================
+
+
+ADMIN_TEST_EMAIL = "admin-ficticio@example.com"
+
+
+@pytest.fixture
+def admin_settings() -> ApiSettings:
+    """Genera credenciales administrativas exclusivas de pruebas."""
+    return ApiSettings(
+        ADMIN_EMAIL=ADMIN_TEST_EMAIL,
+        ADMIN_PASSWORD=security.generate_secret(),
+        API_KEY=security.generate_secret(),
+        BCRYPT_ROUNDS=TEST_ROUNDS,
+    )
+
+@pytest.mark.integration
+def test_admin_bootstrap(
+    clean_db: Engine,
+    admin_settings: ApiSettings,
+) -> None:
+    """Crea una cuenta y una credencial administrativa."""
+    result = auth_service.bootstrap_admin_api_key(
+        clean_db,
+        admin_settings,
+    )
+
+    assert result is None
+
+    assert admin_settings.ADMIN_PASSWORD is not None
+    assert admin_settings.API_KEY is not None
+
+    password = admin_settings.ADMIN_PASSWORD.get_secret_value()
+    secret = admin_settings.API_KEY.get_secret_value()
+
+    with Session(clean_db) as session:
+        users = db.list_users(session)
+        keys = db.list_api_keys(session)
+
+        assert len(users) == 1
+        assert len(keys) == 1
+
+        user = users[0]
+        api_key = keys[0]
+
+        assert user.email == ADMIN_TEST_EMAIL
+        assert user.is_active is True
+        assert user.deleted_at is None
+        assert user.password_hash != password
+        assert verify_password(password, user.password_hash)
+
+        assert api_key.role == ApiKeyRole.ADMIN
+        assert api_key.user_id == user.id
+        assert api_key.is_active is True
+        assert api_key.deleted_at is None
+        assert api_key.key_hash == hash_secret(secret)
+        assert api_key.key_hash != secret
+
+
+@pytest.mark.integration
+def test_admin_bootstrap_idempotent(
+    clean_db: Engine,
+    admin_settings: ApiSettings,
+) -> None:
+    """Conserva los registros originales entre reinicios."""
+    auth_service.bootstrap_admin_api_key(
+        clean_db,
+        admin_settings,
+    )
+
+    with Session(clean_db) as session:
+        user = db.list_users(session)[0]
+        api_key = db.list_api_keys(session)[0]
+
+        user_before = user.model_dump()
+        key_before = api_key.model_dump()
+
+    auth_service.bootstrap_admin_api_key(
+        clean_db,
+        admin_settings,
+    )
+
+    with Session(clean_db) as session:
+        users = db.list_users(session)
+        keys = db.list_api_keys(session)
+
+        assert len(users) == 1
+        assert len(keys) == 1
+
+        assert users[0].model_dump() == user_before
+        assert keys[0].model_dump() == key_before
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "ADMIN_EMAIL",
+        "ADMIN_PASSWORD",
+        "API_KEY",
+    ],
+)
+def test_admin_bootstrap_missing_configuration(
+    admin_settings: ApiSettings,
+    monkeypatch: pytest.MonkeyPatch,
+    field: str,
+) -> None:
+    """Rechaza configuraciones administrativas incompletas."""
+    settings = admin_settings.model_copy(
+        update={field: None},
+    )
+
+    session_factory = Mock()
+
+    monkeypatch.setattr(
+        auth_service,
+        "Session",
+        session_factory,
+    )
+
+    with pytest.raises(ApiError) as exc_info:
+        auth_service.bootstrap_admin_api_key(
+            Mock(spec=Engine),
+            settings,
+        )
+
+    assert exc_info.value.code == ErrorCode.SERVICE_NOT_CONFIGURED
+
+    session_factory.assert_not_called()
+
+
+@pytest.mark.integration
+def test_admin_bootstrap_existing_ordinary_user(
+    clean_db: Engine,
+    admin_settings: ApiSettings,
+) -> None:
+    """Impide convertir una cuenta ordinaria en administrativa."""
+    assert admin_settings.ADMIN_PASSWORD is not None
+
+    password = admin_settings.ADMIN_PASSWORD.get_secret_value()
+
+    ordinary_user = auth_service.register_user(
+        clean_db,
+        RegisterIn(
+            email=ADMIN_TEST_EMAIL,
+            password=password,
+        ),
+        rounds=TEST_ROUNDS,
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match="La cuenta existente no es administrativa",
+    ):
+        auth_service.bootstrap_admin_api_key(
+            clean_db,
+            admin_settings,
+        )
+
+    with Session(clean_db) as session:
+        users = db.list_users(session)
+
+        assert len(users) == 1
+        assert users[0].id == ordinary_user.id
+        assert db.list_api_keys(session) == []
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    "role",
+    [
+        ApiKeyRole.FREE,
+        ApiKeyRole.USER,
+    ],
+)
+def test_admin_bootstrap_key_role_conflict(
+    clean_db: Engine,
+    admin_settings: ApiSettings,
+    role: ApiKeyRole,
+) -> None:
+    """Impide reutilizar una credencial con otro rol."""
+    auth_service.bootstrap_admin_api_key(
+        clean_db,
+        admin_settings,
+    )
+
+    with Session(clean_db) as session:
+        api_key = db.list_api_keys(session)[0]
+        api_key.role = role
+
+        session.commit()
+
+    with pytest.raises(
+        RuntimeError,
+        match="Conflicto de credencial administrativa",
+    ):
+        auth_service.bootstrap_admin_api_key(
+            clean_db,
+            admin_settings,
+        )
+
+    with Session(clean_db) as session:
+        keys = db.list_api_keys(session)
+
+        assert len(keys) == 1
+        assert keys[0].role == role
+
+
+@pytest.mark.integration
+def test_admin_bootstrap_key_owner_conflict(
+    clean_db: Engine,
+    admin_settings: ApiSettings,
+    registered_user: UserOut,
+) -> None:
+    """Impide reasignar una credencial de otro propietario."""
+    assert admin_settings.API_KEY is not None
+
+    secret = admin_settings.API_KEY.get_secret_value()
+
+    with Session(clean_db) as session:
+        api_key = ApiKey(
+            user_id=registered_user.id,
+            key_hash=hash_secret(secret),
+            role=ApiKeyRole.ADMIN,
+        )
+
+        db.create_api_key(session, api_key)
+        session.commit()
+
+    with pytest.raises(
+        RuntimeError,
+        match="Conflicto de credencial administrativa",
+    ):
+        auth_service.bootstrap_admin_api_key(
+            clean_db,
+            admin_settings,
+        )
+
+    with Session(clean_db) as session:
+        users = db.list_users(session)
+        keys = db.list_api_keys(session)
+
+        assert len(users) == 1
+        assert len(keys) == 1
+        assert keys[0].user_id == registered_user.id
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("deleted", [False, True])
+def test_admin_bootstrap_inactive_user(
+    clean_db: Engine,
+    admin_settings: ApiSettings,
+    deleted: bool,
+) -> None:
+    """No reactiva cuentas administrativas deshabilitadas."""
+    auth_service.bootstrap_admin_api_key(
+        clean_db,
+        admin_settings,
+    )
+
+    with Session(clean_db) as session:
+        user = db.list_users(session)[0]
+
+        if deleted:
+            db.delete_user(user)
+        else:
+            db.set_user_active(user, False)
+
+        session.commit()
+
+    with pytest.raises(ApiError) as exc_info:
+        auth_service.bootstrap_admin_api_key(
+            clean_db,
+            admin_settings,
+        )
+
+    assert exc_info.value.code == ErrorCode.USER_INACTIVE
+
+    with Session(clean_db) as session:
+        users = db.list_users(session)
+
+        assert len(users) == 1
+        assert users[0].is_active is False
+        assert (users[0].deleted_at is not None) == deleted
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("deleted", [False, True])
+def test_admin_bootstrap_inactive_key(
+    clean_db: Engine,
+    admin_settings: ApiSettings,
+    deleted: bool,
+) -> None:
+    """No reactiva credenciales administrativas deshabilitadas."""
+    auth_service.bootstrap_admin_api_key(
+        clean_db,
+        admin_settings,
+    )
+
+    with Session(clean_db) as session:
+        api_key = db.list_api_keys(session)[0]
+
+        if deleted:
+            db.delete_api_key(api_key)
+        else:
+            db.set_api_key_active(api_key, False)
+
+        session.commit()
+
+    with pytest.raises(
+        RuntimeError,
+        match="La credencial administrativa no está activa",
+    ):
+        auth_service.bootstrap_admin_api_key(
+            clean_db,
+            admin_settings,
+        )
+
+    with Session(clean_db) as session:
+        keys = db.list_api_keys(session)
+
+        assert len(keys) == 1
+        assert keys[0].is_active is False
+        assert (keys[0].deleted_at is not None) == deleted
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("revoked", [False, True])
+def test_admin_bootstrap_key_rotation(
+    clean_db: Engine,
+    admin_settings: ApiSettings,
+    revoked: bool,
+) -> None:
+    """Permite sustituir una credencial mediante el entorno."""
+    auth_service.bootstrap_admin_api_key(
+        clean_db,
+        admin_settings,
+    )
+
+    with Session(clean_db) as session:
+        original = db.list_api_keys(session)[0]
+
+        original_id = original.id
+        owner_id = original.user_id
+
+        if revoked:
+            db.set_api_key_active(original, False)
+
+        session.commit()
+
+    new_secret = security.generate_secret()
+
+    assert admin_settings.ADMIN_PASSWORD is not None
+
+    new_settings = ApiSettings(
+        ADMIN_EMAIL=ADMIN_TEST_EMAIL,
+        ADMIN_PASSWORD=(
+            admin_settings.ADMIN_PASSWORD.get_secret_value()
+        ),
+        API_KEY=new_secret,
+        BCRYPT_ROUNDS=TEST_ROUNDS,
+    )
+
+    auth_service.bootstrap_admin_api_key(
+        clean_db,
+        new_settings,
+    )
+
+    with Session(clean_db) as session:
+        original = db.get_api_key_by_id(
+            session,
+            original_id,
+        )
+
+        replacement = db.get_api_key_by_hash(
+            session,
+            hash_secret(new_secret),
+        )
+
+        assert original is not None
+        assert replacement is not None
+
+        assert len(db.list_users(session)) == 1
+        assert len(db.list_api_keys(session)) == 2
+
+        assert original.is_active == (not revoked)
+        assert replacement.id != original_id
+        assert replacement.user_id == owner_id
+        assert replacement.role == ApiKeyRole.ADMIN
+        assert replacement.is_active is True
+
+
+@pytest.mark.integration
+def test_admin_password_synchronization(
+    clean_db: Engine,
+    admin_settings: ApiSettings,
+    auth_store: SessionStore,
+    dummy_hash: str,
+) -> None:
+    """Exige sincronizar la contraseña con el secreto del entorno."""
+    auth_service.bootstrap_admin_api_key(
+        clean_db,
+        admin_settings,
+    )
+
+    assert admin_settings.ADMIN_PASSWORD is not None
+    assert admin_settings.API_KEY is not None
+
+    old_password = (
+        admin_settings.ADMIN_PASSWORD.get_secret_value()
+    )
+
+    new_password = security.generate_secret()
+
+    login = _login(
+        clean_db,
+        auth_store,
+        dummy_hash,
+        email=ADMIN_TEST_EMAIL,
+        password=old_password,
+    )
+
+    auth_service.change_password(
+        clean_db,
+        auth_store,
+        login.session_token,
+        PasswordChangeIn(
+            current_password=old_password,
+            new_password=new_password,
+        ),
+        rounds=TEST_ROUNDS,
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match="Contraseña administrativa incoherente",
+    ):
+        auth_service.bootstrap_admin_api_key(
+            clean_db,
+            admin_settings,
+        )
+
+    synchronized_settings = ApiSettings(
+        ADMIN_EMAIL=ADMIN_TEST_EMAIL,
+        ADMIN_PASSWORD=new_password,
+        API_KEY=admin_settings.API_KEY.get_secret_value(),
+        BCRYPT_ROUNDS=TEST_ROUNDS,
+    )
+
+    auth_service.bootstrap_admin_api_key(
+        clean_db,
+        synchronized_settings,
+    )
+
+    with Session(clean_db) as session:
+        user = db.list_users(session)[0]
+
+        assert verify_password(
+            new_password,
+            user.password_hash,
+        )
+
+        assert not verify_password(
+            old_password,
+            user.password_hash,
+        )
+
+        assert len(db.list_users(session)) == 1
+        assert len(db.list_api_keys(session)) == 1
+
+
+@pytest.mark.integration
+def test_admin_bootstrap_rollback(
+    clean_db: Engine,
+    admin_settings: ApiSettings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Revierte la cuenta si falla la creación de su clave."""
+    monkeypatch.setattr(
+        db,
+        "create_api_key",
+        Mock(
+            side_effect=IntegrityError(
+                None,
+                None,
+                DriverError(
+                    "23505",
+                    "api_key_hash_unique",
+                ),
+            ),
+        ),
+    )
+
+    with pytest.raises(ApiError) as exc_info:
+        auth_service.bootstrap_admin_api_key(
+            clean_db,
+            admin_settings,
+        )
+
+    assert exc_info.value.code == ErrorCode.INTERNAL_SERVER_ERROR
+
+    with Session(clean_db) as session:
+        assert db.list_users(session) == []
+        assert db.list_api_keys(session) == []

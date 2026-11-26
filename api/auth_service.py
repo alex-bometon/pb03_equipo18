@@ -419,3 +419,115 @@ def issue_user_api_key(
 
     except SQLAlchemyError as exc:
         raise translate_db_error(exc) from None
+    
+
+# =========================================================
+# APROVISIONAMIENTO ADMINISTRATIVO
+# =========================================================
+
+
+def bootstrap_admin_api_key(
+    engine: Engine,
+    settings: ApiSettings,
+) -> None:
+    """Aprovisiona y comprueba las credenciales administrativas."""
+    if (
+        settings.ADMIN_EMAIL is None
+        or settings.ADMIN_PASSWORD is None
+        or settings.API_KEY is None
+    ):
+        raise ApiError(ErrorCode.SERVICE_NOT_CONFIGURED)
+
+    email = settings.ADMIN_EMAIL.get_secret_value()
+    password = settings.ADMIN_PASSWORD.get_secret_value()
+    key_hash = hash_secret(
+        settings.API_KEY.get_secret_value(),
+    )
+
+    try:
+        with Session(engine) as session:
+            user = db.get_user_by_email(
+                session,
+                email,
+                for_update=True,
+            )
+
+            api_key = db.get_api_key_by_hash(
+                session,
+                key_hash,
+                for_update=True,
+            )
+
+            if user is None:
+                if api_key is not None:
+                    raise RuntimeError(
+                        "Conflicto de credencial administrativa."
+                    )
+
+                user = User(
+                    email=email,
+                    password_hash=hash_password(
+                        password,
+                        settings.BCRYPT_ROUNDS,
+                    ),
+                )
+
+                db.create_user(session, user)
+                session.flush()
+
+            else:
+                _require_active_user(user)
+
+                if not verify_password(
+                    password,
+                    user.password_hash,
+                ):
+                    raise RuntimeError(
+                        "Contraseña administrativa incoherente."
+                    )
+
+                if api_key is None:
+                    previous_keys = db.list_user_api_keys(
+                        session,
+                        user.id,
+                    )
+
+                    if not any(
+                        key.role == ApiKeyRole.ADMIN
+                        for key in previous_keys
+                    ):
+                        raise RuntimeError(
+                            "La cuenta existente no es administrativa."
+                        )
+
+            if api_key is None:
+                api_key = ApiKey(
+                    user_id=user.id,
+                    key_hash=key_hash,
+                    role=ApiKeyRole.ADMIN,
+                )
+
+                db.create_api_key(session, api_key)
+                session.flush()
+
+            else:
+                if (
+                    api_key.user_id != user.id
+                    or api_key.role != ApiKeyRole.ADMIN
+                ):
+                    raise RuntimeError(
+                        "Conflicto de credencial administrativa."
+                    )
+
+                if (
+                    not api_key.is_active
+                    or api_key.deleted_at is not None
+                ):
+                    raise RuntimeError(
+                        "La credencial administrativa no está activa."
+                    )
+
+            session.commit()
+
+    except SQLAlchemyError as exc:
+        raise translate_db_error(exc) from None

@@ -1,6 +1,7 @@
 """Configuración exclusiva del backend HTTP de ReciclaTÍA."""
 
 import os
+import re
 from typing import Literal
 from urllib.parse import urlsplit
 from uuid import UUID
@@ -14,10 +15,13 @@ from pydantic import (
     ValidationError,
     field_validator,
 )
-
-from api.base import SecureBaseModel
 from sqlalchemy.engine import make_url
 
+from api.base import SecureBaseModel
+from api.credential_validation import (
+    normalizar_email,
+    validar_nueva_password,
+)
 from config import BASE_DIR, IMAGE_MAX_BYTES, IMAGE_MAX_PIXELS
 
 # Límites del contrato HTTP
@@ -39,6 +43,8 @@ class ApiSettings(SecureBaseModel):
     # Credenciales e infraestructura
     DATABASE_URL: SecretStr | None = None
     GEMINI_API_KEY: SecretStr | None = None
+    ADMIN_EMAIL: SecretStr | None = None
+    ADMIN_PASSWORD: SecretStr | None = None
     API_KEY: SecretStr | None = None
 
     # Conexiones PostgreSQL
@@ -104,6 +110,8 @@ class ApiSettings(SecureBaseModel):
     @field_validator(
         "DATABASE_URL",
         "GEMINI_API_KEY",
+        "ADMIN_EMAIL",
+        "ADMIN_PASSWORD",
         "API_KEY",
         mode="before",
     )
@@ -112,6 +120,56 @@ class ApiSettings(SecureBaseModel):
         """Representa las credenciales vacías mediante None."""
         if isinstance(value, str) and not value.strip():
             return None
+
+        return value
+
+    @field_validator("ADMIN_EMAIL")
+    @classmethod
+    def validate_admin_email(
+        cls,
+        value: SecretStr | None,
+    ) -> SecretStr | None:
+        """Valida y normaliza el identificador administrativo."""
+        if value is None:
+            return None
+
+        return SecretStr(
+            normalizar_email(value.get_secret_value()),
+        )
+
+    @field_validator("ADMIN_PASSWORD")
+    @classmethod
+    def validate_admin_password(
+        cls,
+        value: SecretStr | None,
+    ) -> SecretStr | None:
+        """Comprueba la política de contraseñas administrativas."""
+        if value is None:
+            return None
+
+        validar_nueva_password(value.get_secret_value())
+
+        return value
+
+    @field_validator("API_KEY")
+    @classmethod
+    def validate_admin_api_key(
+        cls,
+        value: SecretStr | None,
+    ) -> SecretStr | None:
+        """Comprueba el formato de la clave de aprovisionamiento."""
+        if value is None:
+            return None
+
+        secret = value.get_secret_value()
+
+        if not re.fullmatch(
+            r"[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]",
+            secret,
+        ):
+            raise ValueError(
+                "Formato de API_KEY inválido.",
+            )
 
         return value
 
@@ -203,11 +261,11 @@ class ApiSettings(SecureBaseModel):
 
         return value
 
-    def missing_required_settings(self) -> tuple[str, ...]:
-        """Identifica configuraciones imprescindibles ausentes."""
+    def missing_admin_settings(self) -> tuple[str, ...]:
+        """Identifica las credenciales administrativas ausentes."""
         required = (
-            "DATABASE_URL",
-            "GEMINI_API_KEY",
+            "ADMIN_EMAIL",
+            "ADMIN_PASSWORD",
             "API_KEY",
         )
 
@@ -216,6 +274,21 @@ class ApiSettings(SecureBaseModel):
             for name in required
             if getattr(self, name) is None
         )
+
+    def missing_required_settings(self) -> tuple[str, ...]:
+        """Identifica configuraciones imprescindibles ausentes."""
+        required = (
+            "DATABASE_URL",
+            "GEMINI_API_KEY",
+        )
+
+        missing = tuple(
+            name
+            for name in required
+            if getattr(self, name) is None
+        )
+
+        return missing + self.missing_admin_settings()
 
 
 def load_settings() -> ApiSettings:
