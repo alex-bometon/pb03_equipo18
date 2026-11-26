@@ -224,7 +224,7 @@ src/retrieve_structured.py, src/tools/, src/cli_agent.py y app.py.
 
 **Finalización:** núcleo adaptado a los contratos del PB03, conservando la topología, la independencia del backend y el HITL obligatorio.
 
-**Integración:** pendiente de pull request hacia develop.
+**Integración:** PR #7 integrado en develop.
 
 **Referencias:** especificaciones 01 a 06, 10, 12 y 15.
 
