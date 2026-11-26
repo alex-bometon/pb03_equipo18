@@ -78,7 +78,7 @@ La actualización de README.md se realizará en la fase 12.
 
 ### Fase 02 — Persistencia relacional
 
-**Rama:** feature/postgresql-persistence.
+**Rama:** feature/persistence.
 
 **Dependencia:** fase 01.
 
@@ -118,21 +118,48 @@ La actualización de README.md se realizará en la fase 12.
 
 ### Fase 03 — Contratos HTTP y errores
 
-**Rama:** feature/api-contracts.
+**Rama:** feature/contracts.
 
-**Dependencias:** fases 01 y 02 para los enumerados compartidos.
+**Dependencias:** fases 01 y 02.
 
-- [ ] Implementar todos los modelos públicos.
-- [ ] Centralizar el catálogo y tratamiento de errores.
-- [ ] Adaptar los errores de validación de FastAPI.
-- [ ] Incorporar request_id y X-Request-ID.
-- [ ] Validar los contratos y su representación en OpenAPI.
+- [x] Implementar todos los modelos públicos.
+- [x] Centralizar el catálogo y tratamiento de errores.
+- [x] Adaptar los errores de validación de FastAPI.
+- [x] Incorporar request_id y X-Request-ID.
+- [x] Implementar middleware, logging HTTP y CORS.
+- [x] Validar los contratos y su representación en OpenAPI.
+- [x] Ejecutar la regresión completa.
 
-**Archivos:** api/schemas.py, api/errors.py, api/main.py.
+**Archivos principales:**
 
-**Finalización:** contratos públicos implementados y comprobados.
+- api/base.py
+- api/config.py
+- api/schemas.py
+- api/credential_validation.py
+- api/mappers.py
+- api/error_catalog.py
+- api/errors.py
+- api/exception_handlers.py
+- api/request_context.py
+- api/middleware.py
+- api/main.py
 
-**Referencia:** especificación 12.
+**Decisiones:** D29–D72.
+
+**Validación:** 1276 pruebas superadas en 5,62 segundos,
+incluyendo la regresión relacional.
+
+**Evidencias:** [Validación de la fase 03](../entregables/evidencias/fase-03-contratos-http.md).
+
+**Finalización:** contratos públicos, tratamiento de errores
+y trazabilidad HTTP implementados y validados.
+
+**Integración:** pendiente de pull request hacia develop.
+
+**Referencia:** especificaciones 08, 12, 14 y 15.
+
+La validación definitiva de OpenAPI por endpoint se realizará
+durante la integración de los servicios correspondientes.
 
 ### Fase 04 — Autenticación y autorización
 
@@ -213,7 +240,7 @@ Los endpoints públicos no se expondrán en producción antes de incorporar los 
 - [ ] Configurar executor y timeout compartido.
 - [ ] Implementar controles temporales entre fases.
 - [ ] Gestionar resultados tardíos, invalidación y liberación segura de recursos.
-- [ ] Incorporar logging estructurado, sanitización y CORS.
+- [ ] Completar la observabilidad de cuotas, concurrencia, ejecución y proveedores externos sobre el middleware implementado en la fase 03.
 - [ ] Ejecutar pruebas temporales, concurrentes y de robustez.
 
 **Archivos:** api/rate_limit.py, api/service.py, api/config.py, api/main.py.
@@ -358,7 +385,7 @@ Los procedimientos de Git e integración se establecen en [flujo-desarrollo.md](
 
 ## 5. Decisiones técnicas
 
-Las decisiones D01–D28 se encuentran resueltas en las especificaciones.
+Las decisiones D01–D72 han sido aprobadas y se encuentran recogidas en las especificaciones y documentos de referencia.
 
 | ID | Decisión | Referencia |
 |---|---|---|
@@ -390,6 +417,50 @@ Las decisiones D01–D28 se encuentran resueltas en las especificaciones.
 | D26 | Base de datos y usuario independientes para pruebas | Plan de pruebas |
 | D27 | Limpieza mediante TRUNCATE con comprobaciones de aislamiento | Plan de pruebas |
 | D28 | Separación de pruebas relacionales y marcador integration | Plan de pruebas |
+| D29 | Rechazo de campos adicionales en los modelos públicos | 12 |
+| D30 | Validación estricta según el tipo de campo | 12 |
+| D31 | Normalización específica por campo | 12, 14 |
+| D32 | Reutilización de la validación de preguntas del núcleo | 12 |
+| D33 | Mappers explícitos y puros, independientes de la persistencia | 11, 12, 13 |
+| D34 | Validación de resultados antes de persistir y comunicar éxito HTTP | 12, 13 |
+| D35 | Canonicalización de identificadores UUIDText | 12 |
+| D36 | Separación de validación estructural y semántica de preguntas | 12 |
+| D37 | Límite API de cuatro pasos independiente del límite interno del agente | 06, 12 |
+| D38 | Reutilización de tipos Annotated para restricciones compartidas | 12 |
+| D39 | Reutilización de restricciones geográficas | 05, 12 |
+| D40 | Validación de invariantes mediante model_validator en modo after | 12 |
+| D41 | Presencia obligatoria de todos los campos de AskOut, incluidos los anulables | 12 |
+| D42 | Rechazo de resultados incompatibles con las invariantes del asistente | 06, 12 |
+| D43 | Centralización de los límites geográficos en config.py | 05, 12 |
+| D44 | Centralización de los límites de email y contraseña | 12, 14 |
+| D45 | Validación de emails mediante email-validator sin comprobaciones DNS | 14 |
+| D46 | Separación de validación de contraseñas nuevas y de autenticación | 12, 14 |
+| D47 | Protección de contraseñas mediante SecretStr estricto | 12, 14 |
+| D48 | Configuración segura compartida mediante SecureBaseModel | 11, 12 |
+| D49 | Restricción de emisión de API keys a los roles Free y User | 12, 14 |
+| D50 | Fechas conscientes de zona horaria y normalización a UTC | 12, 13 |
+| D51 | Exclusión de credenciales originales de la representación textual de los modelos | 10, 12, 14 |
+| D52 | Contratos públicos independientes para conversaciones y mensajes | 12, 13 |
+| D53 | HealthOut como contrato de disponibilidad satisfactoria | 12, 15 |
+| D54 | Catálogo centralizado e inmutable de códigos, estados HTTP y mensajes | 12 |
+| D55 | ErrorOut como contrato común de errores | 12 |
+| D56 | ApiError independiente de las excepciones HTTP del framework | 12 |
+| D57 | Excepciones específicas para errores de validación semántica | 12, 14 |
+| D58 | Incorporación de errores propios del protocolo HTTP | 12 |
+| D59 | Mensajes públicos exclusivos del catálogo y validación de Retry-After | 12, 15 |
+| D60 | Separación entre excepciones propias y manejadores HTTP | 11, 12 |
+| D61 | Generación y reutilización del request_id mediante request.state | 12, 15 |
+| D62 | Traducción de errores mediante tipo, campo y operación HTTP | 12 |
+| D63 | Prioridad explícita entre errores de validación simultáneos | 12 |
+| D64 | Conservación controlada de las cabeceras HTTP correspondientes | 12 |
+| D65 | Sanitización de fallos inesperados mediante un manejador común | 10, 12, 15 |
+| D66 | Validación de manejadores mediante pruebas unitarias y HTTP aisladas | 08, Plan de pruebas |
+| D67 | Middleware ASGI puro para la trazabilidad HTTP | 11, 15 |
+| D68 | Logging estructurado JSON mediante la biblioteca estándar de Python | 15 |
+| D69 | Prevención de registros duplicados y sanitización de excepciones propagadas | 10, 15 |
+| D70 | CORSMiddleware nativo con trazabilidad y conservación de rechazos preflight | 12, 15 |
+| D71 | Documentación OpenAPI de errores generada desde el catálogo centralizado | 12 |
+| D72 | Validación de OpenAPI mediante aplicaciones FastAPI aisladas | 08, 12, Plan de pruebas |
 
 Su contenido no se reproducirá en este plan.
 
@@ -401,6 +472,10 @@ Quedan pendientes de concreción durante la implementación:
 - Calibración de presupuestos y timeouts.
 - Plan, capacidad y condiciones de Render.
 - Conservación de datos durante la evaluación.
+- Integración de WWW-Authenticate con los mecanismos de autenticación correspondientes.
+- Contabilización de intentos de autenticación rechazados durante la validación de entrada.
+- Documentación OpenAPI de cabeceras, permisos y errores aplicables a cada endpoint definitivo.
+- Sanitización de registros generados por proveedores externos.
 
 ## 6. Planificación temporal
 

@@ -178,7 +178,8 @@ Arrancar el backend una vez implementado:
 python -m uvicorn api.main:app \
   --host 127.0.0.1 \
   --port 8000 \
-  --workers 1
+  --workers 1 \
+  --no-access-log
 ```
 
 Comprobar:
@@ -209,6 +210,27 @@ Las pruebas automatizadas utilizarán TestClient o HTTPX con dependencias contro
 Comprobar también preguntas de exactamente 500 caracteres, tipos estrictos, campos adicionales y límites válidos.
 
 Todos los endpoints deberán contrastarse con [12-contratos-http.md](../specs/12-contratos-http.md), incluyendo códigos de error, modelos de respuesta y cabeceras.
+
+### Validación de esquemas OpenAPI
+
+Los modelos públicos se comprobarán mediante aplicaciones
+FastAPI aisladas dentro de las pruebas automatizadas.
+
+Se verificará:
+
+- Presencia de los modelos públicos.
+- Campos obligatorios, opcionales y anulables.
+- Valores predeterminados.
+- Restricciones numéricas y formatos.
+- Enumerados y referencias entre modelos.
+- Exclusión de hashes y campos internos.
+- Documentación de errores mediante ErrorOut.
+
+La aplicación de producción no incorporará endpoints
+artificiales para generar documentación.
+
+La representación de cada endpoint definitivo se comprobará
+durante su implementación.
 
 ### 5.2. Autenticación y autorización
 

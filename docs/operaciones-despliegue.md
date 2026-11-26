@@ -286,13 +286,14 @@ Con PostgreSQL, las dependencias, las variables de entorno y ChromaDB disponible
 python -m uvicorn api.main:app \
   --host 127.0.0.1 \
   --port 8000 \
-  --workers 1
+  --workers 1 \ 
+  --no-access-log
 ```
 
 Durante el desarrollo podrá utilizarse:
 
 ```bash
-python -m uvicorn api.main:app --reload
+python -m uvicorn api.main:app --reload --no-access-log
 ```
 
 La recarga automática puede provocar la pérdida del estado almacenado en memoria. No se utilizará en producción.

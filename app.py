@@ -19,6 +19,10 @@ from PIL import Image, UnidentifiedImageError
 
 from config import (
     ASSETS_DIR,
+    GEO_MAX_LATITUDE,
+    GEO_MAX_LONGITUDE,
+    GEO_MIN_LATITUDE,
+    GEO_MIN_LONGITUDE,
     IMAGE_ALLOWED_FORMATS,
     IMAGE_MAX_BYTES,
     IMAGE_MAX_PIXELS,
@@ -146,8 +150,11 @@ def _ubicacion() -> dict[str, float] | None:
     lon = float(st.session_state.rt_longitud)
     if not isfinite(lat) or not isfinite(lon):
         raise ValueError("Las coordenadas deben ser números finitos.")
-    if not (-90 <= lat <= 90 and -180 <= lon <= 180):
-        raise ValueError("Las coordenadas están fuera del rango permitido.")
+    if not (
+            GEO_MIN_LATITUDE <= lat <= GEO_MAX_LATITUDE
+            and GEO_MIN_LONGITUDE <= lon <= GEO_MAX_LONGITUDE
+        ):
+            raise ValueError("Las coordenadas están fuera del rango permitido.")
     return {"latitud": lat, "longitud": lon}
 
 
@@ -553,12 +560,18 @@ def _dibujar_sidebar() -> Any:
         )
         if st.session_state.rt_usar_ubicacion:
             st.number_input(
-                "Latitud", min_value=-90.0, max_value=90.0,
-                format="%.6f", key="rt_latitud",
+                "Latitud",
+                min_value=float(GEO_MIN_LATITUDE),
+                max_value=float(GEO_MAX_LATITUDE),
+                format="%.6f",
+                key="rt_latitud",
             )
             st.number_input(
-                "Longitud", min_value=-180.0, max_value=180.0,
-                format="%.6f", key="rt_longitud",
+                "Longitud",
+                min_value=float(GEO_MIN_LONGITUDE),
+                max_value=float(GEO_MAX_LONGITUDE),
+                format="%.6f",
+                key="rt_longitud",
             )
             st.caption(
                 "Los valores iniciales son solo un ejemplo: centro "

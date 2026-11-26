@@ -548,7 +548,7 @@ Se emitirá un registro estructurado al finalizar la petición:
 | api_key_id | str o None |
 | role | str o None |
 | duration_ms | float |
-| status_code | int |
+| status_code | int o None |
 | error_code | str o None |
 
 path representará preferentemente el patrón de ruta, sin parámetros sensibles.
@@ -558,6 +558,8 @@ Los campos de identidad solo se completarán después de comprobar la autenticac
 La duración se medirá mediante time.perf_counter().
 
 El registro reflejará el código HTTP efectivamente devuelto.
+
+Las rutas desconocidas se identificarán mediante UNMATCHED y las peticiones preflight mediante PREFLIGHT. Si no se ha transmitido ningún estado HTTP, status_code será None.
 
 ### 12.2. Eventos técnicos
 
@@ -578,6 +580,8 @@ La finalización real de un worker podrá registrarse después de la respuesta H
 
 El nivel inicial de producción será INFO.
 
+Las respuestas satisfactorias y redirecciones se registrarán en INFO, los rechazos en WARNING y los fallos internos en ERROR.
+
 ### 12.4. Información prohibida
 
 No se registrarán:
@@ -592,6 +596,8 @@ No se registrarán:
 - Prompts internos y documentos completos.
 
 Las restricciones se aplicarán también a los registros de bibliotecas y excepciones.
+
+Se desactivarán los registros de acceso predeterminados de Uvicorn.
 
 ## 13. Métricas
 
@@ -649,6 +655,8 @@ Las respuestas de error respetarán la política CORS aplicable.
 No se utilizarán orígenes indiscriminados en producción.
 
 CORS no sustituye la autenticación ni restringe directamente las peticiones realizadas desde el proceso Python de Streamlit.
+
+Los rechazos preflight conservarán el comportamiento nativo de CORSMiddleware, conforme a la especificación 12.
 
 ## 16. Configuración
 

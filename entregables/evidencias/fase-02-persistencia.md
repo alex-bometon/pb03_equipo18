@@ -6,7 +6,7 @@
 |---|---|
 | Proyecto | ReciclaTÍA PB03 |
 | Fase | 02 — Persistencia relacional |
-| Rama | feature/postgresql-persistence |
+| Rama | feature/persistence |
 | Fecha | 25/11/2026 |
 | Python | 3.13.2 |
 | PostgreSQL | 18.7 |

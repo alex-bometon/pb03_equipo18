@@ -7,6 +7,11 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from api.config import load_settings
+from api.exception_handlers import register_exception_handlers
+from api.middleware import (
+    RequestMiddleware,
+    configure_http_logging,
+)
 from src.db import (
     check_database,
     create_db_engine,
@@ -50,6 +55,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
         app.state.engine = engine
 
+        configure_http_logging(settings.LOG_LEVEL)
+
         yield
 
     finally:
@@ -62,3 +69,8 @@ app = FastAPI(
     description="API REST del asistente de gestión de residuos de Madrid.",
     lifespan=lifespan,
 )
+
+register_exception_handlers(app)
+
+
+app.add_middleware(RequestMiddleware)

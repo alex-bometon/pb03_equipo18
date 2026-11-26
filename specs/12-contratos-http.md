@@ -568,6 +568,82 @@ Cuando no pueda determinarse una causa técnica más específica, se utilizará 
 
 No se utilizarán mensajes generados por el LLM para determinar códigos HTTP.
 
+### 8.8. Protocolo HTTP
+
+| HTTP | Código | Situación |
+|---|---|---|
+| 400 | BAD_REQUEST | Petición no interpretable |
+| 404 | ROUTE_NOT_FOUND | Ruta inexistente |
+| 405 | METHOD_NOT_ALLOWED | Método HTTP no permitido |
+
+Los errores generados por el framework se adaptarán a ErrorOut.
+
+Se conservarán las cabeceras necesarias del protocolo, como Allow
+y WWW-Authenticate, cuando corresponda.
+
+No se expondrán directamente los detalles internos de las excepciones
+del framework.
+
+### 8.9. Catálogo y tratamiento centralizado
+
+Los códigos públicos, estados HTTP y mensajes se centralizarán
+en api/error_catalog.py.
+
+Los errores controlados de la API se representarán mediante ApiError,
+sin permitir mensajes públicos personalizados.
+
+El contrato ErrorOut utilizará códigos reconocidos por el catálogo,
+mensajes no vacíos e identificadores UUID en formato canónico.
+
+Los errores de validación del núcleo y de las credenciales se
+traducirán según su tipo y contexto, sin interpretar mensajes
+de excepciones.
+
+Los incumplimientos de la política de creación de contraseñas
+devolverán INVALID_PASSWORD.
+
+Las contraseñas incorrectas o incompatibles utilizadas para
+autenticación devolverán INVALID_CREDENTIALS.
+
+Retry-After podrá proporcionarse mediante un entero no negativo
+cuando se produzca RATE_LIMIT_EXCEEDED.
+
+Los manejadores utilizarán un mecanismo común de construcción de
+respuestas de error.
+
+Las respuestas de rechazo preflight generadas por CORSMiddleware conservarán su formato nativo. Incluirán X-Request-ID, pero no estarán sujetas a ErrorOut.
+
+Los errores de validación se identificarán mediante su tipo,
+ubicación y operación HTTP, sin repetir las validaciones
+realizadas por los modelos.
+
+Cuando se detecten varios errores simultáneamente, se aplicará
+la siguiente prioridad:
+
+1. INVALID_CREDENTIALS.
+2. INVALID_THREAD_ID.
+3. INVALID_EMAIL.
+4. INVALID_PASSWORD.
+5. EMPTY_QUESTION.
+6. QUESTION_TOO_LONG.
+7. INVALID_LOCATION.
+8. INVALID_MAX_STEPS.
+9. VALIDATION_ERROR.
+
+La prioridad se aplicará exclusivamente a los errores
+efectivamente detectados.
+
+Las inconsistencias en modelos de salida y las excepciones
+internas no clasificadas devolverán INTERNAL_SERVER_ERROR.
+
+La documentación OpenAPI de errores se construirá mediante
+build_error_responses(), utilizando el catálogo centralizado.
+
+Cada endpoint declarará únicamente los códigos de error
+aplicables a su operación. Cuando corresponda, documentará
+ErrorOut como respuesta HTTP 422 en lugar del contrato
+predeterminado de FastAPI.
+
 ## 9. Resultados válidos y falsos éxitos
 
 No constituyen errores HTTP:

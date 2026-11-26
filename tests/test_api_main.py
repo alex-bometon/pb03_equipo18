@@ -4,11 +4,17 @@
 from unittest.mock import Mock
 
 import pytest
+from uuid import UUID
 from fastapi.testclient import TestClient
+from fastapi.exceptions import RequestValidationError
+from starlette.exceptions import HTTPException
 from sqlalchemy.engine import Engine
 
 import api.main as api_main
 from api.config import ApiSettings
+from api.error_catalog import ERROR_CATALOG, ErrorCode
+from api.errors import ApiError
+from api.request_context import REQUEST_ID_HEADER
 
 
 @pytest.fixture
@@ -142,3 +148,52 @@ def test_engine_disposed_on_shutdown(mock_db):
         mock_db["engine"].dispose.assert_not_called()
 
     mock_db["engine"].dispose.assert_called_once()
+
+def test_exception_handlers_registered() -> None:
+    """Comprueba el registro de los manejadores."""
+    expected = {
+        ApiError,
+        RequestValidationError,
+        HTTPException,
+        Exception,
+    }
+
+    registered = set(api_main.app.exception_handlers)
+
+    assert expected.issubset(registered)
+
+
+def test_application_error_response(client: TestClient) -> None:
+    """Comprueba el contrato de error de la aplicación real."""
+    response = client.get("/ruta-inexistente")
+
+    code = ErrorCode.ROUTE_NOT_FOUND
+    definition = ERROR_CATALOG[code]
+    request_id = response.headers[REQUEST_ID_HEADER]
+
+    assert response.status_code == definition.status_code
+
+    assert response.json() == {
+        "code": code.value,
+        "message": definition.message,
+        "request_id": request_id,
+    }
+
+    assert str(UUID(request_id)) == request_id
+
+
+@pytest.mark.parametrize(
+    "path",
+    ["/docs", "/openapi.json", "/ruta-inexistente"],
+)
+def test_application_request_id(
+    client: TestClient,
+    path: str,
+) -> None:
+    """Comprueba la trazabilidad de la aplicación real."""
+    response = client.get(path)
+
+    request_id = response.headers[REQUEST_ID_HEADER]
+
+    assert UUID(request_id).version == 4
+    assert str(UUID(request_id)) == request_id
