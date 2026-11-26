@@ -27,7 +27,6 @@ from src.state import (
     estado_desde_grafo,
     preparar_nuevo_turno,
     registrar_turno,
-    preparar_nuevo_turno,
 )
 
 

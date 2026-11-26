@@ -162,16 +162,16 @@ SUPERVISOR_TEMPERATURE = 0
 # =========================================================
 
 # Máximo de decisiones del supervisor por consulta.
-MAX_ITER = 8
+MAX_ITER = 4
 
 # Máximo de rondas LLM por especialista.
-MAX_STEPS_DEFAULT = 4
-MAX_STEPS_LIMIT = 8
+MAX_STEPS_DEFAULT = 3
+MAX_STEPS_LIMIT = 4
 
 # Presupuestos de llamadas reales a herramientas.
 # Una ronda LLM puede solicitar varias herramientas.
-MAX_TOOL_CALLS_PER_SPECIALIST = 8
-MAX_TOOL_CALLS_PER_TURN = 12
+MAX_TOOL_CALLS_PER_SPECIALIST = 4
+MAX_TOOL_CALLS_PER_TURN = 6
 
 # Límite de pasos internos del grafo.
 GRAPH_RECURSION_LIMIT = 2 * MAX_ITER + 8

@@ -7,6 +7,7 @@ la aprobación humana, el estado `done` ni la ejecución de un nodo arbitrario.
 from __future__ import annotations
 
 import re
+from uuid import UUID
 from typing import Any, Literal, Mapping, TypedDict
 
 from config import MAX_ITER
@@ -209,21 +210,32 @@ def _necesidades_turno(
 
 
 def _hay_salida_valida(estado: Mapping[str, Any]) -> bool:
-    """Comprueba que ya existe respuesta y un plan sintetizado."""
+    """Comprueba que existe una propuesta válida para HITL."""
     respuesta = estado.get("respuesta")
     plan = estado.get("plan")
+    approval_id = estado.get("approval_id")
 
-    return (
-        estado.get("siguiente") == "sintetizar"
-        and isinstance(respuesta, str)
-        and bool(respuesta.strip())
-        and isinstance(plan, list)
-        and len(plan) >= 2
-        and all(
-            isinstance(p, str) and p.strip()
-            for p in plan
+    if (
+        estado.get("siguiente") != "sintetizar"
+        or not isinstance(respuesta, str)
+        or not respuesta.strip()
+        or not isinstance(plan, list)
+        or len(plan) < 2
+        or any(
+            not isinstance(paso, str) or not paso.strip()
+            for paso in plan
         )
-    )
+        or not isinstance(approval_id, str)
+        or estado.get("error") is not None
+    ):
+        return False
+
+    try:
+        UUID(approval_id)
+    except ValueError:
+        return False
+
+    return True
 
 
 # =========================================================

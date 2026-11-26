@@ -38,7 +38,11 @@ from src.agent_schedule import (
 from src.llm import get_llm
 from src.state import EstadoGrafo, agregar_evento
 from src.text_utils import normalizar_texto
-from src.tools import TOOL_BY_NAME, ejecutar_tool_estructurado
+from src.tools import (
+    TOOL_BY_NAME,
+    ejecutar_tool_estructurado,
+    validar_solicitud_tool,
+)
 
 
 Rol = Literal["residuos", "puntos"]
@@ -397,27 +401,22 @@ class _RegistroEjecucion:
         identificador: str,
     ) -> tuple[str, str]:
         """Autoriza, limita, ejecuta y registra una herramienta."""
-        if (
-            self.llamadas_rol >= MAX_TOOL_CALLS_PER_SPECIALIST
-            or self.total >= MAX_TOOL_CALLS_PER_TURN
-        ):
+        argumentos, fallo = _preparar_args(nombre, args, self.estado)
+
+        if fallo is None:
+            fallo = validar_solicitud_tool(
+                nombre,
+                argumentos,
+                rol=self.rol,
+            )
+
+        if fallo is not None:
             resultado = {
                 "ok": False,
                 "datos": None,
-                "error": "Error: presupuesto de herramientas agotado.",
+                "error": fallo,
             }
-            return self._registrar(
-                nombre, identificador, paso, resultado
-            )
-
-        argumentos, fallo = _preparar_args(
-            nombre, args, self.estado
-        )
-        if fallo:
-            resultado = {"ok": False, "datos": None, "error": fallo}
-            return self._registrar(
-                nombre, identificador, paso, resultado
-            )
+            return self._registrar(nombre, identificador, paso, resultado)
 
         llave = json.dumps(
             {"nombre": nombre, "args": argumentos},
@@ -425,6 +424,7 @@ class _RegistroEjecucion:
             sort_keys=True,
             default=str,
         )
+
         if llave in self.cache:
             return self._registrar(
                 nombre,
@@ -434,15 +434,28 @@ class _RegistroEjecucion:
                 cache=True,
             )
 
+        if (
+            self.llamadas_rol >= MAX_TOOL_CALLS_PER_SPECIALIST
+            or self.total >= MAX_TOOL_CALLS_PER_TURN
+        ):
+            resultado = {
+                "ok": False,
+                "datos": None,
+                "error": "Error: presupuesto de herramientas agotado.",
+            }
+            return self._registrar(nombre, identificador, paso, resultado)
+
         self.llamadas_rol += 1
         self.total += 1
+
         resultado = ejecutar_tool_estructurado(
             nombre, argumentos, rol=self.rol
         )
-        self.cache[llave] = resultado
-        return self._registrar(
-            nombre, identificador, paso, resultado
-        )
+
+        if resultado["ok"]:
+            self.cache[llave] = resultado
+
+        return self._registrar(nombre, identificador, paso, resultado)
 
     def finalizar(self) -> dict[str, Any]:
         """Actualiza el estado sin mutar listas del checkpoint."""
