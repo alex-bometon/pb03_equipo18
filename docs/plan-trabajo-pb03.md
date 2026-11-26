@@ -411,7 +411,7 @@ Los procedimientos de Git e integración se establecen en [flujo-desarrollo.md](
 
 ## 5. Decisiones técnicas
 
-Las decisiones D01–D109 han sido aprobadas y se encuentran recogidas en las especificaciones y documentos de referencia.
+Las decisiones D01–D114 han sido aprobadas y se encuentran recogidas en las especificaciones y documentos de referencia.
 
 | ID | Decisión | Referencia |
 |---|---|---|
@@ -524,6 +524,11 @@ Las decisiones D01–D109 han sido aprobadas y se encuentran recogidas en las es
 | D107 | Orden determinista de bloqueos e invalidación coordinada | 13, 14 |
 | D108 | Incorporación de deleted_at a UserOut | 12 |
 | D109 | Pruebas críticas de concurrencia y autorización final en fase 08 | Plan de pruebas |
+| D110 | Filtrado determinista conservador sin LLM | 04, 15 |
+| D111 | Coordinación de la aplicación mediante api/service.py sin duplicar la orquestación del núcleo | 11, 15 |
+| D112 | Reutilización y centralización de las reglas de filtrado existentes | 04, 15 |
+| D113 | Admisión de consultas compuestas con posibilidad de respuesta parcial fundamentada | 04, 15 |
+| D114 | Interpretación de reformulaciones mediante el contexto operativo autorizado | 06, 10, 15 |
 
 Su contenido no se reproducirá en este plan.
 

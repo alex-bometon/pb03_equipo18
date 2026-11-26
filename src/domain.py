@@ -21,6 +21,7 @@ DISTRITOS_MADRID = frozenset({
     "vicalvaro", "villa de vallecas", "villaverde",
 })
 
+
 _CALLE = re.compile(
     r"^(?:la\s+|el\s+)?(?:calle|avda|avenida|plaza|paseo|ronda|camino)\b"
 )
@@ -39,7 +40,8 @@ CIUDADES_FUERA_DE_MADRID = re.compile(
     r"martes|miercoles|jueves|viernes|sabado|domingo)\b))"
 )
 _PATRON_PARA = re.compile(
-    r"\bpara\s+(?P<lugar>[a-zñ][a-zñ\s-]{1,60}?)"
+    r"\b(?:hay|existen)\s+para\s+"
+    r"(?P<lugar>[a-zñ][a-zñ\s-]{1,60}?)"
     r"(?=\s*[?.,;!]|$)"
 )
 _PATRON_MOVIL = re.compile(
@@ -117,3 +119,18 @@ def evaluar_ambito(
 def _es_otra_ciudad(pregunta: str) -> bool:
     """Compatibilidad con los llamadores previos a la centralización."""
     return evaluar_ambito(pregunta) == "fuera_de_dominio"
+
+def es_consulta_programacion(pregunta: str) -> bool:
+    """Reconoce solicitudes inequívocas de desarrollo de software."""
+    texto = normalizar_texto(pregunta).strip("¿?¡! ")
+
+    return bool(
+        re.fullmatch(
+            r"como (?:programo|programar|creo|crear|"
+            r"desarrollo|desarrollar|implemento|implementar) "
+            r"(?:un |una )?"
+            r"(?:api(?: rest)?|programa informatico|"
+            r"aplicacion informatica|software)",
+            texto,
+        )
+    )

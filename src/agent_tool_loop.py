@@ -36,6 +36,7 @@ from src.agent_schedule import (
     tipo_punto_documentado,
 )
 from src.llm import get_llm
+from src.rag_intents import consulta_proximidad
 from src.state import EstadoGrafo, agregar_evento
 from src.text_utils import normalizar_texto
 from src.tools import (
@@ -207,18 +208,6 @@ def _preparar_args(
 # =========================================================
 
 
-def _consulta_proximidad(pedido: str) -> bool:
-    """Identifica búsquedas espaciales que necesitan coordenadas."""
-    texto = normalizar_texto(pedido)
-    return bool(
-        re.search(
-            r"\b(?:cerca|cercan\w*|alrededor|localiz\w*|"
-            r"mas\s+proxim[oa]s?)\b",
-            texto,
-        )
-    )
-
-
 def _consulta_temporal(pedido: str) -> bool:
     """Evita omitir la consulta de horarios o fecha necesaria."""
     return bool(
@@ -292,7 +281,7 @@ def _ruta_directa(
     if rol == "residuos":
         return "consultar_rag", {"pregunta": pedido}
 
-    if _consulta_proximidad(pedido) or (
+    if consulta_proximidad(pedido) or (
         estado.get("necesita_residuos")
         and estado.get("ubicacion") is not None
         and debe_buscar_puntos_automaticamente(estado)
