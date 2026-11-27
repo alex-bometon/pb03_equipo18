@@ -1,5 +1,14 @@
 """Coordina la admisión y ejecución del asistente desde la API."""
 
+
+import time
+from collections.abc import Callable, Iterator
+from concurrent.futures import Future, ThreadPoolExecutor, wait
+from contextlib import ExitStack, contextmanager
+from typing import TypeVar
+from threading import BoundedSemaphore, Lock
+from uuid import UUID
+
 from api.schemas import AskOut, UbicacionIn
 from api.error_catalog import ErrorCode
 from api.errors import ApiError
@@ -17,7 +26,169 @@ from src.rag_intents import (
     es_horario_movil_sin_ubicacion,
     requiere_antecedente,
 )
+from api.config import ApiSettings
+from api.rate_limit import (
+    SlidingWindowLog,
+    reservar_cuota_comercial,
+)
+from api.request_context import AuthContext
 from src.text_utils import normalizar_texto
+
+T = TypeVar("T")
+
+class ControlAdmision:
+    """Controla la exclusión por hilo y la capacidad del asistente."""
+
+    def __init__(self, max_workers: int) -> None:
+        """Inicializa los recursos compartidos de admisión."""
+        self._lock = Lock()
+        self._hilos_ocupados: set[UUID] = set()
+        self._capacidad = BoundedSemaphore(max_workers)
+
+    @contextmanager
+    def reservar_hilo(self, thread_id: UUID) -> Iterator[None]:
+        """Reserva exclusivamente una conversación sin esperar."""
+        with self._lock:
+            if thread_id in self._hilos_ocupados:
+                raise ApiError(ErrorCode.THREAD_BUSY)
+
+            self._hilos_ocupados.add(thread_id)
+
+        try:
+            yield
+
+        finally:
+            with self._lock:
+                self._hilos_ocupados.remove(thread_id)
+
+    @contextmanager
+    def reservar_capacidad(self) -> Iterator[None]:
+        """Reserva capacidad de ejecución sin acumular solicitudes."""
+        if not self._capacidad.acquire(blocking=False):
+            raise ApiError(ErrorCode.SERVER_BUSY)
+
+        try:
+            yield
+
+        finally:
+            self._capacidad.release()
+
+
+class PresupuestoEjecucion:
+    """Gestiona el plazo temporal de una ejecución individual."""
+
+    def __init__(
+        self,
+        timeout_seconds: float,
+        *,
+        reloj: Callable[[], float] = time.monotonic,
+    ) -> None:
+        """Establece el plazo absoluto de finalización."""
+        self._reloj = reloj
+        self.deadline = reloj() + timeout_seconds
+        self._finalizado_en: float | None = None
+
+    def restante(self) -> float:
+        """Devuelve el tiempo disponible hasta el plazo."""
+        return max(0.0, self.deadline - self._reloj())
+
+    def finalizar(self) -> None:
+        """Registra el instante real de finalización."""
+        self._finalizado_en = self._reloj()
+
+    def finalizo_a_tiempo(self) -> bool:
+        """Comprueba si la tarea terminó antes del plazo."""
+        return (
+            self._finalizado_en is not None
+            and self._finalizado_en < self.deadline
+        )
+    
+
+class EjecutorAsistente:
+    """Coordina la ejecución costosa y su presupuesto temporal."""
+
+    def __init__(
+        self,
+        settings: ApiSettings,
+        admision: ControlAdmision,
+        limitador: SlidingWindowLog,
+        *,
+        reloj: Callable[[], float] = time.monotonic,
+    ) -> None:
+        """Inicializa el executor compartido del backend."""
+        self._admision = admision
+        self._limitador = limitador
+        self._timeout_seconds = settings.ASK_TIMEOUT_SECONDS
+        self._reloj = reloj
+
+        self._executor = ThreadPoolExecutor(
+            max_workers=settings.AGENT_MAX_WORKERS,
+        )
+
+    def ejecutar(
+        self,
+        tarea: Callable[[PresupuestoEjecucion], T],
+        recursos: ExitStack,
+        *,
+        contexto_cuota: AuthContext | None,
+    ) -> T:
+        """Admite una tarea y devuelve su resultado dentro del plazo."""
+        recursos.enter_context(self._admision.reservar_capacidad())
+
+        reserva = None
+
+        if contexto_cuota is not None:
+            reserva = reservar_cuota_comercial(self._limitador, contexto_cuota)
+
+        presupuesto = PresupuestoEjecucion(self._timeout_seconds, reloj=self._reloj)
+
+        def ejecutar_tarea() -> T:
+            """Registra la finalización real de la tarea."""
+            try:
+                return tarea(presupuesto)
+
+            finally:
+                presupuesto.finalizar()
+
+        try:
+            futuro = self._executor.submit(ejecutar_tarea)
+
+        except BaseException:
+            if reserva is not None:
+                self._limitador.revertir(*reserva)
+
+            raise
+
+        try:
+            terminados, _ = wait((futuro,), timeout=presupuesto.restante())
+
+            if (
+                futuro not in terminados
+                or not presupuesto.finalizo_a_tiempo()
+            ):
+                raise ApiError(ErrorCode.AGENT_TIMEOUT)
+
+        except BaseException:
+            self._retener_recursos(futuro, recursos)
+            raise
+
+        return futuro.result()
+
+    @staticmethod
+    def _retener_recursos(
+        futuro: Future,
+        recursos: ExitStack,
+    ) -> None:
+        """Conserva las reservas hasta que termine el worker."""
+        retenidos = recursos.pop_all()
+
+        futuro.add_done_callback(lambda _: retenidos.close())
+
+        futuro.cancel()
+
+    def cerrar(self) -> None:
+        """Espera la finalización segura durante el apagado."""
+        self._executor.shutdown(wait=True, cancel_futures=True)
 
 
 def _respuesta_previa(

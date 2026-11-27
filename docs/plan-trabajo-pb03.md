@@ -262,8 +262,8 @@ La integración definitiva con FastAPI se realizará en la fase 08.
 - [x] Implementar Sliding Window Log y contadores independientes.
 - [x] Implementar rate limiting, cuotas y límites de seguridad.
 - [x] Implementar Retry-After y limpieza de contadores.
-- [ ] Implementar exclusión por conversación y capacidad global.
-- [ ] Configurar executor y timeout compartido.
+- [x] Implementar exclusión por conversación y capacidad global.
+- [x] Configurar executor y timeout compartido.
 - [ ] Implementar controles temporales entre fases.
 - [ ] Gestionar resultados tardíos, invalidación y liberación segura de recursos.
 - [ ] Completar la observabilidad de cuotas, concurrencia, ejecución y proveedores externos sobre el middleware implementado en la fase 03.

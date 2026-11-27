@@ -4,6 +4,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.concurrency import run_in_threadpool
 
 from api.auth_service import bootstrap_admin_api_key
 from api.config import load_settings
@@ -17,6 +18,7 @@ from api.security import (
     create_dummy_password_hash,
 )
 from api.rate_limit import crear_limitador
+from api.service import ControlAdmision, EjecutorAsistente
 from src.db import (
     check_database,
     create_db_engine,
@@ -41,6 +43,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         raise RuntimeError(f"Configuración administrativa incompleta: {fields}")
 
     engine = None
+    ejecutor = None
 
     try:
         try:
@@ -85,14 +88,29 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             raise RuntimeError(
                 "No se ha podido inicializar la seguridad."
             ) from None
+        
+        app.state.admision = ControlAdmision(settings.AGENT_MAX_WORKERS)
+
+        ejecutor = EjecutorAsistente(
+            settings,
+            app.state.admision,
+            app.state.rate_limiter,
+        )
+
+        app.state.ejecutor = ejecutor
 
         configure_http_logging(settings.LOG_LEVEL)
 
         yield
 
     finally:
-        if engine is not None:
-            engine.dispose()
+        try:
+            if ejecutor is not None:
+                await run_in_threadpool(ejecutor.cerrar)
+
+        finally:
+            if engine is not None:
+                engine.dispose()
 
 
 app = FastAPI(

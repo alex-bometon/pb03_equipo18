@@ -30,6 +30,7 @@ from api.request_context import (
     AuthContext,
 )
 from api.security import SessionStore, hash_secret
+from api.service import ControlAdmision, EjecutorAsistente
 from api.rate_limit import SlidingWindowLog, limitar_http
 from src import db
 from src.enums import ApiKeyRole
@@ -101,6 +102,24 @@ def get_rate_limiter(request: Request) -> SlidingWindowLog:
         raise ApiError(ErrorCode.SERVICE_NOT_CONFIGURED)
 
     return limitador
+
+def get_admision(request: Request) -> ControlAdmision:
+    """Recupera el control compartido de admisión."""
+    admision = getattr(request.app.state, "admision", None)
+
+    if not isinstance(admision, ControlAdmision):
+        raise ApiError(ErrorCode.SERVICE_NOT_CONFIGURED)
+
+    return admision
+
+def get_ejecutor(request: Request) -> EjecutorAsistente:
+    """Recupera el executor compartido del backend."""
+    ejecutor = getattr(request.app.state, "ejecutor", None)
+
+    if not isinstance(ejecutor, EjecutorAsistente):
+        raise ApiError(ErrorCode.SERVICE_NOT_CONFIGURED)
+
+    return ejecutor
 
 def obtener_origen(request: Request) -> str:
     """Obtiene el origen comunicado por el servidor ASGI."""
