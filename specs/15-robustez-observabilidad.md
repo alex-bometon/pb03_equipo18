@@ -401,6 +401,18 @@ Las reglas de persistencia y tratamiento de commits inciertos se establecen en l
 
 ### 8.7. Dependencias externas
 
+Gemini utilizará un timeout de transporte de 45 segundos por intento.
+
+Los clientes de Gemini desactivarán los reintentos automáticos del SDK.
+
+La generación RAG podrá realizar un máximo de dos intentos, incluyendo el inicial, conforme a la especificación 03.
+
+Las demás operaciones de Gemini durante las consultas realizarán un único intento por invocación.
+
+El timeout individual no sustituye al presupuesto compartido ni garantiza la interrupción inmediata de una ejecución activa.
+
+La construcción del índice conservará su política independiente de reintentos.
+
 Gemini, ArcGIS y PostgreSQL dispondrán de límites de espera adecuados.
 
 Los reintentos serán acotados.

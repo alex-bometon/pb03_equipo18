@@ -28,6 +28,7 @@ from src.generation_validation import (
 )
 from src.observability import observar_llamada
 
+import httpx
 
 ESQUEMA_RESPUESTA = {
     "type": "OBJECT",
@@ -140,13 +141,21 @@ def _preparar_contexto(chunks: list[dict]) -> tuple[str, dict]:
 
 
 def _es_error_transitorio(error: Exception) -> bool:
-    """Distingue errores temporales de errores no recuperables."""
-    if isinstance(error, (TimeoutError, ConnectionError)):
+    """Identifica los errores que permiten repetir una generación."""
+    if isinstance(
+        error,
+        (
+            TimeoutError,
+            ConnectionError,
+            httpx.TimeoutException,
+            httpx.NetworkError,
+        ),
+    ):
         return True
 
     if isinstance(error, (errors.ClientError, errors.ServerError)):
         return getattr(error, "code", None) in {
-            429, 500, 502, 503, 504,
+            500, 502, 503, 504,
         }
 
     return False

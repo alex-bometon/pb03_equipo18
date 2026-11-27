@@ -266,8 +266,8 @@ La integración definitiva con FastAPI se realizará en la fase 08.
 - [x] Configurar executor y timeout compartido.
 - [x] Implementar controles temporales entre fases.
 - [x] Gestionar resultados tardíos, invalidación y liberación segura de recursos.
-- [ ] Completar la observabilidad de cuotas, concurrencia, ejecución y proveedores externos sobre el middleware implementado en la fase 03.
-- [ ] Ejecutar pruebas temporales, concurrentes y de robustez.
+- [x] Completar la observabilidad de cuotas, concurrencia, ejecución y proveedores externos sobre el middleware implementado en la fase 03.
+- [x] Ejecutar pruebas temporales, concurrentes y de robustez.
 
 **Archivos:** api/rate_limit.py, api/service.py, api/config.py, api/main.py.
 
@@ -411,7 +411,7 @@ Los procedimientos de Git e integración se establecen en [flujo-desarrollo.md](
 
 ## 5. Decisiones técnicas
 
-Las decisiones D01–D114 han sido aprobadas y se encuentran recogidas en las especificaciones y documentos de referencia.
+Las decisiones D01–D118 han sido aprobadas y se encuentran recogidas en las especificaciones y documentos de referencia.
 
 | ID | Decisión | Referencia |
 |---|---|---|
@@ -530,6 +530,9 @@ Las decisiones D01–D114 han sido aprobadas y se encuentran recogidas en las es
 | D113 | Admisión de consultas compuestas con posibilidad de respuesta parcial fundamentada | 04, 15 |
 | D114 | Interpretación de reformulaciones mediante el contexto operativo autorizado | 06, 10, 15 |
 | D115 | Login limitado a 5 intentos por email y hora, y 20 intentos por origen fiable cada 30 minutos | 15 |
+| D116 | Timeout de transporte de Gemini de 45 segundos | 15 |
+| D117 | Un único reintento explícito en generación RAG y ninguno en las demás operaciones del asistente | 03, 15 |
+| D118 | Exclusión de errores 429 de los reintentos automáticos durante las consultas | 03, 15 |
 
 Su contenido no se reproducirá en este plan.
 

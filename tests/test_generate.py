@@ -13,6 +13,9 @@ from src.generation_validation import (
     SalidaGeneracionInvalida,
 )
 
+import httpx
+from google.genai import errors
+
 
 def _respuesta_modelo(
     respuesta="Deposítalo en el contenedor amarillo. [C1]",
@@ -630,17 +633,21 @@ def test_error_temporal_reintenta_con_espera_exponencial(
 
 
 def test_error_temporal_agota_reintentos(monkeypatch, cliente, chunks):
+    """Limita la generación a los dos intentos configurados."""
     dormir = Mock()
+
     monkeypatch.setattr(generate.time, "sleep", dormir)
-    monkeypatch.setattr(generate, "GENERATION_MAX_RETRIES", 3)
-    monkeypatch.setattr(generate, "GENERATION_RETRY_SECONDS", 2)
-    cliente.models.generate_content.side_effect = TimeoutError("Timeout")
+
+    cliente.models.generate_content.side_effect = TimeoutError(
+        "Timeout simulado"
+    )
 
     with pytest.raises(RuntimeError, match="reintentos"):
         generate.generar_respuesta("¿Dónde tiro esto?", chunks, client=cliente)
 
-    assert cliente.models.generate_content.call_count == 3
-    assert dormir.call_args_list == [call(2), call(4)]
+    assert cliente.models.generate_content.call_count == 2
+
+    dormir.assert_called_once_with(2)
 
 
 def test_error_no_transitorio_no_reintenta(monkeypatch, cliente, chunks):
@@ -653,3 +660,91 @@ def test_error_no_transitorio_no_reintenta(monkeypatch, cliente, chunks):
 
     assert cliente.models.generate_content.call_count == 1
     dormir.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "codigo, intentos",
+    [
+        (400, 1),
+        (401, 1),
+        (403, 1),
+        (404, 1),
+        (429, 1),
+        (500, 2),
+        (502, 2),
+        (503, 2),
+        (504, 2),
+    ],
+)
+def test_politica_reintentos_http(
+    codigo,
+    intentos,
+    monkeypatch,
+    cliente,
+    chunks,
+):
+    """Comprueba los códigos HTTP que permiten un reintento."""
+    dormir = Mock()
+
+    monkeypatch.setattr(generate.time, "sleep", dormir)
+
+    clase_error = errors.ClientError if codigo < 500 else errors.ServerError
+
+    error_proveedor = clase_error(
+        codigo,
+        {
+            "error": {
+                "code": codigo,
+                "message": "Error simulado",
+            },
+        },
+    )
+
+    cliente.models.generate_content.side_effect = error_proveedor
+
+    with pytest.raises(RuntimeError):
+        generate.generar_respuesta("¿Dónde tiro esto?", chunks, client=cliente)
+
+    assert cliente.models.generate_content.call_count == intentos
+
+    if intentos == 2:
+        dormir.assert_called_once_with(2)
+    else:
+        dormir.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "error_proveedor",
+    [
+        TimeoutError("Timeout"),
+        ConnectionError("Conexión"),
+        httpx.ReadTimeout("Timeout HTTP"),
+        httpx.ConnectError("Conexión HTTP"),
+    ],
+)
+def test_reintento_recupera_error_transitorio(
+    error_proveedor,
+    monkeypatch,
+    cliente,
+    chunks,
+):
+    """Recupera un error transitorio con un único reintento."""
+    dormir = Mock()
+
+    monkeypatch.setattr(generate.time, "sleep", dormir)
+
+    cliente.models.generate_content.side_effect = [
+        error_proveedor,
+        _respuesta_modelo(),
+    ]
+
+    resultado = generate.generar_respuesta(
+        "¿Dónde tiro esto?",
+        chunks,
+        client=cliente,
+    )
+
+    assert resultado["abstencion"] is False
+    assert cliente.models.generate_content.call_count == 2
+
+    dormir.assert_called_once_with(2)

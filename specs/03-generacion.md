@@ -337,7 +337,13 @@ No se habilitarán búsquedas externas ni grounding mediante buscadores.
 
 Se conservará _es_error_transitorio().
 
-Los reintentos podrán aplicarse a errores de conexión, timeout y estados recuperables del proveedor contemplados por la implementación existente.
+Los reintentos se aplicarán exclusivamente a errores transitorios de conexión, timeout y códigos HTTP 500, 502, 503 y 504.
+
+No se reintentarán errores 429 ni errores permanentes.
+
+El máximo inicial será de dos intentos totales, con una espera de dos segundos antes del segundo intento.
+
+No se superpondrán reintentos automáticos del SDK a este mecanismo.
 
 GENERATION_MAX_RETRIES representará el número máximo de intentos, incluyendo el inicial.
 
