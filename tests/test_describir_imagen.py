@@ -2,10 +2,15 @@
 
 from unittest.mock import Mock, patch
 
+import json
 import pytest
 from PIL import Image
 
-from src.tools.describir_imagen import describir_imagen
+from src.tools.describir_imagen import (
+    ImagenNoAdmitidaError,
+    describir_imagen,
+    identificar_imagen,
+)
 
 
 @pytest.fixture
@@ -17,20 +22,12 @@ def imagen_prueba(tmp_path, monkeypatch):
 
     ruta = directorio / "jamon.jpg"
 
-    Image.new("RGB", (100, 100), "white").save(
-        ruta, format="JPEG"
-    )
+    Image.new("RGB", (100, 100), "white").save(ruta, format="JPEG")
 
     # Aislar los tests de los archivos reales del proyecto.
-    monkeypatch.setattr(
-        "src.tools.describir_imagen.BASE_DIR",
-        tmp_path,
-    )
+    monkeypatch.setattr("src.tools.describir_imagen.BASE_DIR", tmp_path)
 
-    monkeypatch.setattr(
-        "src.tools.describir_imagen.ASSETS_DIR",
-        directorio,
-    )
+    monkeypatch.setattr("src.tools.describir_imagen.ASSETS_DIR", directorio)
 
     return ruta
 
@@ -46,18 +43,17 @@ def test_describir_imagen_correcta(imagen_prueba):
     """Comprueba el envío de imagen y la respuesta de Gemini."""
 
     cliente = Mock()
-    cliente.models.generate_content.return_value.text = (
-        "Se observa una bandeja de plástico."
-    )
+    cliente.models.generate_content.return_value.text = json.dumps({
+        "estado": "allowed",
+        "descripcion": "Se observa una bandeja de plástico.",
+    })
 
     with patch(
         "src.tools.describir_imagen.crear_cliente_gemini",
         return_value=cliente,
     ) as mock_crear_cliente:
 
-        resultado = describir_imagen.invoke({
-            "ruta_imagen": "assets/jamon.jpg"
-        })
+        resultado = describir_imagen.invoke({"ruta_imagen": "assets/jamon.jpg"})
 
     assert resultado == "Se observa una bandeja de plástico."
 
@@ -76,14 +72,10 @@ def test_describir_imagen_correcta(imagen_prueba):
 def test_describir_imagen_ruta_no_permitida(imagen_prueba):
     """Impide acceder a archivos fuera de assets/."""
 
-    with patch(
-        "src.tools.describir_imagen.crear_cliente_gemini"
-    ) as mock_cliente:
+    with patch("src.tools.describir_imagen.crear_cliente_gemini") as mock_cliente:
 
         with pytest.raises(ValueError, match="dentro de assets"):
-            describir_imagen.invoke({
-                "ruta_imagen": "../archivo.jpeg"
-            })
+            describir_imagen.invoke({"ruta_imagen": "../archivo.jpeg"})
 
     mock_cliente.assert_not_called()
 
@@ -92,18 +84,14 @@ def test_describir_imagen_formato_invalido(imagen_prueba):
     """Rechaza archivos cuyo contenido no es JPEG ni PNG."""
 
     # Sobrescribir con contenido GIF, manteniendo el nombre .jpeg.
-    Image.new("RGB", (100, 100), "white").save(
-        imagen_prueba, format="GIF"
-    )
+    Image.new("RGB", (100, 100), "white").save(imagen_prueba, format="GIF")
 
     with patch(
         "src.tools.describir_imagen.crear_cliente_gemini"
     ) as mock_cliente:
 
         with pytest.raises(ValueError, match="contenido no es JPEG ni PNG"):
-            describir_imagen.invoke({
-                "ruta_imagen": "assets/jamon.jpg"
-            })
+            describir_imagen.invoke({"ruta_imagen": "assets/jamon.jpg"})
 
     mock_cliente.assert_not_called()
 
@@ -120,8 +108,125 @@ def test_describir_imagen_respuesta_vacia(imagen_prueba):
     ):
 
         with pytest.raises(RuntimeError, match="descripción"):
-            describir_imagen.invoke({
-                "ruta_imagen": "assets/jamon.jpg"
-            })
+            describir_imagen.invoke({"ruta_imagen": "assets/jamon.jpg"})
 
     cliente.close.assert_called_once()
+
+
+@pytest.mark.parametrize(
+    "estado",
+    [
+        "allowed",
+        "out_of_domain",
+        "policy_violation",
+        "uncertain",
+    ],
+)
+def test_identificar_imagen_estados(imagen_prueba, estado):
+    """Conserva los estados semánticos reconocidos."""
+    cliente = Mock()
+    esperado = {
+        "estado": estado,
+        "descripcion": "Identificación visual de prueba.",
+    }
+
+    cliente.models.generate_content.return_value.text = json.dumps(esperado)
+
+    with patch(
+        "src.tools.describir_imagen.crear_cliente_gemini",
+        return_value=cliente,
+    ):
+        resultado = identificar_imagen(str(imagen_prueba))
+
+    assert resultado == esperado
+
+    cliente.models.generate_content.assert_called_once()
+    cliente.close.assert_called_once()
+
+
+@pytest.mark.parametrize(
+    "datos",
+    [
+        {},
+        [],
+        None,
+        {"estado": "allowed"},
+        {"estado": "desconocido", "descripcion": "Objeto"},
+        {"estado": "allowed", "descripcion": ""},
+        {"estado": "allowed", "descripcion": "   "},
+        {"estado": "allowed", "descripcion": 123},
+        {"estado": [], "descripcion": "Objeto"},
+        {"estado": "allowed", "descripcion": "a" * 501},
+        {
+            "estado": "allowed",
+            "descripcion": "Objeto",
+            "confianza": 90,
+        },
+    ],
+)
+def test_identificacion_rechaza_contrato_invalido(imagen_prueba, datos):
+    """No convierte una salida inválida en incertidumbre semántica."""
+    cliente = Mock()
+    cliente.models.generate_content.return_value.text = json.dumps(datos)
+
+    with patch(
+        "src.tools.describir_imagen.crear_cliente_gemini",
+        return_value=cliente,
+    ):
+        with pytest.raises(RuntimeError, match="descripción válida"):
+            identificar_imagen(str(imagen_prueba))
+
+    cliente.close.assert_called_once()
+
+
+def test_identificacion_rechaza_json_malformado(imagen_prueba):
+    """Distingue una respuesta inválida de una imagen incierta."""
+    cliente = Mock()
+    cliente.models.generate_content.return_value.text = "{invalido"
+
+    with patch(
+        "src.tools.describir_imagen.crear_cliente_gemini",
+        return_value=cliente,
+    ):
+        with pytest.raises(RuntimeError):
+            identificar_imagen(str(imagen_prueba))
+
+    cliente.close.assert_called_once()
+
+
+def test_identificacion_propaga_fallo_proveedor(imagen_prueba):
+    """Libera el cliente incluso si falla la petición multimodal."""
+    cliente = Mock()
+    cliente.models.generate_content.side_effect = RuntimeError(
+        "Fallo simulado del proveedor"
+    )
+
+    with patch(
+        "src.tools.describir_imagen.crear_cliente_gemini",
+        return_value=cliente,
+    ):
+        with pytest.raises(RuntimeError, match="Fallo simulado"):
+            identificar_imagen(str(imagen_prueba))
+
+    cliente.close.assert_called_once()
+
+
+@pytest.mark.parametrize(
+    "estado",
+    ["out_of_domain", "policy_violation", "uncertain"],
+)
+def test_describir_imagen_no_admite_rechazos(estado):
+    """No devuelve una identificación rechazada como descripción."""
+    identificacion = {
+        "estado": estado,
+        "descripcion": "Identificación no admitida.",
+    }
+
+    with patch(
+        "src.tools.describir_imagen.identificar_imagen",
+        return_value=identificacion,
+    ):
+        with pytest.raises(ImagenNoAdmitidaError) as error:
+            describir_imagen.invoke({"ruta_imagen": "assets/prueba.jpg"})
+
+    assert error.value.identificacion == identificacion

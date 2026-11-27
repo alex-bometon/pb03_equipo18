@@ -6,6 +6,7 @@ No accede a Gemini, a ChromaDB ni al estado de los agentes.
 import re
 
 from src.domain import _es_otra_ciudad, evaluar_ambito
+from src.text_utils import normalizar_texto
 
 
 PATRON_MOVIL = re.compile(r"\bpuntos?\s+limpios?\s+movil(?:es)?\b")
@@ -48,6 +49,22 @@ DIAS = {
 PATRON_DIA = re.compile(
     r"\b(?:" + "|".join(DIAS) + r")\b"
 )
+PATRON_PROXIMIDAD = re.compile(
+    r"\b(?:cerca|cercan\w*|alrededor|localiz\w*|"
+    r"mas\s+proxim[oa]s?)\b"
+)
+MENSAJE_ACLARACION_HORARIO_MOVIL = (
+    "¿En qué distrito o calle de Madrid quieres consultar "
+    "el horario del punto limpio móvil?"
+)
+MENSAJE_ACLARACION_PROXIMIDAD = (
+    "Para buscar puntos limpios cercanos, facilita "
+    "voluntariamente latitud y longitud."
+)
+MENSAJE_ACLARACION_CONTEXTO = (
+    "¿A qué residuo o punto limpio te refieres? "
+    "Necesito más información para resolver tu consulta."
+)
 
 
 def _es_consulta_catalogo(pregunta: str) -> bool:
@@ -77,7 +94,7 @@ def _es_consulta_catalogo(pregunta: str) -> bool:
     )
 
 
-def _es_consulta_reparacion_telefonos(pregunta: str) -> bool:
+def es_consulta_reparacion_telefonos(pregunta: str) -> bool:
     """Reconoce solicitudes explícitas de reparación, no de reciclaje.
 
     «Móvil» puede designar un teléfono o un punto limpio itinerante.
@@ -99,6 +116,18 @@ def _es_consulta_horarios_moviles(pregunta: str) -> bool:
         PATRON_MOVIL.search(pregunta)
         and PATRON_HORARIO.search(pregunta)
         and not PATRON_24H.search(pregunta)
+    )
+
+
+def es_horario_movil_sin_ubicacion(pregunta: str) -> bool:
+    """Reconoce peticiones exclusivamente de horario sin parada."""
+    return bool(
+        re.fullmatch(
+            r"(?:que horario tiene|a que hora pasa|que dias visita) "
+            rf"(?:el |un )?{PATRON_MOVIL.pattern}"
+            r"(?: (?:en|de) madrid)?",
+            pregunta.strip("¿?¡! "),
+        )
     )
 
 
@@ -178,3 +207,41 @@ def _es_fuera_de_dominio_estructurado(
     )
 
 
+def consulta_proximidad(
+    pedido: str,
+    *,
+    exclusiva: bool = False,
+) -> bool:
+    """Detecta búsquedas espaciales que requieren coordenadas."""
+    texto = normalizar_texto(pedido)
+
+    if exclusiva:
+        return bool(
+            re.fullmatch(
+                r"(?:que puntos? limpios? (?:tengo|hay)|"
+                r"cual es el punto limpio|"
+                r"busca (?:un|el) punto limpio)"
+                r"(?: de proximidad)? (?:mas )?"
+                rf"{PATRON_PROXIMIDAD.pattern}(?: de mi)?",
+                texto.strip("¿?¡! "),
+            )
+        )
+
+    return bool(PATRON_PROXIMIDAD.search(texto))
+
+
+def requiere_antecedente(pregunta: str) -> bool:
+    """Reconoce reformulaciones que necesitan una referencia previa."""
+    texto = normalizar_texto(pregunta).strip("¿?¡! ")
+
+    return bool(
+        re.fullmatch(
+            r"y si (?:es|son) de \w+(?: \w+)?"
+            r"|y (?:hoy|manana|ahora|pasado manana)"
+            rf"|y {PATRON_DIA.pattern}"
+            rf"|hay (?:uno|una) (?:mas )?{PATRON_PROXIMIDAD.pattern}"
+            r"|que hago con (?:esto|eso|aquello)"
+            r"|donde (?:tiro|reciclo|deposito) (?:esto|eso|aquello)",
+            texto,
+        )
+    )

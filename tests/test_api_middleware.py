@@ -1,5 +1,6 @@
 """Pruebas del middleware HTTP y la observabilidad."""
 
+import asyncio
 import json
 import logging
 import traceback
@@ -8,15 +9,16 @@ from datetime import datetime, timedelta
 from uuid import UUID
 
 import pytest
-from fastapi import FastAPI
+from fastapi import FastAPI, UploadFile
 from fastapi.responses import StreamingResponse
 from fastapi.testclient import TestClient
 
-from api.config import ApiSettings
+from api.config import ApiSettings, IMAGE_MULTIPART_OVERHEAD_BYTES
 from api.error_catalog import ERROR_CATALOG, ErrorCode
 from api.errors import ApiError
 from api.exception_handlers import register_exception_handlers
 from api.middleware import (
+    _cuerpo_limitado,
     HTTP_LOGGER,
     RequestMiddleware,
     configure_http_logging,
@@ -67,6 +69,12 @@ def app() -> FastAPI:
             raise RuntimeError(SECRET)
 
         return StreamingResponse(generate())
+    
+    @application.post("/ask/image")
+    async def ask_image(imagen: UploadFile) -> dict[str, bool]:
+        application.state.calls += 1
+        await imagen.read(1)
+        return {"ok": True}
 
     return application
 
@@ -80,10 +88,7 @@ def client(
     """Proporciona un cliente con captura de registros."""
     monkeypatch.setattr(HTTP_LOGGER, "propagate", True)
 
-    caplog.set_level(
-        logging.INFO,
-        logger=HTTP_LOGGER.name,
-    )
+    caplog.set_level(logging.INFO, logger=HTTP_LOGGER.name)
 
     with TestClient(app) as test_client:
         yield test_client
@@ -457,3 +462,138 @@ def test_logging_configuration(
     assert HTTP_LOGGER.propagate is False
 
     HTTP_LOGGER.handlers[0].close()
+
+
+def test_cuerpo_limitado_reproduce_fragmentos():
+    """Conserva los bytes recibidos en varios mensajes ASGI."""
+    mensajes = iter([
+        {
+            "type": "http.request",
+            "body": b"abc",
+            "more_body": True,
+        },
+        {
+            "type": "http.request",
+            "body": b"def",
+            "more_body": False,
+        },
+    ])
+
+    async def recibir():
+        return next(mensajes)
+
+    async def comprobar():
+        async with _cuerpo_limitado(recibir, 6) as receptor:
+            resultado = await receptor()
+
+            assert resultado["body"] == b"abcdef"
+            assert resultado["more_body"] is False
+
+    asyncio.run(comprobar())
+
+
+def test_cuerpo_limitado_rechaza_exceso_fragmentado():
+    """Aplica el límite aunque no exista Content-Length."""
+    mensajes = iter([
+        {
+            "type": "http.request",
+            "body": b"abc",
+            "more_body": True,
+        },
+        {
+            "type": "http.request",
+            "body": b"def",
+            "more_body": True,
+        },
+    ])
+
+    async def recibir():
+        return next(mensajes)
+
+    async def comprobar():
+        with pytest.raises(ApiError) as error:
+            async with _cuerpo_limitado(recibir, 5):
+                pytest.fail("No debe admitirse el cuerpo.")
+
+        assert error.value.code == ErrorCode.IMAGE_FILE_TOO_LARGE
+
+    asyncio.run(comprobar())
+
+
+def test_cuerpo_limitado_detecta_desconexion():
+    """No continúa el procesamiento si el cliente se desconecta."""
+    async def recibir():
+        return {"type": "http.disconnect"}
+
+    async def comprobar():
+        async with _cuerpo_limitado(recibir, 100) as receptor:
+            assert receptor is None
+
+    asyncio.run(comprobar())
+
+
+def test_multipart_admitido(client, app):
+    """Permite que un cuerpo válido alcance el endpoint."""
+    response = client.post(
+        "/ask/image",
+        files={
+            "imagen": (
+                "prueba.png",
+                b"contenido de prueba",
+                "image/png",
+            ),
+        },
+    )
+
+    assert response.status_code == 200
+    assert app.state.calls == 1
+
+
+def test_multipart_rechaza_longitud_declarada(client, app):
+    """Rechaza un cuerpo declarado por encima del límite."""
+    limite = (
+        app.state.settings.IMAGE_UPLOAD_MAX_BYTES
+        + IMAGE_MULTIPART_OVERHEAD_BYTES
+    )
+
+    response = client.post(
+        "/ask/image",
+        content=b"x",
+        headers={
+            "Content-Length": str(limite + 1),
+            "Origin": ORIGIN,
+        },
+    )
+
+    assert response.status_code == 413
+    assert response.json()["code"] == (
+        ErrorCode.IMAGE_FILE_TOO_LARGE.value
+    )
+    assert response.headers["Access-Control-Allow-Origin"] == ORIGIN
+    assert response.json()["request_id"] == (
+        response.headers[REQUEST_ID_HEADER]
+    )
+    assert app.state.calls == 0
+
+
+def test_multipart_rechaza_cuerpo_sin_longitud(client, app):
+    """Controla el tamaño real de un cuerpo fragmentado."""
+    app.state.settings = ApiSettings(
+        IMAGE_UPLOAD_MAX_BYTES=5 * 1024 * 1024,
+        CORS_ORIGINS=(ORIGIN,),
+    )
+
+    def generar():
+        for _ in range(6):
+            yield b"x" * (1024 * 1024)
+
+    response = client.post(
+        "/ask/image",
+        content=generar(),
+        headers={"Content-Type": "multipart/form-data; boundary=prueba"},
+    )
+
+    assert "content-length" not in response.request.headers
+    assert response.status_code == 413
+    assert response.json()["code"] == ErrorCode.IMAGE_FILE_TOO_LARGE.value
+    assert app.state.calls == 0

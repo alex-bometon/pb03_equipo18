@@ -224,7 +224,7 @@ src/retrieve_structured.py, src/tools/, src/cli_agent.py y app.py.
 
 **Finalización:** núcleo adaptado a los contratos del PB03, conservando la topología, la independencia del backend y el HITL obligatorio.
 
-**Integración:** pendiente de pull request hacia develop.
+**Integración:** PR #7 integrado en develop.
 
 **Referencias:** especificaciones 01 a 06, 10, 12 y 15.
 
@@ -238,14 +238,14 @@ La integración definitiva con FastAPI se realizará en la fase 08.
 
 **Dependencias:** fases 03 y 05. Integración definitiva con las fases 04 y 07.
 
-- [ ] Implementar filtrado determinista y aclaraciones previas.
-- [ ] Incorporar la interpretación del contexto autorizado.
-- [ ] Implementar recepción, validación y adaptación de imágenes.
-- [ ] Implementar almacenamiento temporal seguro.
-- [ ] Extraer identificar_imagen() y validar su resultado.
-- [ ] Integrar la admisibilidad semántica y reutilización de identificaciones.
-- [ ] Verificar limpieza de archivos y ausencia de llamadas duplicadas.
-- [ ] Ejecutar pruebas de filtrado y multimodalidad.
+- [x] Implementar filtrado determinista y aclaraciones previas.
+- [x] Incorporar la interpretación del contexto autorizado.
+- [x] Implementar recepción, validación y adaptación de imágenes.
+- [x] Implementar almacenamiento temporal seguro.
+- [x] Extraer identificar_imagen() y validar su resultado.
+- [x] Integrar la admisibilidad semántica y reutilización de identificaciones.
+- [x] Verificar limpieza de archivos y ausencia de llamadas duplicadas.
+- [x] Ejecutar pruebas de filtrado y multimodalidad.
 
 **Archivos:** api/images.py, api/service.py, src/domain.py, src/tools/describir_imagen.py y componentes afectados del agente.
 
@@ -411,7 +411,7 @@ Los procedimientos de Git e integración se establecen en [flujo-desarrollo.md](
 
 ## 5. Decisiones técnicas
 
-Las decisiones D01–D109 han sido aprobadas y se encuentran recogidas en las especificaciones y documentos de referencia.
+Las decisiones D01–D114 han sido aprobadas y se encuentran recogidas en las especificaciones y documentos de referencia.
 
 | ID | Decisión | Referencia |
 |---|---|---|
@@ -524,6 +524,11 @@ Las decisiones D01–D109 han sido aprobadas y se encuentran recogidas en las es
 | D107 | Orden determinista de bloqueos e invalidación coordinada | 13, 14 |
 | D108 | Incorporación de deleted_at a UserOut | 12 |
 | D109 | Pruebas críticas de concurrencia y autorización final en fase 08 | Plan de pruebas |
+| D110 | Filtrado determinista conservador sin LLM | 04, 15 |
+| D111 | Coordinación de la aplicación mediante api/service.py sin duplicar la orquestación del núcleo | 11, 15 |
+| D112 | Reutilización y centralización de las reglas de filtrado existentes | 04, 15 |
+| D113 | Admisión de consultas compuestas con posibilidad de respuesta parcial fundamentada | 04, 15 |
+| D114 | Interpretación de reformulaciones mediante el contexto operativo autorizado | 06, 10, 15 |
 
 Su contenido no se reproducirá en este plan.
 

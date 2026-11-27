@@ -16,10 +16,11 @@ from src.generation_validation import MENSAJE_ABSTENCION
 from src.rag_intents import (
     _es_consulta_catalogo,
     _es_consulta_horarios_moviles,
-    _es_consulta_reparacion_telefonos,
+    es_consulta_reparacion_telefonos,
     _es_fuera_de_dominio_estructurado,
     _extraer_dia,
     _extraer_ubicacion_movil,
+    MENSAJE_ACLARACION_HORARIO_MOVIL
 )
 from src.text_utils import normalizar_texto as _normalizar
 from src.retrieve import (
@@ -104,15 +105,12 @@ def _resultado_catalogo() -> tuple[dict, list[dict]]:
     }, chunks
 
 
-def _resultado_horario_movil(
-    pregunta: str, top_k: int
-) -> tuple[dict, list[dict]]:
+def _resultado_horario_movil(pregunta: str, top_k: int) -> tuple[dict, list[dict]]:
     """Atribuye cada franja a su dirección y día documentados."""
     distrito, direccion = _extraer_ubicacion_movil(pregunta)
     if not distrito and not direccion:
         return _resultado_abstencion(
-            "¿En qué distrito o calle de Madrid quieres consultar "
-            "el horario del punto limpio móvil?",
+            MENSAJE_ACLARACION_HORARIO_MOVIL,
             "ambiguedad",
         ), []
 
@@ -226,27 +224,21 @@ def responder(
     es_catalogo = _es_consulta_catalogo(normalizada)
     es_horario_movil = _es_consulta_horarios_moviles(normalizada)
     consulta_estructurada = es_catalogo or es_horario_movil
-    if _es_consulta_reparacion_telefonos(normalizada):
-        resultado = _resultado_abstencion(
-            MENSAJE_ABSTENCION, "fuera_de_dominio"
-        )
+    if es_consulta_reparacion_telefonos(normalizada):
+        resultado = _resultado_abstencion(MENSAJE_ABSTENCION, "fuera_de_dominio")
         chunks = []
         fin_retrieval = perf_counter()
     elif consulta_estructurada and _es_fuera_de_dominio_estructurado(
         normalizada, es_horario_movil=es_horario_movil
     ):
-        resultado = _resultado_abstencion(
-            MENSAJE_ABSTENCION, "fuera_de_dominio"
-        )
+        resultado = _resultado_abstencion(MENSAJE_ABSTENCION, "fuera_de_dominio")
         chunks = []
         fin_retrieval = perf_counter()
     elif es_catalogo:
         resultado, chunks = _resultado_catalogo()
         fin_retrieval = perf_counter()
     elif es_horario_movil:
-        resultado, chunks = _resultado_horario_movil(
-            normalizada, top_k
-        )
+        resultado, chunks = _resultado_horario_movil(normalizada, top_k)
         fin_retrieval = perf_counter()
     else:
         chunks = buscar_chunks_relevantes(

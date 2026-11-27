@@ -27,6 +27,7 @@ from src.state import (
     estado_desde_grafo,
     preparar_nuevo_turno,
     registrar_turno,
+    validar_identificacion_imagen
 )
 
 
@@ -162,13 +163,11 @@ def procesar_turno(
         )
 
     if identificacion_imagen is not None:
-        if (
-            not isinstance(identificacion_imagen, dict)
-            or set(identificacion_imagen) != {"estado", "descripcion"}
-            or identificacion_imagen["estado"] != "allowed"
-            or not isinstance(identificacion_imagen["descripcion"], str)
-            or not identificacion_imagen["descripcion"].strip()
-        ):
+        identificacion_imagen = validar_identificacion_imagen(
+            identificacion_imagen
+        )
+
+        if identificacion_imagen["estado"] != "allowed":
             raise ValueError("Identificación visual inválida.")
 
     app = get_app()

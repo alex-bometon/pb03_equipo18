@@ -1,4 +1,3 @@
-
 """Ejecuta herramientas de los especialistas de ReciclaTIA.
 
 Usa una ruta determinista para tareas inequívocas y conserva el
@@ -36,6 +35,7 @@ from src.agent_schedule import (
     tipo_punto_documentado,
 )
 from src.llm import get_llm
+from src.rag_intents import consulta_proximidad
 from src.state import EstadoGrafo, agregar_evento
 from src.text_utils import normalizar_texto
 from src.tools import (
@@ -140,6 +140,9 @@ def _preview_tool(nombre: str, resultado: Mapping[str, Any]) -> str:
         )
 
     if nombre == "describir_imagen":
+        if isinstance(datos, dict):
+            return "Identificación visual no admitida."
+
         return "Descripción visual obtenida."
 
     return "Herramienta completada."
@@ -207,18 +210,6 @@ def _preparar_args(
 # =========================================================
 
 
-def _consulta_proximidad(pedido: str) -> bool:
-    """Identifica búsquedas espaciales que necesitan coordenadas."""
-    texto = normalizar_texto(pedido)
-    return bool(
-        re.search(
-            r"\b(?:cerca|cercan\w*|alrededor|localiz\w*|"
-            r"mas\s+proxim[oa]s?)\b",
-            texto,
-        )
-    )
-
-
 def _consulta_temporal(pedido: str) -> bool:
     """Evita omitir la consulta de horarios o fecha necesaria."""
     return bool(
@@ -244,7 +235,7 @@ def _tipo_geografico(pedido: str) -> str:
 
 def _solo_descripcion(estado: Mapping[str, Any]) -> bool:
     """Distingue descripción visual de clasificación de residuos."""
-    if not estado.get("ruta_imagen") or estado.get("identificacion_imagen"):
+    if not (estado.get("ruta_imagen") or estado.get("identificacion_imagen")):
         return False
 
     pedido = normalizar_texto(estado["pedido"])
@@ -292,7 +283,7 @@ def _ruta_directa(
     if rol == "residuos":
         return "consultar_rag", {"pregunta": pedido}
 
-    if _consulta_proximidad(pedido) or (
+    if consulta_proximidad(pedido) or (
         estado.get("necesita_residuos")
         and estado.get("ubicacion") is not None
         and debe_buscar_puntos_automaticamente(estado)
@@ -365,7 +356,19 @@ class _RegistroEjecucion:
         ok = resultado["ok"]
         datos = resultado["datos"]
 
-        if ok and not cache:
+        rechazo_visual = (
+            ok
+            and nombre == "describir_imagen"
+            and isinstance(datos, dict)
+            and datos.get("estado") != "allowed"
+        )
+
+        if rechazo_visual and not cache:
+            self.limitaciones.append(
+                "La identificación visual no ha sido admitida."
+            )
+
+        if ok and not cache and not rechazo_visual:
             copia = deepcopy(datos)
             self.evidencias.append({
                 "rol": self.rol,
@@ -373,9 +376,7 @@ class _RegistroEjecucion:
                 "id_llamada": identificador,
                 "datos": copia,
             })
-            self.observaciones.append(
-                _json_acotado(_vista_tool(nombre, copia))
-            )
+            self.observaciones.append(_json_acotado(_vista_tool(nombre, copia)))
 
             if nombre == "consultar_rag" and isinstance(copia, dict):
                 for fuente in copia.get("fuentes") or []:
@@ -417,9 +418,7 @@ class _RegistroEjecucion:
                 datos.get("fuente") if ok and isinstance(datos, dict)
                 else None
             ),
-            "preview": _preview_tool(
-                nombre, resultado
-            )[:TRACE_PREVIEW_MAX_CHARS],
+            "preview": _preview_tool(nombre, resultado)[:TRACE_PREVIEW_MAX_CHARS],
         })
 
         if not ok:
@@ -657,9 +656,7 @@ def _ejecutar_con_modelo(
             registro.total >= MAX_TOOL_CALLS_PER_TURN
             or registro.llamadas_rol >= MAX_TOOL_CALLS_PER_SPECIALIST
         ):
-            registro.limitaciones.append(
-                "Presupuesto de herramientas agotado."
-            )
+            registro.limitaciones.append("Presupuesto de herramientas agotado.")
             break
 
         mensaje = modelo.invoke(mensajes)
@@ -668,9 +665,7 @@ def _ejecutar_con_modelo(
 
         mensajes.append(mensaje)
         if mensaje.invalid_tool_calls:
-            registro.limitaciones.append(
-                "El modelo devolvió llamadas malformadas."
-            )
+            registro.limitaciones.append("El modelo devolvió llamadas malformadas.")
 
         if not mensaje.tool_calls:
             registro.texto_final = _texto_modelo(mensaje)
@@ -699,9 +694,7 @@ def _ejecutar_con_modelo(
         if _respuesta_concluyente(registro):
             break
     else:
-        registro.limitaciones.append(
-            "Límite de rondas del especialista alcanzado."
-        )
+        registro.limitaciones.append("Límite de rondas del especialista alcanzado.")
 
 
 # =========================================================

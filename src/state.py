@@ -7,10 +7,11 @@ Las listas se sobrescriben: no utilizar reducers de concatenación.
 from __future__ import annotations
 
 from copy import deepcopy
-from typing import Any, Literal, Mapping, TypedDict
+from typing import Any, Literal, Mapping, TypedDict, cast, get_args
 
 from config import (
     MAX_HISTORY_TURNS,
+    MAX_PREGUNTA_CARACTERES,
     MAX_STEPS_DEFAULT,
     MAX_STEPS_LIMIT,
     MAX_TURNS_DEFAULT,
@@ -36,16 +37,47 @@ EstadoEvidencia = Literal[
 ]
 
 
+EstadoIdentificacionImagen = Literal[
+    "allowed",
+    "out_of_domain",
+    "policy_violation",
+    "uncertain",
+]
+
+ESTADOS_IDENTIFICACION_IMAGEN = get_args(EstadoIdentificacionImagen)
+
+
 class IdentificacionImagen(TypedDict):
     """Resultado estructurado de la identificación visual."""
 
-    estado: Literal[
-        "allowed",
-        "out_of_domain",
-        "policy_violation",
-        "uncertain",
-    ]
+    estado: EstadoIdentificacionImagen
     descripcion: str
+
+
+def validar_identificacion_imagen(datos: object) -> IdentificacionImagen:
+    """Comprueba el contrato de una identificación visual."""
+    if (
+        not isinstance(datos, dict)
+        or set(datos) != {"estado", "descripcion"}
+    ):
+        raise ValueError("Identificación visual inválida.")
+
+    estado = datos["estado"]
+    descripcion = datos["descripcion"]
+
+    if (
+        not isinstance(estado, str)
+        or estado not in ESTADOS_IDENTIFICACION_IMAGEN
+        or not isinstance(descripcion, str)
+        or not descripcion.strip()
+        or len(descripcion.strip()) > MAX_PREGUNTA_CARACTERES
+    ):
+        raise ValueError("Identificación visual inválida.")
+
+    return {
+        "estado": cast(EstadoIdentificacionImagen, estado),
+        "descripcion": descripcion.strip(),
+    }
 
 
 class EventoLog(TypedDict):

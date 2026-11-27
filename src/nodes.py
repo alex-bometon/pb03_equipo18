@@ -31,11 +31,11 @@ from src.agent_schedule import (
 )
 from src.agent_resultado import respuesta_geografica_integrada
 from src.agent_tool_loop import (
-    _consulta_proximidad,
     _solo_descripcion,
     ejecutar_especialista,
 )
 from src.llm import get_llm
+from src.rag_intents import MENSAJE_ACLARACION_PROXIMIDAD, consulta_proximidad
 from src.state import EstadoGrafo, agregar_evento, registrar_turno
 
 
@@ -179,7 +179,7 @@ def _requiere_proximidad(estado: EstadoGrafo) -> bool:
     if not estado["necesita_puntos"] or estado["ubicacion"] is not None:
         return False
 
-    return _consulta_proximidad(estado["pedido"])
+    return consulta_proximidad(estado["pedido"])
 
 
 def _evidencia_suficiente(estado: EstadoGrafo,) -> tuple[str, str | None]:
@@ -478,10 +478,7 @@ def _sintesis_geografica(
 def _respuesta_sin_evidencia(estado: EstadoGrafo) -> str:
     """Prioriza aclaraciones documentadas sin inventar respuestas."""
     if _requiere_proximidad(estado):
-        return (
-            "Para buscar puntos limpios cercanos, facilita "
-            "voluntariamente latitud y longitud."
-        )
+        return MENSAJE_ACLARACION_PROXIMIDAD
 
     for registro in estado["evidencias"]:
         if not isinstance(registro, dict):
