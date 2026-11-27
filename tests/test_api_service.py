@@ -2,15 +2,22 @@
 
 from uuid import uuid4
 import pytest
+from pathlib import Path
+from unittest.mock import Mock
 
 from api.schemas import AskOut, UbicacionIn
-from api.service import filtrar_entrada
+from api.service import filtrar_entrada, identificar_entrada_visual
 from src.generation_validation import MENSAJE_ABSTENCION
+from api.error_catalog import ErrorCode
+from api.errors import ApiError
 from src.rag_intents import (
     MENSAJE_ACLARACION_CONTEXTO,
     MENSAJE_ACLARACION_HORARIO_MOVIL,
     MENSAJE_ACLARACION_PROXIMIDAD,
 )
+
+from concurrent.futures import ThreadPoolExecutor
+from threading import Event
 
 
 def test_filtrado_resuelve_reparacion_fuera_de_dominio():
@@ -302,3 +309,205 @@ def test_contexto_no_sustituye_coordenadas():
 
     assert isinstance(resultado, AskOut)
     assert resultado.respuesta == MENSAJE_ACLARACION_PROXIMIDAD
+
+
+def test_identificacion_visual_admitida(tmp_path, monkeypatch):
+    """Devuelve la identificación y elimina el archivo temporal."""
+    assets = tmp_path / "assets"
+    assets.mkdir()
+
+    monkeypatch.setattr("api.images.ASSETS_DIR", assets)
+
+    identificacion = {
+        "estado": "allowed",
+        "descripcion": "Una botella de plástico.",
+    }
+
+    def identificar(ruta):
+        archivo = Path(ruta)
+
+        assert archivo.exists()
+        assert archivo.read_bytes() == b"imagen adaptada"
+
+        return identificacion
+
+    modelo = Mock(side_effect=identificar)
+
+    monkeypatch.setattr("api.service.identificar_imagen", modelo)
+
+    resultado = identificar_entrada_visual(b"imagen adaptada", "PNG")
+
+    assert resultado == identificacion
+    modelo.assert_called_once()
+
+    ruta = Path(modelo.call_args.args[0])
+
+    assert not ruta.exists()
+
+
+@pytest.mark.parametrize(
+    "estado, motivo",
+    [("out_of_domain", "fuera_de_dominio"), ("uncertain", "ambiguedad")],
+)
+@pytest.mark.parametrize("con_hilo", [True, False])
+def test_identificacion_visual_no_admitida(
+    tmp_path,
+    monkeypatch,
+    estado,
+    motivo,
+    con_hilo,
+):
+    """Resuelve rechazos semánticos sin iniciar otro turno."""
+    assets = tmp_path / "assets"
+    assets.mkdir()
+
+    monkeypatch.setattr("api.images.ASSETS_DIR", assets)
+
+    modelo = Mock(return_value={
+        "estado": estado,
+        "descripcion": "Descripción interna no publicable.",
+    })
+
+    monkeypatch.setattr("api.service.identificar_imagen", modelo)
+
+    hilo = str(uuid4()) if con_hilo else None
+    turnos = 1 if con_hilo else 0
+
+    resultado = identificar_entrada_visual(
+        b"imagen adaptada",
+        "PNG",
+        thread_id=hilo,
+        turnos_consumidos=turnos,
+    )
+
+    assert isinstance(resultado, AskOut)
+    assert resultado.thread_id == hilo
+    assert resultado.turnos_consumidos == turnos
+    assert resultado.motivo == motivo
+    assert resultado.abstencion is True
+    assert resultado.estado_evidencia == "insuficiente"
+    assert resultado.pendiente_hitl is False
+    assert resultado.plan_aprobado is None
+    assert resultado.approval_id is None
+    assert resultado.done is False
+    assert resultado.error is None
+    assert resultado.plan == []
+    assert resultado.fuentes == []
+    assert resultado.geografia == []
+
+    assert "Descripción interna" not in resultado.respuesta
+
+    modelo.assert_called_once()
+
+    assert not Path(modelo.call_args.args[0]).exists()
+
+
+def test_identificacion_visual_contenido_no_permitido(
+    tmp_path,
+    monkeypatch,
+):
+    """Transforma una infracción semántica en el error previsto."""
+    assets = tmp_path / "assets"
+    assets.mkdir()
+
+    monkeypatch.setattr("api.images.ASSETS_DIR", assets)
+
+    modelo = Mock(return_value={
+        "estado": "policy_violation",
+        "descripcion": "Contenido no permitido.",
+    })
+
+    monkeypatch.setattr("api.service.identificar_imagen", modelo)
+
+    with pytest.raises(ApiError) as error:
+        identificar_entrada_visual(b"imagen adaptada", "JPEG")
+
+    assert error.value.code == ErrorCode.IMAGE_CONTENT_NOT_ALLOWED
+
+    modelo.assert_called_once()
+
+    assert not Path(modelo.call_args.args[0]).exists()
+
+
+def test_identificacion_visual_fallo_tecnico(
+    tmp_path,
+    monkeypatch,
+):
+    """Propaga el fallo técnico y libera el archivo temporal."""
+    assets = tmp_path / "assets"
+    assets.mkdir()
+
+    monkeypatch.setattr("api.images.ASSETS_DIR", assets)
+
+    modelo = Mock(side_effect=RuntimeError("Fallo simulado de Gemini"))
+
+    monkeypatch.setattr("api.service.identificar_imagen", modelo)
+
+    with pytest.raises(RuntimeError, match="Fallo simulado"):
+        identificar_entrada_visual(b"imagen adaptada", "PNG")
+
+    modelo.assert_called_once()
+
+    assert not Path(modelo.call_args.args[0]).exists()
+
+
+def test_archivo_visual_permanece_hasta_finalizacion_real(
+    tmp_path,
+    monkeypatch,
+):
+    """Conserva el archivo mientras el worker sigue utilizándolo."""
+    assets = tmp_path / "assets"
+    assets.mkdir()
+
+    monkeypatch.setattr("api.images.ASSETS_DIR", assets)
+
+    iniciado = Event()
+    finalizar = Event()
+    rutas = []
+
+    def identificar(ruta):
+        archivo = Path(ruta)
+        rutas.append(archivo)
+
+        iniciado.set()
+
+        if not finalizar.wait(timeout=5):
+            raise RuntimeError("No se ha liberado el worker.")
+
+        assert archivo.exists()
+        assert archivo.read_bytes() == b"imagen adaptada"
+
+        return {
+            "estado": "allowed",
+            "descripcion": "Una botella de plástico.",
+        }
+
+    modelo = Mock(side_effect=identificar)
+
+    monkeypatch.setattr("api.service.identificar_imagen", modelo)
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        futuro = executor.submit(
+            identificar_entrada_visual,
+            b"imagen adaptada",
+            "PNG",
+        )
+
+        try:
+            assert iniciado.wait(timeout=5)
+
+            with pytest.raises(TimeoutError):
+                futuro.result(timeout=0)
+
+            assert not futuro.done()
+            assert rutas[0].exists()
+
+        finally:
+            finalizar.set()
+
+        resultado = futuro.result(timeout=5)
+
+    assert resultado["estado"] == "allowed"
+    assert not rutas[0].exists()
+
+    modelo.assert_called_once()

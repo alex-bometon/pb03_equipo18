@@ -1,6 +1,11 @@
 """Coordina la admisión y ejecución del asistente desde la API."""
 
 from api.schemas import AskOut, UbicacionIn
+from api.error_catalog import ErrorCode
+from api.errors import ApiError
+from api.images import imagen_temporal
+from src.state import IdentificacionImagen
+from src.tools.describir_imagen import identificar_imagen
 from src.domain import es_consulta_programacion, evaluar_ambito
 from src.generation_validation import MENSAJE_ABSTENCION
 from src.rag_intents import (
@@ -100,3 +105,42 @@ def filtrar_entrada(
         )
 
     return None
+
+
+def identificar_entrada_visual(
+    datos: bytes,
+    formato: str,
+    *,
+    thread_id: str | None = None,
+    turnos_consumidos: int = 0,
+) -> IdentificacionImagen | AskOut:
+    """Identifica una imagen y resuelve su admisibilidad."""
+    with imagen_temporal(datos, formato) as ruta:
+        identificacion = identificar_imagen(ruta)
+
+    estado = identificacion["estado"]
+
+    if estado == "allowed":
+        return identificacion
+
+    if estado == "policy_violation":
+        raise ApiError(ErrorCode.IMAGE_CONTENT_NOT_ALLOWED)
+
+    if estado == "out_of_domain":
+        return _respuesta_previa(
+            MENSAJE_ABSTENCION,
+            "fuera_de_dominio",
+            thread_id=thread_id,
+            turnos_consumidos=turnos_consumidos,
+        )
+
+    if estado == "uncertain":
+        return _respuesta_previa(
+            "No puedo identificar suficientemente el residuo. "
+            "Proporciona otra imagen en la que se vea con claridad.",
+            "ambiguedad",
+            thread_id=thread_id,
+            turnos_consumidos=turnos_consumidos,
+        )
+
+    raise RuntimeError("Estado de identificación visual inválido.")

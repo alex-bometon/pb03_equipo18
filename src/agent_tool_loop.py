@@ -235,7 +235,7 @@ def _tipo_geografico(pedido: str) -> str:
 
 def _solo_descripcion(estado: Mapping[str, Any]) -> bool:
     """Distingue descripción visual de clasificación de residuos."""
-    if not estado.get("ruta_imagen") or estado.get("identificacion_imagen"):
+    if not (estado.get("ruta_imagen") or estado.get("identificacion_imagen")):
         return False
 
     pedido = normalizar_texto(estado["pedido"])
@@ -656,9 +656,7 @@ def _ejecutar_con_modelo(
             registro.total >= MAX_TOOL_CALLS_PER_TURN
             or registro.llamadas_rol >= MAX_TOOL_CALLS_PER_SPECIALIST
         ):
-            registro.limitaciones.append(
-                "Presupuesto de herramientas agotado."
-            )
+            registro.limitaciones.append("Presupuesto de herramientas agotado.")
             break
 
         mensaje = modelo.invoke(mensajes)
@@ -667,9 +665,7 @@ def _ejecutar_con_modelo(
 
         mensajes.append(mensaje)
         if mensaje.invalid_tool_calls:
-            registro.limitaciones.append(
-                "El modelo devolvió llamadas malformadas."
-            )
+            registro.limitaciones.append("El modelo devolvió llamadas malformadas.")
 
         if not mensaje.tool_calls:
             registro.texto_final = _texto_modelo(mensaje)
@@ -698,9 +694,7 @@ def _ejecutar_con_modelo(
         if _respuesta_concluyente(registro):
             break
     else:
-        registro.limitaciones.append(
-            "Límite de rondas del especialista alcanzado."
-        )
+        registro.limitaciones.append("Límite de rondas del especialista alcanzado.")
 
 
 # =========================================================

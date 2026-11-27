@@ -238,14 +238,14 @@ La integración definitiva con FastAPI se realizará en la fase 08.
 
 **Dependencias:** fases 03 y 05. Integración definitiva con las fases 04 y 07.
 
-- [ ] Implementar filtrado determinista y aclaraciones previas.
-- [ ] Incorporar la interpretación del contexto autorizado.
-- [ ] Implementar recepción, validación y adaptación de imágenes.
-- [ ] Implementar almacenamiento temporal seguro.
-- [ ] Extraer identificar_imagen() y validar su resultado.
-- [ ] Integrar la admisibilidad semántica y reutilización de identificaciones.
-- [ ] Verificar limpieza de archivos y ausencia de llamadas duplicadas.
-- [ ] Ejecutar pruebas de filtrado y multimodalidad.
+- [x] Implementar filtrado determinista y aclaraciones previas.
+- [x] Incorporar la interpretación del contexto autorizado.
+- [x] Implementar recepción, validación y adaptación de imágenes.
+- [x] Implementar almacenamiento temporal seguro.
+- [x] Extraer identificar_imagen() y validar su resultado.
+- [x] Integrar la admisibilidad semántica y reutilización de identificaciones.
+- [x] Verificar limpieza de archivos y ausencia de llamadas duplicadas.
+- [x] Ejecutar pruebas de filtrado y multimodalidad.
 
 **Archivos:** api/images.py, api/service.py, src/domain.py, src/tools/describir_imagen.py y componentes afectados del agente.
 

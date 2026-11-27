@@ -6,11 +6,18 @@ sin utilizar Gemini, la API municipal ni otros servicios externos.
 
 from __future__ import annotations
 
+import json
+from io import BytesIO
+from pathlib import Path
 from copy import deepcopy
 from unittest.mock import Mock
 
 import pytest
 from langchain_core.messages import AIMessage
+
+from PIL import Image
+
+from api.service import identificar_entrada_visual
 
 from config import (
     GEO_DEFAULT_RADIUS_METERS,
@@ -569,6 +576,70 @@ def test_consulta_compuesta_con_dos_especialistas(aislado):
 # =========================================================
 
 
+def test_identificacion_y_agente_sin_duplicar_gemini(
+    aislado,
+    tmp_path,
+):
+    """Integra la identificación real con el grafo sin repetirla."""
+    assets = tmp_path / "assets"
+    assets.mkdir()
+
+    aislado.setattr("api.images.ASSETS_DIR", assets)
+    aislado.setattr("src.tools.describir_imagen.ASSETS_DIR", assets)
+
+    descripcion = "Una botella de plástico transparente."
+
+    cliente = Mock()
+    cliente.models.generate_content.return_value.text = json.dumps({
+        "estado": "allowed",
+        "descripcion": descripcion,
+    })
+
+    crear_cliente = Mock(return_value=cliente)
+
+    aislado.setattr(
+        "src.tools.describir_imagen.crear_cliente_gemini",
+        crear_cliente,
+    )
+
+    with BytesIO() as salida:
+        with Image.new("RGB", (20, 20)) as imagen:
+            imagen.save(salida, format="PNG")
+
+        datos = salida.getvalue()
+
+    identificacion = identificar_entrada_visual(datos, "PNG")
+
+    assert identificacion == {"estado": "allowed", "descripcion": descripcion}
+
+    directorio = assets / ".api_temporal"
+
+    assert directorio.is_dir()
+    assert not list(directorio.iterdir())
+
+    estado, hilo = _crear_conversacion()
+
+    resultado = procesar_turno(
+        estado,
+        "Describe esta imagen.",
+        hilo,
+        identificacion_imagen=identificacion,
+    )
+
+    assert resultado["error"] is None
+    assert resultado["respuesta"] == descripcion
+    assert resultado["pendiente_hitl"] is True
+    assert resultado["estado_evidencia"] == "suficiente"
+    assert resultado["tool_calls_turno"] == 0
+    assert resultado["turnos_consumidos"] == 1
+    assert resultado["ruta_imagen"] is None
+
+    crear_cliente.assert_called_once()
+    cliente.models.generate_content.assert_called_once()
+    cliente.close.assert_called_once()
+
+    assert not list(directorio.iterdir())
+
 def test_imagen_y_rag_en_el_mismo_especialista(aislado):
     """Describe una imagen antes de solicitar su clasificación RAG."""
     herramientas = Mock(side_effect=_ejecutor_simulado)
@@ -579,11 +650,7 @@ def test_imagen_y_rag_en_el_mismo_especialista(aislado):
     )
 
     modelo = ModeloFalso([
-        _llamada(
-            "describir_imagen",
-            {},
-            "imagen-1",
-        ),
+        _llamada("describir_imagen", {}, "imagen-1"),
         _llamada(
             "consultar_rag",
             {"pregunta": "Botella de plástico transparente"},
@@ -591,10 +658,7 @@ def test_imagen_y_rag_en_el_mismo_especialista(aislado):
         ),
     ])
 
-    aislado.setattr(
-        "src.agent_tool_loop.get_llm",
-        Mock(return_value=modelo),
-    )
+    aislado.setattr("src.agent_tool_loop.get_llm", Mock(return_value=modelo))
 
     aislado.setattr(
         "src.nodes._generar_json",
@@ -637,6 +701,103 @@ def test_imagen_y_rag_en_el_mismo_especialista(aislado):
         "describir_imagen",
         "hora_actual",
     ]
+
+
+def test_descripcion_visual_previa_sin_llamadas_adicionales(aislado):
+    """Utiliza la identificación previa y alcanza HITL."""
+    estado, hilo = _crear_conversacion()
+
+    descripcion = "Una botella de plástico transparente."
+
+    resultado = procesar_turno(
+        estado,
+        "Describe esta imagen.",
+        hilo,
+        identificacion_imagen={"estado": "allowed", "descripcion": descripcion},
+    )
+
+    assert resultado["error"] is None
+    assert resultado["respuesta"] == descripcion
+    assert resultado["estado_evidencia"] == "suficiente"
+    assert resultado["pendiente_hitl"] is True
+    assert resultado["done"] is False
+    assert resultado["turnos_consumidos"] == 1
+    assert resultado["tool_calls_turno"] == 0
+    assert resultado["ruta_imagen"] is None
+
+    assert resultado["evidencias"] == [{
+        "rol": "residuos",
+        "herramienta": "describir_imagen",
+        "datos": descripcion,
+        "origen": "identificacion_previa",
+    }]
+
+
+def test_clasificacion_visual_reutiliza_identificacion(aislado):
+    """Reutiliza la descripción y ejecuta únicamente el RAG."""
+    herramientas = Mock(side_effect=_ejecutor_simulado)
+
+    aislado.setattr(
+        "src.agent_tool_loop.ejecutar_tool_estructurado",
+        herramientas,
+    )
+
+    modelo = ModeloFalso([
+        _llamada("describir_imagen", {}, "imagen-1"),
+        _llamada(
+            "consultar_rag",
+            {"pregunta": "Botella de plástico transparente"},
+            "rag-1",
+        ),
+    ])
+
+    aislado.setattr("src.agent_tool_loop.get_llm", Mock(return_value=modelo))
+
+    aislado.setattr(
+        "src.nodes._generar_json",
+        Mock(return_value={
+            "respuesta": "Según el RAG, envase amarillo. [C1]",
+            "plan": [
+                "Comprobar el material.",
+                "Seguir el destino documentado.",
+            ],
+        }),
+    )
+
+    estado, hilo = _crear_conversacion()
+
+    resultado = procesar_turno(
+        estado,
+        "¿En qué contenedor va lo que aparece en esta foto?",
+        hilo,
+        identificacion_imagen={
+            "estado": "allowed",
+            "descripcion": "Una botella de plástico transparente.",
+        },
+    )
+
+    assert resultado["error"] is None
+    assert resultado["pendiente_hitl"] is True
+    assert resultado["tool_calls_turno"] == 1
+    assert resultado["estado_evidencia"] == "suficiente"
+    assert resultado["ruta_imagen"] is None
+
+    herramientas.assert_called_once()
+
+    assert herramientas.call_args.args[0] == "consultar_rag"
+
+    assert len(resultado["evidencias"]) == 2
+
+    visual = resultado["evidencias"][0]
+
+    assert visual["herramienta"] == "describir_imagen"
+    assert visual["origen"] == "identificacion_previa"
+    assert "id_llamada" not in visual
+
+    assert [
+        traza["status"]
+        for traza in resultado["traza_tools"]
+    ] == ["cache", "ok"]
 
 
 # =========================================================
