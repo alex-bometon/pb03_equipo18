@@ -688,10 +688,7 @@ def test_imagen_y_rag_en_el_mismo_especialista(aislado):
         for evidencia in estado["evidencias"]
     ]
 
-    assert herramientas_ejecutadas == [
-        "describir_imagen",
-        "consultar_rag",
-    ]
+    assert herramientas_ejecutadas == ["describir_imagen", "consultar_rag"]
 
     assert len(estado["fuentes"]) == 1
     assert estado["tool_calls_turno"] == 2
@@ -737,10 +734,7 @@ def test_clasificacion_visual_reutiliza_identificacion(aislado):
     """Reutiliza la descripción y ejecuta únicamente el RAG."""
     herramientas = Mock(side_effect=_ejecutor_simulado)
 
-    aislado.setattr(
-        "src.agent_tool_loop.ejecutar_tool_estructurado",
-        herramientas,
-    )
+    aislado.setattr("src.agent_tool_loop.ejecutar_tool_estructurado", herramientas)
 
     modelo = ModeloFalso([
         _llamada("describir_imagen", {}, "imagen-1"),
