@@ -713,6 +713,7 @@ def test_executor_resultado_valido(
         resultado = ejecutor.ejecutar(
             lambda presupuesto: "resultado válido",
             recursos,
+            thread_id=thread_id,
             contexto_cuota=contexto_free,
         )
 
@@ -735,14 +736,20 @@ def test_executor_sin_capacidad_no_consume_cuota(
 ):
     """Rechaza la ejecución antes de contabilizar la cuota."""
     ejecutor, admision, limitador = recursos_ejecucion
+    thread_id = uuid4()
     tarea = Mock()
 
     with admision.reservar_capacidad():
         with pytest.raises(ApiError) as error:
             with ExitStack() as recursos:
+                recursos.enter_context(
+                    admision.reservar_hilo(thread_id)
+                )
+
                 ejecutor.ejecutar(
                     tarea,
                     recursos,
+                    thread_id=thread_id,
                     contexto_cuota=contexto_free,
                 )
 
@@ -783,6 +790,7 @@ def test_executor_fallo_submit_revierte_cuota(
             ejecutor.ejecutar(
                 lambda presupuesto: None,
                 recursos,
+                thread_id=thread_id,
                 contexto_cuota=contexto_free,
             )
 
@@ -802,15 +810,21 @@ def test_executor_error_interno_no_revierte_cuota(
 ):
     """Conserva el consumo de una tarea admitida que falla."""
     ejecutor, admision, limitador = recursos_ejecucion
+    thread_id = uuid4()
 
     def tarea(presupuesto):
         raise RuntimeError("Fallo de ejecución")
 
     with pytest.raises(RuntimeError, match="Fallo de ejecución"):
         with ExitStack() as recursos:
+            recursos.enter_context(
+                admision.reservar_hilo(thread_id)
+            )
+
             ejecutor.ejecutar(
                 tarea,
                 recursos,
+                thread_id=thread_id,
                 contexto_cuota=contexto_free,
             )
 
@@ -827,7 +841,8 @@ def test_executor_timeout_interno_de_tarea(
     recursos_ejecucion,
 ):
     """No confunde una excepción interna con el plazo agotado."""
-    ejecutor, _, _ = recursos_ejecucion
+    ejecutor, admision, _ = recursos_ejecucion
+    thread_id = uuid4()
 
     def tarea(presupuesto):
         raise TimeoutError("Timeout de dependencia externa")
@@ -837,9 +852,14 @@ def test_executor_timeout_interno_de_tarea(
         match="Timeout de dependencia externa",
     ):
         with ExitStack() as recursos:
+            recursos.enter_context(
+                admision.reservar_hilo(thread_id)
+            )
+
             ejecutor.ejecutar(
                 tarea,
                 recursos,
+                thread_id=thread_id,
                 contexto_cuota=None,
             )
 
@@ -849,15 +869,21 @@ def test_executor_aprobacion_sin_cuota(
     contexto_free,
 ):
     """Permite resolver HITL sin registrar otra cuota."""
-    ejecutor, _, limitador = recursos_ejecucion
+    ejecutor, admision, limitador = recursos_ejecucion
+    thread_id = uuid4()
 
     reservar_cuota_comercial(limitador, contexto_free)
     reservar_cuota_comercial(limitador, contexto_free)
 
     with ExitStack() as recursos:
+        recursos.enter_context(
+            admision.reservar_hilo(thread_id)
+        )
+
         resultado = ejecutor.ejecutar(
             lambda presupuesto: "aprobado",
             recursos,
+            thread_id=thread_id,
             contexto_cuota=None,
         )
 
@@ -899,6 +925,7 @@ def test_executor_timeout_retiene_recursos(contexto_free):
                 ejecutor.ejecutar(
                     tarea,
                     recursos,
+                    thread_id=thread_id,
                     contexto_cuota=contexto_free,
                 )
 

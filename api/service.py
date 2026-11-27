@@ -43,14 +43,18 @@ class ControlAdmision:
         """Inicializa los recursos compartidos de admisión."""
         self._lock = Lock()
         self._hilos_ocupados: set[UUID] = set()
+        self._hilos_invalidados: set[UUID] = set()
         self._capacidad = BoundedSemaphore(max_workers)
 
     @contextmanager
     def reservar_hilo(self, thread_id: UUID) -> Iterator[None]:
-        """Reserva exclusivamente una conversación sin esperar."""
+        """Reserva exclusivamente una conversación reutilizable."""
         with self._lock:
             if thread_id in self._hilos_ocupados:
                 raise ApiError(ErrorCode.THREAD_BUSY)
+
+            if thread_id in self._hilos_invalidados:
+                raise ApiError(ErrorCode.THREAD_STATE_LOST)
 
             self._hilos_ocupados.add(thread_id)
 
@@ -60,6 +64,11 @@ class ControlAdmision:
         finally:
             with self._lock:
                 self._hilos_ocupados.remove(thread_id)
+
+    def invalidar_hilo(self, thread_id: UUID) -> None:
+        """Impide reutilizar una conversación inconsistente."""
+        with self._lock:
+            self._hilos_invalidados.add(thread_id)
 
     @contextmanager
     def reservar_capacidad(self) -> Iterator[None]:
@@ -75,7 +84,7 @@ class ControlAdmision:
 
 
 class PresupuestoEjecucion:
-    """Gestiona el plazo temporal de una ejecución individual."""
+    """Gestiona el plazo y la vigencia de una ejecución."""
 
     def __init__(
         self,
@@ -86,22 +95,52 @@ class PresupuestoEjecucion:
         """Establece el plazo absoluto de finalización."""
         self._reloj = reloj
         self.deadline = reloj() + timeout_seconds
+        self._lock = Lock()
+        self._invalidado = False
+        self._checkpoint_expuesto = False
         self._finalizado_en: float | None = None
 
     def restante(self) -> float:
         """Devuelve el tiempo disponible hasta el plazo."""
         return max(0.0, self.deadline - self._reloj())
 
+    def comprobar_vigencia(
+        self,
+        *,
+        modifica_checkpoint: bool = False,
+    ) -> None:
+        """Autoriza una fase si la ejecución continúa vigente."""
+        with self._lock:
+            if (
+                self._invalidado
+                or self._reloj() >= self.deadline
+            ):
+                self._invalidado = True
+                raise ApiError(ErrorCode.AGENT_TIMEOUT)
+
+            if modifica_checkpoint:
+                self._checkpoint_expuesto = True
+
+    def invalidar(self) -> bool:
+        """Invalida la ejecución e indica si expuso el checkpoint."""
+        with self._lock:
+            self._invalidado = True
+
+            return self._checkpoint_expuesto
+
     def finalizar(self) -> None:
         """Registra el instante real de finalización."""
-        self._finalizado_en = self._reloj()
+        with self._lock:
+            self._finalizado_en = self._reloj()
 
     def finalizo_a_tiempo(self) -> bool:
-        """Comprueba si la tarea terminó antes del plazo."""
-        return (
-            self._finalizado_en is not None
-            and self._finalizado_en < self.deadline
-        )
+        """Comprueba si la ejecución terminó dentro del plazo."""
+        with self._lock:
+            return (
+                not self._invalidado
+                and self._finalizado_en is not None
+                and self._finalizado_en < self.deadline
+            )
     
 
 class EjecutorAsistente:
@@ -130,6 +169,7 @@ class EjecutorAsistente:
         tarea: Callable[[PresupuestoEjecucion], T],
         recursos: ExitStack,
         *,
+        thread_id: UUID,
         contexto_cuota: AuthContext | None,
     ) -> T:
         """Admite una tarea y devuelve su resultado dentro del plazo."""
@@ -145,6 +185,8 @@ class EjecutorAsistente:
         def ejecutar_tarea() -> T:
             """Registra la finalización real de la tarea."""
             try:
+                presupuesto.comprobar_vigencia()
+
                 return tarea(presupuesto)
 
             finally:
@@ -162,17 +204,24 @@ class EjecutorAsistente:
         try:
             terminados, _ = wait((futuro,), timeout=presupuesto.restante())
 
-            if (
-                futuro not in terminados
-                or not presupuesto.finalizo_a_tiempo()
-            ):
+            if (futuro not in terminados or not presupuesto.finalizo_a_tiempo()):
                 raise ApiError(ErrorCode.AGENT_TIMEOUT)
 
         except BaseException:
+            if presupuesto.invalidar():
+                self._admision.invalidar_hilo(thread_id)
+
             self._retener_recursos(futuro, recursos)
             raise
 
-        return futuro.result()
+        try:
+            return futuro.result()
+
+        except BaseException:
+            if presupuesto.invalidar():
+                self._admision.invalidar_hilo(thread_id)
+
+            raise
 
     @staticmethod
     def _retener_recursos(
@@ -183,7 +232,6 @@ class EjecutorAsistente:
         retenidos = recursos.pop_all()
 
         futuro.add_done_callback(lambda _: retenidos.close())
-
         futuro.cancel()
 
     def cerrar(self) -> None:
