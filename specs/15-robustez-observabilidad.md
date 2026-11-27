@@ -128,6 +128,7 @@ Se utilizará Sliding Window Log mediante estructuras Python protegidas frente a
 | Ventana | Segundos |
 |---|---:|
 | Minuto | 60 |
+| 30 minutos | 1800 |
 | Hora | 3600 |
 | Día | 86400 |
 
@@ -175,8 +176,8 @@ No constituirán un registro durable de facturación ni un límite económico gl
 
 | Operación | Identificador | Límite inicial |
 |---|---|---|
-| Login | Email normalizado | 5 intentos / 15 minutos |
-| Login | Origen fiable | 20 intentos / 15 minutos |
+| Login | Email normalizado | 5 intentos / hora |
+| Login | Origen fiable | 20 intentos / 30 minutos |
 | Registro | Origen fiable | 5 intentos / hora |
 | Emisión Free anónima | Origen fiable | 3 / hora y 5 / 24 horas |
 | Emisión registrada | Usuario destinatario | 3 / hora y 5 / 24 horas |

@@ -28,6 +28,15 @@ from config import BASE_DIR, IMAGE_MAX_BYTES, IMAGE_MAX_PIXELS
 MAX_API_STEPS = 4
 IMAGE_MULTIPART_OVERHEAD_BYTES = 64 * 1024
 
+# Límites de seguridad
+LOGIN_EMAIL_LIMIT_PER_HOUR: PositiveInt = 5
+LOGIN_ORIGIN_LIMIT_PER_HOUR: PositiveInt = 20
+
+REGISTER_LIMIT_PER_HOUR: PositiveInt = 5
+
+KEY_ISSUE_LIMIT_PER_HOUR: PositiveInt = 3
+KEY_ISSUE_LIMIT_PER_DAY: PositiveInt = 5
+
 
 class ApiSettings(SecureBaseModel):
     """Parámetros de configuración del backend."""
@@ -77,8 +86,8 @@ class ApiSettings(SecureBaseModel):
     USER_RATE_LIMIT_PER_DAY: PositiveInt = 45
 
     # Límites de seguridad
-    LOGIN_EMAIL_LIMIT_PER_15_MINUTES: PositiveInt = 5
-    LOGIN_ORIGIN_LIMIT_PER_15_MINUTES: PositiveInt = 20
+    LOGIN_EMAIL_LIMIT_PER_HOUR: PositiveInt = 5
+    LOGIN_ORIGIN_LIMIT_PER_30_MINUTES: PositiveInt = 20
     REGISTER_LIMIT_PER_HOUR: PositiveInt = 5
 
     KEY_ISSUE_LIMIT_PER_HOUR: PositiveInt = 3

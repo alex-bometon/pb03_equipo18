@@ -16,6 +16,7 @@ from api.security import (
     SessionStore,
     create_dummy_password_hash,
 )
+from api.rate_limit import crear_limitador
 from src.db import (
     check_database,
     create_db_engine,
@@ -30,18 +31,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.settings = settings
 
     if settings.DATABASE_URL is None:
-        raise RuntimeError(
-            "DATABASE_URL no está configurada."
-        )
+        raise RuntimeError("DATABASE_URL no está configurada.")
 
     missing_admin = settings.missing_admin_settings()
 
     if missing_admin:
         fields = ", ".join(missing_admin)
 
-        raise RuntimeError(
-            f"Configuración administrativa incompleta: {fields}"
-        )
+        raise RuntimeError(f"Configuración administrativa incompleta: {fields}")
 
     engine = None
 
@@ -61,17 +58,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             ensure_schema(engine)
 
         except Exception:
-            raise RuntimeError(
-                "No se ha podido inicializar PostgreSQL."
-            ) from None
+            raise RuntimeError("No se ha podido inicializar PostgreSQL.") from None
 
         app.state.engine = engine
 
         try:
-            bootstrap_admin_api_key(
-                engine,
-                settings,
-            )
+            bootstrap_admin_api_key(engine, settings)
 
         except Exception:
             raise RuntimeError(
@@ -80,14 +72,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
         try:
             app.state.dummy_password_hash = (
-                create_dummy_password_hash(
-                    settings.BCRYPT_ROUNDS,
-                )
+                create_dummy_password_hash(settings.BCRYPT_ROUNDS)
             )
 
             app.state.session_store = SessionStore(
                 ttl_seconds=settings.SESSION_TTL_SECONDS,
             )
+
+            app.state.rate_limiter = crear_limitador(settings)
 
         except Exception:
             raise RuntimeError(

@@ -37,6 +37,7 @@ from api.security import (
     hash_password,
     hash_secret,
 )
+from api.rate_limit import crear_limitador
 from src import db
 from src.enums import ApiKeyRole
 from src.models import ApiKey, User
@@ -48,10 +49,9 @@ def app() -> FastAPI:
     application = FastAPI()
 
     application.state.settings = ApiSettings()
+    application.state.rate_limiter = crear_limitador(application.state.settings)
     application.state.engine = Mock(spec=Engine)
-    application.state.session_store = SessionStore(
-        ttl_seconds=28_800,
-    )
+    application.state.session_store = SessionStore(ttl_seconds=28_800)
 
     register_exception_handlers(application)
 
@@ -2595,3 +2595,94 @@ def test_authorization_database_failure(
 
     assert secret not in response.text
     assert "detalle-sensible-ficticio" not in response.text
+
+def test_rate_limit_modalidades_compartidas(
+    app,
+    client,
+    monkeypatch,
+):
+    """Comparte el límite HTTP entre modalidades de una clave."""
+    settings = ApiSettings(RATE_LIMIT_PER_MINUTE=1)
+
+    app.state.settings = settings
+    app.state.rate_limiter = crear_limitador(settings)
+
+    contexto = AuthContext(
+        user_id=uuid4(),
+        api_key_id=uuid4(),
+        role=ApiKeyRole.USER,
+    )
+
+    monkeypatch.setattr(
+        dependencies,
+        "_authenticate_original_key",
+        Mock(return_value=contexto),
+    )
+
+    monkeypatch.setattr(
+        dependencies,
+        "_authenticate_user_session",
+        Mock(return_value=contexto),
+    )
+
+    primera = client.get(
+        "/test/context",
+        headers={"X-API-Key": "clave-ficticia"},
+    )
+
+    assert primera.status_code == 200
+
+    segunda = client.get(
+        "/test/context",
+        headers={
+            "Authorization": "Bearer token-ficticio",
+            "X-API-Key-Id": str(contexto.api_key_id),
+        },
+    )
+
+    assert_error(segunda, ErrorCode.RATE_LIMIT_EXCEEDED)
+
+    assert int(segunda.headers["Retry-After"]) > 0
+
+
+def test_autenticacion_invalida_no_consume_rate_limit(
+    app,
+    client,
+    monkeypatch,
+):
+    """Solo registra peticiones cuya autenticación es válida."""
+    settings = ApiSettings(RATE_LIMIT_PER_MINUTE=1)
+
+    app.state.settings = settings
+    app.state.rate_limiter = crear_limitador(settings)
+
+    contexto = AuthContext(
+        user_id=None,
+        api_key_id=uuid4(),
+        role=ApiKeyRole.FREE,
+    )
+
+    autenticacion = Mock(
+        side_effect=[
+            ApiError(ErrorCode.INVALID_API_KEY),
+            contexto,
+            contexto,
+        ],
+    )
+
+    monkeypatch.setattr(
+        dependencies,
+        "_authenticate_original_key",
+        autenticacion,
+    )
+
+    headers = {"X-API-Key": "clave-ficticia"}
+
+    primera = client.get("/test/context", headers=headers)
+    assert_error(primera, ErrorCode.INVALID_API_KEY)
+
+    segunda = client.get("/test/context", headers=headers)
+    assert segunda.status_code == 200
+
+    tercera = client.get("/test/context", headers=headers)
+    assert_error(tercera, ErrorCode.RATE_LIMIT_EXCEEDED)

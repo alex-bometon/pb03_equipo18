@@ -4,6 +4,7 @@ import re
 from collections.abc import Callable, Iterator
 from typing import Annotated
 from uuid import UUID
+from ipaddress import ip_address
 
 from fastapi import Depends, Header, Request, Security
 from fastapi.security import (
@@ -29,6 +30,7 @@ from api.request_context import (
     AuthContext,
 )
 from api.security import SessionStore, hash_secret
+from api.rate_limit import SlidingWindowLog, limitar_http
 from src import db
 from src.enums import ApiKeyRole
 from src.models import ApiKey, Conversation
@@ -91,6 +93,25 @@ def get_session_store(request: Request) -> SessionStore:
 
     return store
 
+def get_rate_limiter(request: Request) -> SlidingWindowLog:
+    """Recupera el limitador compartido del backend."""
+    limitador = getattr(request.app.state, "rate_limiter", None)
+
+    if not isinstance(limitador, SlidingWindowLog):
+        raise ApiError(ErrorCode.SERVICE_NOT_CONFIGURED)
+
+    return limitador
+
+def obtener_origen(request: Request) -> str:
+    """Obtiene el origen comunicado por el servidor ASGI."""
+    if request.client is not None:
+        try:
+            return str(ip_address(request.client.host))
+
+        except ValueError:
+            pass
+
+    return "origen_no_identificado"
 
 def get_session(
     engine: Annotated[Engine, Depends(get_engine)],
@@ -360,28 +381,28 @@ def _resolve_authentication(
     store: SessionStore,
     missing_code: ErrorCode,
 ) -> AuthContext:
-    """Selecciona y ejecuta la modalidad de autenticación."""
-    api_key, authorization, selected_key_id = (
-        _read_credentials(request)
-    )
+    """Autentica la identidad y aplica su límite HTTP."""
+    api_key, authorization, selected_key_id = _read_credentials(request)
 
     if api_key is not None:
-        return _authenticate_original_key(
-            engine,
-            api_key,
-        )
+        contexto = _authenticate_original_key(engine, api_key)
 
-    if authorization is not None:
+    elif authorization is not None:
         token = _parse_bearer(authorization)
 
-        return _authenticate_user_session(
+        contexto = _authenticate_user_session(
             engine,
             store,
             token,
             selected_key_id,
         )
 
-    raise ApiError(missing_code)
+    else:
+        raise ApiError(missing_code)
+
+    limitar_http(get_rate_limiter(request), contexto)
+
+    return contexto
 
 
 # =========================================================

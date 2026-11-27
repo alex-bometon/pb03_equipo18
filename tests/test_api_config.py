@@ -37,6 +37,9 @@ def test_default_settings(isolated_env):
     assert settings.FREE_RATE_LIMIT_PER_HOUR == 10
     assert settings.FREE_RATE_LIMIT_PER_DAY == 30
 
+    assert settings.LOGIN_EMAIL_LIMIT_PER_HOUR == 5
+    assert settings.LOGIN_ORIGIN_LIMIT_PER_30_MINUTES == 20
+
     assert settings.USER_RATE_LIMIT_PER_MINUTE == 5
     assert settings.USER_RATE_LIMIT_PER_HOUR == 20
     assert settings.USER_RATE_LIMIT_PER_DAY == 45
@@ -180,6 +183,8 @@ def test_invalid_authorized_user_id():
         ("IMAGE_UPLOAD_MAX_BYTES", 21 * 1024 * 1024),
         ("IMAGE_UPLOAD_MAX_PIXELS", 1),
         ("IMAGE_UPLOAD_MAX_PIXELS", 33_000_000),
+        ("LOGIN_EMAIL_LIMIT_PER_HOUR", 0),
+        ("LOGIN_ORIGIN_LIMIT_PER_30_MINUTES", 0),
     ],
 )
 def test_invalid_settings(field, value):

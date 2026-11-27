@@ -255,13 +255,13 @@ La integración definitiva con FastAPI se realizará en la fase 08.
 
 ### Fase 07 — Robustez y observabilidad
 
-**Rama:** feature/api-robustness.
+**Rama:** feature/robustness.
 
 **Dependencias:** fases 01, 03 y 04.
 
-- [ ] Implementar Sliding Window Log y contadores independientes.
-- [ ] Implementar rate limiting, cuotas y límites de seguridad.
-- [ ] Implementar Retry-After y limpieza de contadores.
+- [x] Implementar Sliding Window Log y contadores independientes.
+- [x] Implementar rate limiting, cuotas y límites de seguridad.
+- [x] Implementar Retry-After y limpieza de contadores.
 - [ ] Implementar exclusión por conversación y capacidad global.
 - [ ] Configurar executor y timeout compartido.
 - [ ] Implementar controles temporales entre fases.
@@ -529,6 +529,7 @@ Las decisiones D01–D114 han sido aprobadas y se encuentran recogidas en las es
 | D112 | Reutilización y centralización de las reglas de filtrado existentes | 04, 15 |
 | D113 | Admisión de consultas compuestas con posibilidad de respuesta parcial fundamentada | 04, 15 |
 | D114 | Interpretación de reformulaciones mediante el contexto operativo autorizado | 06, 10, 15 |
+| D115 | Login limitado a 5 intentos por email y hora, y 20 intentos por origen fiable cada 30 minutos | 15 |
 
 Su contenido no se reproducirá en este plan.
 
