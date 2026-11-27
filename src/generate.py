@@ -26,6 +26,7 @@ from src.generation_validation import (
     _abstenerse,
     _interpretar_respuesta,
 )
+from src.observability import observar_llamada
 
 
 ESQUEMA_RESPUESTA = {
@@ -163,7 +164,10 @@ def _solicitar_generacion(cliente: Any, pregunta: str, contexto: str):
     max_intentos = max(1, GENERATION_MAX_RETRIES)
     for intento in range(max_intentos):
         try:
-            return cliente.models.generate_content(
+            return observar_llamada(
+                "gemini",
+                "generacion_rag",
+                cliente.models.generate_content,
                 model=GENERATION_MODEL,
                 contents=(
                     f"PREGUNTA DEL USUARIO:\n{pregunta}\n\n"

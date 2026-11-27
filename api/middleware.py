@@ -22,6 +22,11 @@ from api.exception_handlers import (
     handle_unexpected_error,
 )
 from api.request_context import REQUEST_ID_HEADER, get_request_id
+from src.observability import (
+    EVENT_LOGGER,
+    configurar_logger,
+    request_id_context,
+)
 
 
 HTTP_LOGGER = logging.getLogger("reciclatia.http")
@@ -33,14 +38,9 @@ HTTP_METHODS = frozenset({
 
 
 def configure_http_logging(level: str) -> None:
-    """Configura los registros HTTP sin duplicar manejadores."""
-    HTTP_LOGGER.setLevel(level)
-    HTTP_LOGGER.propagate = False
-
-    if not HTTP_LOGGER.handlers:
-        handler = logging.StreamHandler()
-        handler.setFormatter(logging.Formatter("%(message)s"))
-        HTTP_LOGGER.addHandler(handler)
+    """Configura los registros HTTP y los eventos técnicos."""
+    configurar_logger(HTTP_LOGGER, level)
+    configurar_logger(EVENT_LOGGER, level)
 
 
 def _get_route_pattern(request: Request) -> str:
@@ -198,6 +198,7 @@ class RequestMiddleware:
         started_at = perf_counter()
         request = Request(scope, receive)
         request_id = get_request_id(request)
+        token_contexto = request_id_context.set(request_id)
 
         status_code: int | None = None
         response_started = False
@@ -260,11 +261,7 @@ class RequestMiddleware:
 
                     return
 
-                await self.app(
-                    inner_scope,
-                    inner_receive,
-                    inner_send,
-                )
+                await self.app(inner_scope, inner_receive, inner_send)
 
             except ApiError as exc:
                 if response_started:
@@ -278,10 +275,7 @@ class RequestMiddleware:
                 if response_started:
                     raise
 
-                response = await handle_unexpected_error(
-                    request,
-                    exc,
-                )
+                response = await handle_unexpected_error(request, exc)
 
                 await response(inner_scope, inner_receive, inner_send)
 
@@ -305,9 +299,7 @@ class RequestMiddleware:
             await cors(scope, receive, send_with_context)
 
         except Exception as exc:
-            request.state.error_code = (
-                ErrorCode.INTERNAL_SERVER_ERROR.value
-            )
+            request.state.error_code = ErrorCode.INTERNAL_SERVER_ERROR.value
 
             if response_started:
                 raise RuntimeError(
@@ -315,10 +307,7 @@ class RequestMiddleware:
                 ) from None
 
             try:
-                response = await handle_unexpected_error(
-                    request,
-                    exc,
-                )
+                response = await handle_unexpected_error(request, exc)
 
                 await response(scope, receive, send_with_context)
 
@@ -330,4 +319,8 @@ class RequestMiddleware:
         finally:
             duration_ms = (perf_counter() - started_at) * 1000
 
-            log_http_request(request, status_code, duration_ms)
+            try:
+                log_http_request(request, status_code, duration_ms)
+
+            finally:
+                request_id_context.reset(token_contexto)

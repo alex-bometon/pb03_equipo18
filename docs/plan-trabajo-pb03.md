@@ -264,8 +264,8 @@ La integración definitiva con FastAPI se realizará en la fase 08.
 - [x] Implementar Retry-After y limpieza de contadores.
 - [x] Implementar exclusión por conversación y capacidad global.
 - [x] Configurar executor y timeout compartido.
-- [ ] Implementar controles temporales entre fases.
-- [ ] Gestionar resultados tardíos, invalidación y liberación segura de recursos.
+- [x] Implementar controles temporales entre fases.
+- [x] Gestionar resultados tardíos, invalidación y liberación segura de recursos.
 - [ ] Completar la observabilidad de cuotas, concurrencia, ejecución y proveedores externos sobre el middleware implementado en la fase 03.
 - [ ] Ejecutar pruebas temporales, concurrentes y de robustez.
 

@@ -24,6 +24,11 @@ from api.middleware import (
     configure_http_logging,
 )
 from api.request_context import REQUEST_ID_HEADER
+from src.observability import (
+    EVENT_LOGGER,
+    registrar_evento,
+    request_id_context,
+)
 
 
 ORIGIN = "http://localhost:8501"
@@ -597,3 +602,39 @@ def test_multipart_rechaza_cuerpo_sin_longitud(client, app):
     assert response.status_code == 413
     assert response.json()["code"] == ErrorCode.IMAGE_FILE_TOO_LARGE.value
     assert app.state.calls == 0
+
+def test_evento_tecnico_comparte_request_id(
+    app,
+    client,
+    caplog,
+    monkeypatch,
+):
+    """Correlaciona un evento técnico con su petición HTTP."""
+    monkeypatch.setattr(EVENT_LOGGER, "propagate", False)
+    monkeypatch.setattr(EVENT_LOGGER, "handlers", [caplog.handler])
+
+    caplog.set_level(logging.INFO, logger=EVENT_LOGGER.name)
+
+    @app.get("/test/event")
+    def generar_evento():
+        registrar_evento("test_http_context")
+        return {"ok": True}
+
+    response = client.get("/test/event")
+
+    assert response.status_code == 200
+
+    eventos = [
+        json.loads(registro.getMessage())
+        for registro in caplog.records
+        if registro.name == EVENT_LOGGER.name
+    ]
+
+    assert len(eventos) == 1
+
+    assert eventos[0]["event"] == "test_http_context"
+    assert eventos[0]["request_id"] == response.headers[
+        REQUEST_ID_HEADER
+    ]
+
+    assert request_id_context.get() is None

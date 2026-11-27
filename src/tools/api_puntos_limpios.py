@@ -3,9 +3,12 @@
 from math import asin, cos, isfinite, radians, sin, sqrt
 
 import requests
+import logging
+from time import perf_counter
 
 from langchain_core.tools import tool
 
+from src.observability import registrar_evento
 from src.retrieve import _abrir_coleccion
 from src.retrieve_structured import consultar_puntos_limpios_locales
 
@@ -334,6 +337,8 @@ def buscar_puntos_limpios_cercanos(
     )
     avisos: list[str] = []
 
+    inicio = perf_counter()
+
     try:
         registros = _consultar_api_puntos_limpios(
             latitud=latitud,
@@ -343,9 +348,22 @@ def buscar_puntos_limpios_cercanos(
         )
 
     except RuntimeError:
+        registrar_evento(
+            "provider_failed",
+            nivel=logging.ERROR,
+            ambitos=("arcgis", "puntos_limpios"),
+            duration_ms=(perf_counter() - inicio) * 1000,
+        )
+
         puntos = None
 
     else:
+        registrar_evento(
+            "provider_completed",
+            ambitos=("arcgis", "puntos_limpios"),
+            duration_ms=(perf_counter() - inicio) * 1000,
+        )
+
         puntos = _preparar_puntos_cercanos(
             registros,
             latitud,
@@ -354,6 +372,7 @@ def buscar_puntos_limpios_cercanos(
 
         if registros and not puntos:
             puntos = None
+
         elif len(puntos) < len(registros):
             descartados = len(registros) - len(puntos)
             avisos.append(
@@ -362,6 +381,11 @@ def buscar_puntos_limpios_cercanos(
             )
 
     if puntos is None:
+        registrar_evento(
+            "geographic_fallback",
+            nivel=logging.WARNING,
+            ambitos=("arcgis", "chromadb"),
+        )
         registros_locales = consultar_puntos_limpios_locales(
             abrir_coleccion=_abrir_coleccion,
             avisos=avisos,

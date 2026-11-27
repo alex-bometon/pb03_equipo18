@@ -8,12 +8,14 @@ from contextlib import ExitStack, contextmanager
 from typing import TypeVar
 from threading import BoundedSemaphore, Lock
 from uuid import UUID
+import logging
+from contextvars import copy_context
 
 from api.schemas import AskOut, UbicacionIn
 from api.error_catalog import ErrorCode
 from api.errors import ApiError
 from api.images import imagen_temporal
-from src.state import IdentificacionImagen
+from src.state import ESTADOS_IDENTIFICACION_IMAGEN, IdentificacionImagen
 from src.tools.describir_imagen import identificar_imagen
 from src.domain import es_consulta_programacion, evaluar_ambito
 from src.generation_validation import MENSAJE_ABSTENCION
@@ -26,6 +28,7 @@ from src.rag_intents import (
     es_horario_movil_sin_ubicacion,
     requiere_antecedente,
 )
+from src.observability import registrar_evento
 from api.config import ApiSettings
 from api.rate_limit import (
     SlidingWindowLog,
@@ -49,14 +52,27 @@ class ControlAdmision:
     @contextmanager
     def reservar_hilo(self, thread_id: UUID) -> Iterator[None]:
         """Reserva exclusivamente una conversación reutilizable."""
+        error_code = None
+
         with self._lock:
             if thread_id in self._hilos_ocupados:
-                raise ApiError(ErrorCode.THREAD_BUSY)
+                error_code = ErrorCode.THREAD_BUSY
 
-            if thread_id in self._hilos_invalidados:
-                raise ApiError(ErrorCode.THREAD_STATE_LOST)
+            elif thread_id in self._hilos_invalidados:
+                error_code = ErrorCode.THREAD_STATE_LOST
 
-            self._hilos_ocupados.add(thread_id)
+            else:
+                self._hilos_ocupados.add(thread_id)
+
+        if error_code is not None:
+            registrar_evento(
+                "thread_rejected",
+                nivel=logging.WARNING,
+                thread_id=thread_id,
+                error_code=error_code.value,
+            )
+
+            raise ApiError(error_code)
 
         try:
             yield
@@ -68,12 +84,28 @@ class ControlAdmision:
     def invalidar_hilo(self, thread_id: UUID) -> None:
         """Impide reutilizar una conversación inconsistente."""
         with self._lock:
+            if thread_id in self._hilos_invalidados:
+                return
+
             self._hilos_invalidados.add(thread_id)
+
+        registrar_evento(
+            "checkpoint_invalidated",
+            nivel=logging.WARNING,
+            thread_id=thread_id,
+            error_code=ErrorCode.THREAD_STATE_LOST.value,
+        )
 
     @contextmanager
     def reservar_capacidad(self) -> Iterator[None]:
         """Reserva capacidad de ejecución sin acumular solicitudes."""
         if not self._capacidad.acquire(blocking=False):
+            registrar_evento(
+                "capacity_exhausted",
+                nivel=logging.WARNING,
+                error_code=ErrorCode.SERVER_BUSY.value,
+            )
+
             raise ApiError(ErrorCode.SERVER_BUSY)
 
         try:
@@ -81,7 +113,6 @@ class ControlAdmision:
 
         finally:
             self._capacidad.release()
-
 
 class PresupuestoEjecucion:
     """Gestiona el plazo y la vigencia de una ejecución."""
@@ -94,7 +125,8 @@ class PresupuestoEjecucion:
     ) -> None:
         """Establece el plazo absoluto de finalización."""
         self._reloj = reloj
-        self.deadline = reloj() + timeout_seconds
+        self._iniciado_en = reloj()
+        self.deadline = self._iniciado_en + timeout_seconds
         self._lock = Lock()
         self._invalidado = False
         self._checkpoint_expuesto = False
@@ -141,6 +173,14 @@ class PresupuestoEjecucion:
                 and self._finalizado_en is not None
                 and self._finalizado_en < self.deadline
             )
+        
+    def duracion_ms(self) -> float | None:
+        """Devuelve la duración real de la ejecución finalizada."""
+        with self._lock:
+            if self._finalizado_en is None:
+                return None
+
+            return (self._finalizado_en - self._iniciado_en) * 1000
     
 
 class EjecutorAsistente:
@@ -178,9 +218,22 @@ class EjecutorAsistente:
         reserva = None
 
         if contexto_cuota is not None:
-            reserva = reservar_cuota_comercial(self._limitador, contexto_cuota)
+            reserva = reservar_cuota_comercial(
+                self._limitador,
+                contexto_cuota,
+            )
 
-        presupuesto = PresupuestoEjecucion(self._timeout_seconds, reloj=self._reloj)
+        if reserva is not None:
+            registrar_evento(
+                "quota_reserved",
+                thread_id=thread_id,
+                ambitos=(reserva[0][0],),
+            )
+
+        presupuesto = PresupuestoEjecucion(
+            self._timeout_seconds,
+            reloj=self._reloj,
+        )
 
         def ejecutar_tarea() -> T:
             """Registra la finalización real de la tarea."""
@@ -192,46 +245,141 @@ class EjecutorAsistente:
             finally:
                 presupuesto.finalizar()
 
+        contexto = copy_context()
+
         try:
-            futuro = self._executor.submit(ejecutar_tarea)
+            futuro = self._executor.submit(
+                contexto.run,
+                ejecutar_tarea,
+            )
 
         except BaseException:
             if reserva is not None:
-                self._limitador.revertir(*reserva)
+                revertida = self._limitador.revertir(*reserva)
+
+                if revertida:
+                    registrar_evento(
+                        "quota_reverted",
+                        thread_id=thread_id,
+                        ambitos=(reserva[0][0],),
+                    )
+
+            registrar_evento(
+                "execution_admission_failed",
+                nivel=logging.ERROR,
+                thread_id=thread_id,
+                error_code=ErrorCode.INTERNAL_SERVER_ERROR.value,
+            )
 
             raise
 
-        try:
-            terminados, _ = wait((futuro,), timeout=presupuesto.restante())
+        registrar_evento(
+            "execution_admitted",
+            thread_id=thread_id,
+        )
 
-            if (futuro not in terminados or not presupuesto.finalizo_a_tiempo()):
+        try:
+            terminados, _ = wait(
+                (futuro,),
+                timeout=presupuesto.restante(),
+            )
+
+            if (
+                futuro not in terminados
+                or not presupuesto.finalizo_a_tiempo()
+            ):
                 raise ApiError(ErrorCode.AGENT_TIMEOUT)
 
-        except BaseException:
+        except BaseException as exc:
             if presupuesto.invalidar():
                 self._admision.invalidar_hilo(thread_id)
 
-            self._retener_recursos(futuro, recursos)
+            if (
+                isinstance(exc, ApiError)
+                and exc.code == ErrorCode.AGENT_TIMEOUT
+            ):
+                registrar_evento(
+                    "execution_timeout",
+                    nivel=logging.WARNING,
+                    thread_id=thread_id,
+                    error_code=ErrorCode.AGENT_TIMEOUT.value,
+                )
+
+            else:
+                registrar_evento(
+                    "execution_wait_failed",
+                    nivel=logging.ERROR,
+                    thread_id=thread_id,
+                    error_code=ErrorCode.INTERNAL_SERVER_ERROR.value,
+                )
+
+            self._retener_recursos(
+                futuro,
+                recursos,
+                presupuesto=presupuesto,
+                thread_id=thread_id,
+            )
+
             raise
 
         try:
-            return futuro.result()
+            resultado = futuro.result()
 
         except BaseException:
             if presupuesto.invalidar():
                 self._admision.invalidar_hilo(thread_id)
 
+            registrar_evento(
+                "execution_failed",
+                nivel=logging.ERROR,
+                thread_id=thread_id,
+                duration_ms=presupuesto.duracion_ms(),
+            )
+
             raise
+
+        registrar_evento(
+            "execution_completed",
+            thread_id=thread_id,
+            duration_ms=presupuesto.duracion_ms(),
+        )
+
+        return resultado
 
     @staticmethod
     def _retener_recursos(
         futuro: Future,
         recursos: ExitStack,
+        *,
+        presupuesto: PresupuestoEjecucion,
+        thread_id: UUID,
     ) -> None:
         """Conserva las reservas hasta que termine el worker."""
         retenidos = recursos.pop_all()
+        contexto = copy_context()
 
-        futuro.add_done_callback(lambda _: retenidos.close())
+        def finalizar_tardio(terminado: Future) -> None:
+            """Registra el descarte y libera los recursos retenidos."""
+            try:
+                evento = (
+                    "execution_cancelled"
+                    if terminado.cancelled()
+                    else "execution_discarded"
+                )
+
+                contexto.run(
+                    registrar_evento,
+                    evento,
+                    nivel=logging.WARNING,
+                    thread_id=thread_id,
+                    duration_ms=presupuesto.duracion_ms(),
+                )
+
+            finally:
+                retenidos.close()
+
+        futuro.add_done_callback(finalizar_tardio)
+
         futuro.cancel()
 
     def cerrar(self) -> None:
@@ -338,6 +486,17 @@ def identificar_entrada_visual(
         identificacion = identificar_imagen(ruta)
 
     estado = identificacion["estado"]
+
+    if estado in ESTADOS_IDENTIFICACION_IMAGEN:
+        registrar_evento(
+            "image_identification_completed",
+            nivel=(
+                logging.INFO
+                if estado == "allowed"
+                else logging.WARNING
+            ),
+            ambitos=(estado,),
+        )
 
     if estado == "allowed":
         return identificacion

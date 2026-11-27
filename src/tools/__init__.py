@@ -1,5 +1,8 @@
 """Allowlist de herramientas de ReciclaTIA."""
 
+import logging
+from time import perf_counter
+
 from typing import Any, Literal, TypedDict
 
 from config import (
@@ -12,6 +15,7 @@ from config import (
     GEO_MIN_RADIUS_METERS,
 )
 from src.input_validation import validar_pregunta
+from src.observability import registrar_evento
 
 from .api_puntos_limpios import (
     TIPOS_PUNTOS_LIMPIOS,
@@ -158,6 +162,8 @@ def _ejecutar(
     if fallo is not None:
         return _fallo(nombre if isinstance(nombre, str) else "", fallo)
 
+    inicio = perf_counter()
+
     try:
         datos = TOOL_BY_NAME[nombre].invoke(args)
 
@@ -165,7 +171,20 @@ def _ejecutar(
         datos = exc.identificacion
 
     except Exception:
+        registrar_evento(
+            "tool_failed",
+            nivel=logging.ERROR,
+            ambitos=(nombre,),
+            duration_ms=(perf_counter() - inicio) * 1000,
+        )
+
         return _fallo(nombre, "Error: no se pudo ejecutar la herramienta.")
+
+    registrar_evento(
+        "tool_completed",
+        ambitos=(nombre,),
+        duration_ms=(perf_counter() - inicio) * 1000,
+    )
 
     return {
         "ok": True,

@@ -35,6 +35,7 @@ from src.agent_tool_loop import (
     ejecutar_especialista,
 )
 from src.llm import get_llm
+from src.observability import observar_llamada
 from src.rag_intents import MENSAJE_ACLARACION_PROXIMIDAD, consulta_proximidad
 from src.state import EstadoGrafo, agregar_evento, registrar_turno
 
@@ -56,7 +57,14 @@ def _generar_json(
         HumanMessage(content=json.dumps(entrada, ensure_ascii=False)),
     ]
 
-    respuesta = get_llm(supervisor=supervisor_llm).invoke(mensajes)
+    modelo = get_llm(supervisor=supervisor_llm)
+
+    respuesta = observar_llamada(
+        "gemini",
+        "generacion_supervisor" if supervisor_llm else "generacion_sintesis",
+        modelo.invoke,
+        mensajes,
+    )
     datos = JsonOutputParser().invoke(respuesta)
 
     if not isinstance(datos, dict):

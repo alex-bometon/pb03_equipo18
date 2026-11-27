@@ -24,6 +24,7 @@ from src.db import (
     create_db_engine,
     ensure_schema,
 )
+from src.observability import configurar_logs_externos
 
 
 @asynccontextmanager
@@ -41,6 +42,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         fields = ", ".join(missing_admin)
 
         raise RuntimeError(f"Configuración administrativa incompleta: {fields}")
+    
+    configure_http_logging(settings.LOG_LEVEL)
+    configurar_logs_externos()
 
     engine = None
     ejecutor = None
@@ -98,8 +102,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         )
 
         app.state.ejecutor = ejecutor
-
-        configure_http_logging(settings.LOG_LEVEL)
 
         yield
 

@@ -4,6 +4,7 @@ from uuid import UUID
 import time
 from collections import defaultdict, deque
 from collections.abc import Callable, Mapping
+import logging
 from math import ceil
 from threading import Lock
 
@@ -12,6 +13,7 @@ from api.errors import ApiError
 from api.config import ApiSettings
 from api.request_context import AuthContext
 from src.enums import ApiKeyRole
+from src.observability import registrar_evento
 
 
 MINUTE = 60
@@ -112,18 +114,28 @@ class SlidingWindowLog:
 
                         retry_after = max(retry_after, espera)
 
-            if retry_after > 0:
-                raise ApiError(
-                    ErrorCode.RATE_LIMIT_EXCEEDED,
-                    retry_after=ceil(retry_after),
-                )
+            if retry_after <= 0:
+                registro = (ahora, object())
 
-            registro = (ahora, object())
+                for clave in claves:
+                    self._registros[clave].append(registro)
 
-            for clave in claves:
-                self._registros[clave].append(registro)
+                return registro
 
-            return registro
+        espera = ceil(retry_after)
+
+        registrar_evento(
+            "rate_limit_exceeded",
+            nivel=logging.WARNING,
+            error_code=ErrorCode.RATE_LIMIT_EXCEEDED.value,
+            ambitos=tuple(dict.fromkeys(clave[0] for clave in claves)),
+            retry_after=espera,
+        )
+
+        raise ApiError(
+            ErrorCode.RATE_LIMIT_EXCEEDED,
+            retry_after=espera,
+        )
 
     def revertir(
         self,
