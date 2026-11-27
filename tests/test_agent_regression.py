@@ -6,25 +6,46 @@ sin utilizar Gemini, la API municipal ni otros servicios externos.
 
 from __future__ import annotations
 
+from uuid import UUID
 import json
 from io import BytesIO
 from pathlib import Path
 from copy import deepcopy
 from unittest.mock import Mock
+from contextlib import ExitStack
+from uuid import UUID, uuid4
 
 import pytest
 from langchain_core.messages import AIMessage
+from sqlalchemy.engine import Engine
+from sqlmodel import Session
 
 from PIL import Image
 
-from api.service import identificar_entrada_visual
+from api.dependencies import reservar_hilo_autorizado
+from api.error_catalog import ErrorCode
+from api.errors import ApiError
+from api.request_context import AuthContext
+from api.schemas import AskOut
+from api.security import generate_secret, hash_secret
+from api.service import (
+    ControlAdmision,
+    identificar_entrada_visual,
+    validar_decision_hitl,
+    validar_nuevo_turno,
+    validar_resultado_agente,
+)
 
 from config import (
+    FUENTES_OFICIALES,
     GEO_DEFAULT_RADIUS_METERS,
     MAX_ITER,
     MAX_TOOL_CALLS_PER_TURN,
     MAX_TURNS_DEFAULT,
 )
+from src import db
+from src.enums import ApiKeyRole
+from src.models import ApiKey
 from src.agent import (
     aprobar_plan,
     nuevo_thread_id,
@@ -82,7 +103,7 @@ def _llamada(
 
 
 def _resultado_rag(*, abstencion: bool = False) -> dict:
-    """Simula la respuesta estructurada del RAG PB01."""
+    """Simula la respuesta estructurada del RAG PB03."""
     if abstencion:
         return {
             "respuesta": "No hay evidencia documental suficiente.",
@@ -97,24 +118,31 @@ def _resultado_rag(*, abstencion: bool = False) -> dict:
         "motivo": None,
         "fuentes": [{
             "chunk_id": "C1",
-            "source": "residuos.csv",
-            "path": "data/raw/csv/residuos.csv",
+            "source": "tipos_residuos.csv",
+            "path": "data/raw/csv/tipos_residuos.csv",
         }],
     }
 
 
 def _resultado_geografico() -> dict:
     """Simula la respuesta estructurada de la API geográfica."""
+    punto = {
+        "id": 123,
+        "tipo": "Proximidad",
+        "direccion": "Calle de Prueba, 1",
+        "latitud": 40.4199,
+        "longitud": -3.7038,
+        "distancia_metros": 350.0,
+        "fuente": "api",
+    }
+
     return {
         "fuente": "api",
         "tipo_solicitado": "proximidad",
         "radio_metros": GEO_DEFAULT_RADIUS_METERS,
         "total_encontrados": 1,
-        "puntos": [{
-            "tipo": "Proximidad",
-            "direccion": "Calle de Prueba, 1",
-            "distancia_metros": 350.0,
-        }],
+        "puntos": [punto],
+        "puntos_candidatos": [deepcopy(punto)],
         "aviso": None,
     }
 
@@ -145,7 +173,10 @@ def _ejecutor_simulado(nombre, args, *, rol):
                 "Los puntos limpios de proximidad son "
                 "instalaciones municipales. [C1]"
             )
-            datos["fuentes"][0]["source"] = "puntos.csv"
+            datos["fuentes"][0].update({
+                "source": "puntos_limpios_proximidad.csv",
+                "path": "data/raw/csv/puntos_limpios_proximidad.csv",
+            })
 
     elif nombre == "buscar_puntos_limpios_cercanos":
         assert isinstance(args["latitud"], float)
@@ -237,11 +268,50 @@ def test_clasificacion_directa_y_aprobacion(aislado):
     assert herramienta.call_args.args[0] == "consultar_rag"
     assert len(estado["fuentes"]) == 1
 
+    propuesta = validar_resultado_agente(
+        estado,
+        thread_id=UUID(hilo),
+        turnos_esperados=1,
+        aprobado_esperado=None,
+    )
+
+    assert isinstance(propuesta, AskOut)
+    assert propuesta.pendiente_hitl is True
+    assert propuesta.approval_id == estado["approval_id"]
+    assert propuesta.geografia == []
+
+    assert len(propuesta.fuentes) == 1
+
+    fuente = propuesta.fuentes[0]
+
+    assert fuente.chunk_id == "C1"
+    assert fuente.source == "tipos_residuos.csv"
+    assert fuente.rol == "residuos"
+    assert fuente.id_llamada
+
+    assert str(fuente.url) == (
+        FUENTES_OFICIALES["tipos_residuos.csv"]
+    )
+
     estado = aprobar_plan(hilo, True, approval_id=estado["approval_id"])
 
     assert estado["done"] is True
     assert estado["pendiente_hitl"] is False
     assert estado["historial_turnos"][-1]["aprobado"] is True
+
+    resultado = validar_resultado_agente(
+        estado,
+        thread_id=UUID(hilo),
+        turnos_esperados=1,
+        aprobado_esperado=True,
+    )
+
+    assert resultado.done is True
+    assert resultado.pendiente_hitl is False
+    assert resultado.approval_id is None
+    assert resultado.fuentes == propuesta.fuentes
+    assert resultado.plan == propuesta.plan
+    assert obtener_estado_hilo(hilo) == estado
 
 
 def test_rechazo_y_reformulacion(aislado):
@@ -268,6 +338,19 @@ def test_rechazo_y_reformulacion(aislado):
     assert estado["plan"] == []
     assert estado["historial_turnos"][-1]["aprobado"] is False
 
+    rechazado = validar_resultado_agente(
+        estado,
+        thread_id=UUID(hilo),
+        turnos_esperados=1,
+        aprobado_esperado=False,
+    )
+
+    assert rechazado.done is False
+    assert rechazado.plan == []
+    assert rechazado.fuentes == []
+    assert rechazado.geografia == []
+    assert rechazado.approval_id is None
+
     estado = procesar_turno(
         estado,
         "¿Dónde tiro una lata de refresco?",
@@ -278,6 +361,18 @@ def test_rechazo_y_reformulacion(aislado):
     assert estado["pendiente_hitl"] is True
     assert estado["turnos_consumidos"] == 2
     assert herramienta.call_count == 2
+
+    reformulado = validar_resultado_agente(
+        estado,
+        thread_id=UUID(hilo),
+        turnos_esperados=2,
+        aprobado_esperado=None,
+    )
+
+    assert reformulado.pendiente_hitl is True
+    assert reformulado.approval_id is not None
+    assert reformulado.thread_id == hilo
+    assert obtener_estado_hilo(hilo) == estado
 
 
 def test_no_se_admiten_turnos_mientras_hitl(aislado):
@@ -420,6 +515,35 @@ def test_punto_cercano_con_coordenadas(aislado):
     assert argumentos["longitud"] == -3.7038
     assert argumentos["tipo"] == "proximidad"
 
+    resultado = validar_resultado_agente(
+        estado,
+        thread_id=UUID(hilo),
+        turnos_esperados=1,
+        aprobado_esperado=None,
+    )
+
+    assert len(resultado.geografia) == 1
+
+    geografia = resultado.geografia[0]
+
+    assert geografia.fuente == "api"
+    assert geografia.total_encontrados == 1
+    assert geografia.tipo_solicitado == "proximidad"
+
+    punto = geografia.puntos[0]
+
+    assert punto.direccion == "Calle de Prueba, 1"
+    assert punto.latitud == 40.4199
+    assert punto.longitud == -3.7038
+    assert punto.distancia_metros == 350.0
+
+    datos = resultado.model_dump(mode="json")
+
+    assert "evidencias" not in datos
+    assert "ubicacion" not in datos
+    assert "puntos_candidatos" not in datos["geografia"][0]
+    assert "id" not in datos["geografia"][0]["puntos"][0]
+
 
 # =========================================================
 # ABSTENCIÓN Y ERRORES
@@ -458,6 +582,20 @@ def test_abstencion_rag_sin_generacion_adicional(aislado):
     assert estado["fuentes"] == []
     assert "No hay evidencia" in estado["respuesta"]
 
+    resultado = validar_resultado_agente(
+        estado,
+        thread_id=UUID(hilo),
+        turnos_esperados=1,
+        aprobado_esperado=None,
+    )
+
+    assert resultado.error is None
+    assert resultado.abstencion is True
+    assert resultado.estado_evidencia == "insuficiente"
+    assert resultado.pendiente_hitl is True
+    assert resultado.fuentes == []
+    assert resultado.geografia == []
+
 
 def test_fallo_tecnico_no_inventa_resultado(aislado):
     """Un fallo externo no produce una clasificación inventada."""
@@ -486,6 +624,16 @@ def test_fallo_tecnico_no_inventa_resultado(aislado):
     assert estado["pendiente_hitl"] is False
     assert estado["plan"] == []
     assert estado["done"] is False
+
+    with pytest.raises(ApiError) as error:
+        validar_resultado_agente(
+            estado,
+            thread_id=UUID(hilo),
+            turnos_esperados=1,
+            aprobado_esperado=None,
+        )
+
+    assert error.value.code == ErrorCode.INTERNAL_SERVER_ERROR
 
 
 # =========================================================
@@ -804,6 +952,24 @@ def test_clasificacion_visual_reutiliza_identificacion(aislado):
         for traza in resultado["traza_tools"]
     ] == ["cache", "ok"]
 
+    respuesta = validar_resultado_agente(
+        resultado,
+        thread_id=UUID(hilo),
+        turnos_esperados=1,
+        aprobado_esperado=None,
+    )
+
+    datos = respuesta.model_dump(mode="json")
+
+    assert respuesta.pendiente_hitl is True
+    assert respuesta.estado_evidencia == "suficiente"
+    assert respuesta.fuentes
+
+    assert "ruta_imagen" not in datos
+    assert "identificacion_imagen" not in datos
+    assert "evidencias" not in datos
+    assert "traza_tools" not in datos
+
 
 # =========================================================
 # PRESUPUESTOS Y DEDUPLICACIÓN
@@ -1098,3 +1264,267 @@ def test_obtener_estado_hilo_invalido(aislado, caso, mensaje):
     app.get_state.assert_called_once()
     app.invoke.assert_not_called()
     app.update_state.assert_not_called()
+
+# =========================================================
+# INTEGRACIÓN DE AUTORIZACIÓN Y ESTADO OPERATIVO
+# =========================================================
+
+@pytest.fixture
+def hilo_persistido(
+    clean_db: Engine,
+) -> tuple[UUID, AuthContext, AuthContext]:
+    """Prepara una conversación y dos credenciales independientes."""
+    thread_id = uuid4()
+
+    with Session(clean_db) as session:
+        propietaria = ApiKey(
+            key_hash=hash_secret(generate_secret()),
+            role=ApiKeyRole.FREE,
+        )
+
+        ajena = ApiKey(
+            key_hash=hash_secret(generate_secret()),
+            role=ApiKeyRole.FREE,
+        )
+
+        db.create_api_key(session, propietaria)
+        db.create_api_key(session, ajena)
+        session.flush()
+
+        contexto = AuthContext(
+            user_id=None,
+            api_key_id=propietaria.id,
+            role=ApiKeyRole.FREE,
+        )
+
+        contexto_ajeno = AuthContext(
+            user_id=None,
+            api_key_id=ajena.id,
+            role=ApiKeyRole.FREE,
+        )
+
+        db.create_conversation(
+            session,
+            thread_id,
+            propietaria.id,
+        )
+
+        session.commit()
+
+    return thread_id, contexto, contexto_ajeno
+
+@pytest.mark.integration
+def test_integracion_estado_operativo_continuidad(
+    aislado: pytest.MonkeyPatch,
+    clean_db: Engine,
+    hilo_persistido: tuple[UUID, AuthContext, AuthContext],
+) -> None:
+    """Integra propiedad, exclusión, continuidad y resolución HITL."""
+    aislado.setattr(
+        "src.agent_tool_loop.ejecutar_tool_estructurado",
+        _ejecutor_simulado,
+    )
+
+    thread_id, contexto, contexto_ajeno = hilo_persistido
+    hilo = str(thread_id)
+    admision = ControlAdmision(max_workers=1)
+
+    estado = crear_estado_producto(
+        thread_id=hilo,
+        max_turns=2,
+    )
+
+    with admision.reservar_hilo(thread_id):
+        estado = procesar_turno(
+            estado,
+            "¿Dónde tiro una botella de plástico?",
+            hilo,
+        )
+
+    assert estado["error"] is None
+    assert estado["pendiente_hitl"] is True
+
+    primera_aprobacion = estado["approval_id"]
+    assert primera_aprobacion is not None
+
+    with ExitStack() as recursos:
+        recuperado = reservar_hilo_autorizado(
+            clean_db,
+            contexto,
+            thread_id,
+            admision,
+            recursos,
+        )
+
+        assert recuperado == estado
+
+        # No revela la ocupación a una credencial ajena.
+        with pytest.raises(ApiError) as error:
+            with ExitStack() as otros_recursos:
+                reservar_hilo_autorizado(
+                    clean_db,
+                    contexto_ajeno,
+                    thread_id,
+                    admision,
+                    otros_recursos,
+                )
+
+        assert error.value.code == ErrorCode.THREAD_NOT_FOUND
+
+        # Impide operaciones concurrentes del propietario.
+        with pytest.raises(ApiError) as error:
+            with ExitStack() as otros_recursos:
+                reservar_hilo_autorizado(
+                    clean_db,
+                    contexto,
+                    thread_id,
+                    admision,
+                    otros_recursos,
+                )
+
+        assert error.value.code == ErrorCode.THREAD_BUSY
+
+        with pytest.raises(ApiError) as error:
+            validar_nuevo_turno(recuperado)
+
+        assert error.value.code == ErrorCode.PENDING_APPROVAL
+
+        validar_decision_hitl(
+            recuperado,
+            primera_aprobacion,
+        )
+
+        estado = aprobar_plan(
+            hilo,
+            False,
+            approval_id=primera_aprobacion,
+        )
+
+        assert estado["error"] is None
+        assert estado["turnos_consumidos"] == 1
+
+    with ExitStack() as recursos:
+        recuperado = reservar_hilo_autorizado(
+            clean_db,
+            contexto,
+            thread_id,
+            admision,
+            recursos,
+        )
+
+        validar_nuevo_turno(recuperado)
+
+        estado = procesar_turno(
+            recuperado,
+            "¿Dónde tiro una lata de refresco?",
+            hilo,
+        )
+
+        assert estado["error"] is None
+        assert estado["turnos_consumidos"] == 2
+
+    with ExitStack() as recursos:
+        recuperado = reservar_hilo_autorizado(
+            clean_db,
+            contexto,
+            thread_id,
+            admision,
+            recursos,
+        )
+
+        segunda_aprobacion = recuperado["approval_id"]
+
+        assert segunda_aprobacion is not None
+        assert segunda_aprobacion != primera_aprobacion
+
+        with pytest.raises(ApiError) as error:
+            validar_decision_hitl(
+                recuperado,
+                primera_aprobacion,
+            )
+
+        assert error.value.code == ErrorCode.STALE_APPROVAL
+
+        validar_decision_hitl(
+            recuperado,
+            segunda_aprobacion,
+        )
+
+        estado = aprobar_plan(
+            hilo,
+            True,
+            approval_id=segunda_aprobacion,
+        )
+
+        resultado = validar_resultado_agente(
+            estado,
+            thread_id=thread_id,
+            turnos_esperados=2,
+            aprobado_esperado=True,
+        )
+
+        assert resultado.done is True
+        assert resultado.pendiente_hitl is False
+
+    with ExitStack() as recursos:
+        recuperado = reservar_hilo_autorizado(
+            clean_db,
+            contexto,
+            thread_id,
+            admision,
+            recursos,
+        )
+
+        with pytest.raises(ApiError) as error:
+            validar_nuevo_turno(recuperado)
+
+        assert error.value.code == ErrorCode.THREAD_CLOSED
+
+        with pytest.raises(ApiError) as error:
+            validar_decision_hitl(
+                recuperado,
+                segunda_aprobacion,
+            )
+
+        assert error.value.code == ErrorCode.NO_PENDING_APPROVAL
+
+@pytest.mark.integration
+def test_integracion_estado_operativo_perdido(
+    aislado: pytest.MonkeyPatch,
+    clean_db: Engine,
+    hilo_persistido: tuple[UUID, AuthContext, AuthContext],
+) -> None:
+    """Impide reconstruir una conversación sin checkpoint."""
+    thread_id, contexto, _ = hilo_persistido
+    admision = ControlAdmision(max_workers=1)
+
+    assert obtener_estado_hilo(str(thread_id)) is None
+
+    with pytest.raises(ApiError) as error:
+        with ExitStack() as recursos:
+            reservar_hilo_autorizado(
+                clean_db,
+                contexto,
+                thread_id,
+                admision,
+                recursos,
+            )
+
+    assert error.value.code == ErrorCode.THREAD_STATE_LOST
+
+    with pytest.raises(ApiError) as error:
+        with admision.reservar_hilo(thread_id):
+            pytest.fail("No debe reutilizarse un hilo invalidado.")
+
+    assert error.value.code == ErrorCode.THREAD_STATE_LOST
+
+    with Session(clean_db) as session:
+        conversation = db.get_conversation_by_id(
+            session,
+            thread_id,
+        )
+
+        assert conversation is not None
+        assert conversation.api_key_id == contexto.api_key_id
+
+    assert obtener_estado_hilo(str(thread_id)) is None

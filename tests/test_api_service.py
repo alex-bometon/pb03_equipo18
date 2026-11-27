@@ -2,12 +2,15 @@
 
 import json
 import logging
-from uuid import uuid4
+from uuid import UUID, uuid4
 import pytest
 from pathlib import Path
-from unittest.mock import Mock
+from unittest.mock import Mock, MagicMock
 from contextlib import ExitStack
+from copy import deepcopy
 
+
+from config import MAX_TURNS_LIMIT
 from api.config import ApiSettings
 from api.schemas import AskOut, UbicacionIn
 from api.service import filtrar_entrada, identificar_entrada_visual
@@ -23,6 +26,10 @@ from api.service import (
     PresupuestoEjecucion,
     filtrar_entrada,
     identificar_entrada_visual,
+    recuperar_estado_operativo,
+    validar_decision_hitl,
+    validar_nuevo_turno,
+    validar_resultado_agente,
 )
 from src.enums import ApiKeyRole
 from src.observability import (
@@ -35,7 +42,7 @@ from src.rag_intents import (
     MENSAJE_ACLARACION_HORARIO_MOVIL,
     MENSAJE_ACLARACION_PROXIMIDAD,
 )
-
+from src.state import EstadoProducto, crear_estado_producto
 
 from concurrent.futures import ThreadPoolExecutor
 from threading import Event
@@ -1407,3 +1414,524 @@ def test_executor_no_registra_excepcion_completa(
     assert fallo["duration_ms"] >= 0
 
     assert secreto not in caplog.text
+
+
+# =========================================================
+# VALIDACIÓN DE RESULTADOS DEL AGENTE
+# =========================================================
+
+@pytest.fixture
+def resultado_agente() -> EstadoProducto:
+    """Proporciona un resultado válido pendiente de HITL."""
+    estado = crear_estado_producto(
+        thread_id=str(uuid4()),
+    )
+
+    estado.update({
+        "respuesta": "Consulta resuelta.",
+        "plan": [
+            "Identificar el residuo.",
+            "Comprobar su destino.",
+        ],
+        "pendiente_hitl": True,
+        "approval_id": str(uuid4()),
+        "turnos_consumidos": 1,
+        "abstencion": False,
+        "estado_evidencia": "suficiente",
+    })
+
+    return estado
+
+@pytest.mark.parametrize("aprobado", [None, True, False])
+def test_validar_resultado_agente_valido(
+    resultado_agente: EstadoProducto,
+    aprobado: bool | None,
+) -> None:
+    """Admite los tres resultados válidos de LangGraph."""
+    if aprobado is not None:
+        resultado_agente.update({
+            "pendiente_hitl": False,
+            "approval_id": None,
+            "plan_aprobado": aprobado,
+            "done": aprobado,
+        })
+
+    if aprobado is False:
+        resultado_agente.update({
+            "plan": [],
+            "respuesta": "Plan rechazado.",
+            "abstencion": True,
+            "estado_evidencia": "insuficiente",
+        })
+
+    resultado = validar_resultado_agente(
+        resultado_agente,
+        thread_id=UUID(resultado_agente["thread_id"]),
+        turnos_esperados=1,
+        aprobado_esperado=aprobado,
+    )
+
+    assert isinstance(resultado, AskOut)
+    assert resultado.plan_aprobado is aprobado
+    assert resultado.pendiente_hitl is (aprobado is None)
+    assert resultado.done is (aprobado is True)
+
+
+@pytest.mark.parametrize(
+    "campo, valor",
+    [
+        ("error", "Fallo técnico."),
+        ("respuesta", ""),
+        ("fuentes", None),
+        ("evidencias", None),
+        ("turnos_consumidos", 0),
+    ],
+)
+def test_validar_resultado_agente_invalido(
+    resultado_agente: EstadoProducto,
+    campo: str,
+    valor: object,
+) -> None:
+    """Traduce los fallos internos al catálogo de errores."""
+    resultado_agente[campo] = valor
+
+    with pytest.raises(ApiError) as error:
+        validar_resultado_agente(
+            resultado_agente,
+            thread_id=UUID(resultado_agente["thread_id"]),
+            turnos_esperados=1,
+            aprobado_esperado=None,
+        )
+
+    assert error.value.code == ErrorCode.INTERNAL_SERVER_ERROR
+
+
+def test_validar_resultado_agente_campo_ausente(
+    resultado_agente: EstadoProducto,
+) -> None:
+    """Rechaza un resultado cuyo contrato está incompleto."""
+    del resultado_agente["respuesta"]
+
+    with pytest.raises(ApiError) as error:
+        validar_resultado_agente(
+            resultado_agente,
+            thread_id=UUID(resultado_agente["thread_id"]),
+            turnos_esperados=1,
+            aprobado_esperado=None,
+        )
+
+    assert error.value.code == ErrorCode.INTERNAL_SERVER_ERROR
+
+
+@pytest.mark.parametrize(
+    "caso",
+    ["thread_id", "turnos", "aprobacion"],
+)
+def test_validar_resultado_agente_inconsistente(
+    resultado_agente: EstadoProducto,
+    caso: str,
+) -> None:
+    """Rechaza resultados incompatibles con la operación solicitada."""
+    thread_id = UUID(resultado_agente["thread_id"])
+
+    with pytest.raises(ApiError) as error:
+        validar_resultado_agente(
+            resultado_agente,
+            thread_id=uuid4() if caso == "thread_id" else thread_id,
+            turnos_esperados=2 if caso == "turnos" else 1,
+            aprobado_esperado=True if caso == "aprobacion" else None,
+        )
+
+    assert error.value.code == ErrorCode.INTERNAL_SERVER_ERROR
+
+
+def test_resultado_invalido_invalida_checkpoint(
+    resultado_agente: EstadoProducto,
+    recursos_ejecucion,
+) -> None:
+    """Impide reutilizar un hilo tras una ejecución inválida."""
+    ejecutor, admision, _ = recursos_ejecucion
+    thread_id = UUID(resultado_agente["thread_id"])
+
+    resultado_agente["respuesta"] = ""
+
+    def tarea(presupuesto: PresupuestoEjecucion) -> AskOut:
+        """Simula un resultado inválido después de ejecutar el grafo."""
+        presupuesto.comprobar_vigencia(
+            modifica_checkpoint=True,
+        )
+
+        return validar_resultado_agente(
+            resultado_agente,
+            thread_id=thread_id,
+            turnos_esperados=1,
+            aprobado_esperado=None,
+        )
+
+    with pytest.raises(ApiError) as error:
+        with ExitStack() as recursos:
+            recursos.enter_context(
+                admision.reservar_hilo(thread_id),
+            )
+
+            ejecutor.ejecutar(
+                tarea,
+                recursos,
+                thread_id=thread_id,
+                contexto_cuota=None,
+            )
+
+    assert error.value.code == ErrorCode.INTERNAL_SERVER_ERROR
+
+    with pytest.raises(ApiError) as error:
+        with admision.reservar_hilo(thread_id):
+            pytest.fail("El hilo debe estar invalidado.")
+
+    assert error.value.code == ErrorCode.THREAD_STATE_LOST
+
+    with admision.reservar_capacidad():
+        pass
+
+
+def test_resultado_invalido_no_expone_datos(
+    resultado_agente: EstadoProducto,
+    eventos_tecnicos,
+) -> None:
+    """Registra el fallo sin revelar información interna."""
+    request_id, caplog = eventos_tecnicos
+    thread_id = UUID(resultado_agente["thread_id"])
+    secreto = "credencial-ficticia-no-registrable"
+
+    resultado_agente["error"] = secreto
+
+    with pytest.raises(ApiError) as error:
+        validar_resultado_agente(
+            resultado_agente,
+            thread_id=thread_id,
+            turnos_esperados=1,
+            aprobado_esperado=None,
+        )
+
+    eventos = obtener_eventos(caplog)
+
+    fallo = next(
+        evento for evento in eventos
+        if evento["event"] == "agent_result_invalid"
+    )
+
+    assert fallo["request_id"] == request_id
+    assert fallo["thread_id"] == str(thread_id)
+    assert fallo["error_code"] == "INTERNAL_SERVER_ERROR"
+    assert fallo["level"] == "ERROR"
+
+    assert secreto not in caplog.text
+    assert secreto not in str(error.value)
+
+# =========================================================
+# RECUPERACIÓN DEL ESTADO OPERATIVO
+# =========================================================
+
+@pytest.mark.parametrize("aprobado", [None, True, False])
+def test_recuperar_estado_operativo_valido(
+    resultado_agente: EstadoProducto,
+    monkeypatch: pytest.MonkeyPatch,
+    aprobado: bool | None,
+) -> None:
+    """Recupera checkpoints pendientes, aprobados y rechazados."""
+    if aprobado is not None:
+        resultado_agente.update({
+            "pendiente_hitl": False,
+            "approval_id": None,
+            "plan_aprobado": aprobado,
+            "done": aprobado,
+        })
+
+    if aprobado is False:
+        resultado_agente.update({
+            "plan": [],
+            "respuesta": "Plan rechazado.",
+            "abstencion": True,
+            "estado_evidencia": "insuficiente",
+        })
+
+    lectura = Mock(return_value=resultado_agente)
+
+    monkeypatch.setattr(
+        servicio,
+        "obtener_estado_hilo",
+        lectura,
+    )
+
+    admision = ControlAdmision(max_workers=1)
+    thread_id = UUID(resultado_agente["thread_id"])
+
+    with admision.reservar_hilo(thread_id):
+        estado = recuperar_estado_operativo(
+            thread_id,
+            admision,
+        )
+
+    assert estado == resultado_agente
+
+    lectura.assert_called_once_with(str(thread_id))
+
+    with admision.reservar_hilo(thread_id):
+        pass
+
+
+@pytest.mark.parametrize(
+    "caso",
+    ["inexistente", "inconsistente"],
+)
+def test_recuperar_estado_operativo_perdido(
+    monkeypatch: pytest.MonkeyPatch,
+    caso: str,
+) -> None:
+    """Invalida conversaciones cuyo checkpoint no es recuperable."""
+    lectura = Mock(return_value=None)
+
+    if caso == "inconsistente":
+        lectura.side_effect = RuntimeError(
+            "Checkpoint incompleto.",
+        )
+
+    monkeypatch.setattr(
+        servicio,
+        "obtener_estado_hilo",
+        lectura,
+    )
+
+    admision = ControlAdmision(max_workers=1)
+    thread_id = uuid4()
+
+    with pytest.raises(ApiError) as error:
+        with admision.reservar_hilo(thread_id):
+            recuperar_estado_operativo(
+                thread_id,
+                admision,
+            )
+
+    assert error.value.code == ErrorCode.THREAD_STATE_LOST
+
+    with pytest.raises(ApiError) as error:
+        with admision.reservar_hilo(thread_id):
+            pytest.fail("El hilo debe estar invalidado.")
+
+    assert error.value.code == ErrorCode.THREAD_STATE_LOST
+
+    lectura.assert_called_once_with(str(thread_id))
+
+
+@pytest.mark.parametrize(
+    "campo, valor",
+    [
+        ("error", "Fallo técnico."),
+        ("max_turns", True),
+        ("max_turns", 0),
+        ("max_turns", MAX_TURNS_LIMIT + 1),
+        ("turnos_consumidos", MAX_TURNS_LIMIT + 1),
+        ("turnos_consumidos", 0),
+        ("contexto_revision", None),
+    ],
+)
+def test_recuperar_estado_operativo_invalido(
+    resultado_agente: EstadoProducto,
+    monkeypatch: pytest.MonkeyPatch,
+    campo: str,
+    valor: object,
+) -> None:
+    """Rechaza valores inconsistentes del checkpoint recuperado."""
+    resultado_agente[campo] = valor
+
+    monkeypatch.setattr(
+        servicio,
+        "obtener_estado_hilo",
+        Mock(return_value=resultado_agente),
+    )
+
+    admision = ControlAdmision(max_workers=1)
+    thread_id = UUID(resultado_agente["thread_id"])
+
+    with pytest.raises(ApiError) as error:
+        with admision.reservar_hilo(thread_id):
+            recuperar_estado_operativo(
+                thread_id,
+                admision,
+            )
+
+    assert error.value.code == ErrorCode.THREAD_STATE_LOST
+
+
+def test_recuperar_estado_operativo_turnos_agotados(
+    resultado_agente: EstadoProducto,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Permite recuperar un estado válido con turnos agotados."""
+    resultado_agente["turnos_consumidos"] = (
+        resultado_agente["max_turns"]
+    )
+
+    monkeypatch.setattr(
+        servicio,
+        "obtener_estado_hilo",
+        Mock(return_value=resultado_agente),
+    )
+
+    admision = ControlAdmision(max_workers=1)
+    thread_id = UUID(resultado_agente["thread_id"])
+
+    with admision.reservar_hilo(thread_id):
+        estado = recuperar_estado_operativo(
+            thread_id,
+            admision,
+        )
+
+    assert estado["turnos_consumidos"] == estado["max_turns"]
+
+
+# =========================================================
+# ADMISIBILIDAD DE NUEVOS TURNOS
+# =========================================================
+
+@pytest.mark.parametrize(
+    "aprobado, agotado, codigo",
+    [
+        (True, False, ErrorCode.THREAD_CLOSED),
+        (True, True, ErrorCode.THREAD_CLOSED),
+        (None, False, ErrorCode.PENDING_APPROVAL),
+        (None, True, ErrorCode.PENDING_APPROVAL),
+        (False, True, ErrorCode.TURN_LIMIT_REACHED),
+    ],
+)
+def test_validar_nuevo_turno_rechazado(
+    resultado_agente: EstadoProducto,
+    aprobado: bool | None,
+    agotado: bool,
+    codigo: ErrorCode,
+) -> None:
+    """Rechaza consultas incompatibles con el estado operativo."""
+    if aprobado is not None:
+        resultado_agente.update({
+            "pendiente_hitl": False,
+            "approval_id": None,
+            "plan_aprobado": aprobado,
+            "done": aprobado,
+        })
+
+    if aprobado is False:
+        resultado_agente.update({
+            "plan": [],
+            "respuesta": "Plan rechazado.",
+            "abstencion": True,
+            "estado_evidencia": "insuficiente",
+        })
+
+    if agotado:
+        resultado_agente["turnos_consumidos"] = (
+            resultado_agente["max_turns"]
+        )
+
+    original = deepcopy(resultado_agente)
+
+    with pytest.raises(ApiError) as error:
+        validar_nuevo_turno(resultado_agente)
+
+    assert error.value.code == codigo
+    assert resultado_agente == original
+
+
+def test_validar_nuevo_turno_disponible(
+    resultado_agente: EstadoProducto,
+) -> None:
+    """Admite una reformulación sin modificar el estado."""
+    resultado_agente.update({
+        "pendiente_hitl": False,
+        "approval_id": None,
+        "plan_aprobado": False,
+        "done": False,
+        "plan": [],
+        "respuesta": "Plan rechazado.",
+        "abstencion": True,
+        "estado_evidencia": "insuficiente",
+    })
+
+    original = deepcopy(resultado_agente)
+
+    assert validar_nuevo_turno(resultado_agente) is None
+    assert resultado_agente == original
+
+
+# =========================================================
+# ADMISIBILIDAD DE DECISIONES HITL
+# =========================================================
+
+@pytest.mark.parametrize("agotado", [False, True])
+def test_validar_decision_hitl_valida(
+    resultado_agente: EstadoProducto,
+    agotado: bool,
+) -> None:
+    """Admite decisiones incluso cuando no quedan nuevos turnos."""
+    if agotado:
+        resultado_agente["turnos_consumidos"] = (
+            resultado_agente["max_turns"]
+        )
+
+    approval_id = resultado_agente["approval_id"]
+    assert approval_id is not None
+
+    original = deepcopy(resultado_agente)
+
+    assert validar_decision_hitl(
+        resultado_agente,
+        approval_id,
+    ) is None
+
+    assert resultado_agente == original
+
+
+@pytest.mark.parametrize("aprobado", [True, False])
+def test_validar_decision_hitl_sin_pendiente(
+    resultado_agente: EstadoProducto,
+    aprobado: bool,
+) -> None:
+    """Impide resolver una propuesta previamente resuelta."""
+    approval_id = resultado_agente["approval_id"]
+    assert approval_id is not None
+
+    resultado_agente.update({
+        "pendiente_hitl": False,
+        "approval_id": None,
+        "plan_aprobado": aprobado,
+        "done": aprobado,
+    })
+
+    original = deepcopy(resultado_agente)
+
+    with pytest.raises(ApiError) as error:
+        validar_decision_hitl(
+            resultado_agente,
+            approval_id,
+        )
+
+    assert error.value.code == ErrorCode.NO_PENDING_APPROVAL
+    assert resultado_agente == original
+
+
+def test_validar_decision_hitl_obsoleta(
+    resultado_agente: EstadoProducto,
+) -> None:
+    """Rechaza identificadores ajenos a la propuesta pendiente."""
+    approval_id = str(uuid4())
+
+    assert approval_id != resultado_agente["approval_id"]
+
+    original = deepcopy(resultado_agente)
+
+    with pytest.raises(ApiError) as error:
+        validar_decision_hitl(
+            resultado_agente,
+            approval_id,
+        )
+
+    assert error.value.code == ErrorCode.STALE_APPROVAL
+    assert resultado_agente == original

@@ -5,6 +5,7 @@ from collections.abc import Callable, Iterator
 from typing import Annotated
 from uuid import UUID
 from ipaddress import ip_address
+from contextlib import ExitStack
 
 from fastapi import Depends, Header, Request, Security
 from fastapi.security import (
@@ -30,11 +31,16 @@ from api.request_context import (
     AuthContext,
 )
 from api.security import SessionStore, hash_secret
-from api.service import ControlAdmision, EjecutorAsistente
+from api.service import (
+    ControlAdmision,
+    EjecutorAsistente,
+    recuperar_estado_operativo,
+)
 from api.rate_limit import SlidingWindowLog, limitar_http
 from src import db
 from src.enums import ApiKeyRole
 from src.models import ApiKey, Conversation
+from src.state import EstadoProducto
 
 
 # =========================================================
@@ -622,6 +628,35 @@ def require_thread_access(
         session,
         api_key_id,
         thread_id,
+    )
+
+
+def reservar_hilo_autorizado(
+    engine: Engine,
+    context: AuthContext,
+    thread_id: UUID,
+    admision: ControlAdmision,
+    recursos: ExitStack,
+) -> EstadoProducto:
+    """Reserva y recupera una conversación previamente autorizada."""
+    try:
+        with Session(engine) as session:
+            require_thread_access(
+                session,
+                context,
+                thread_id,
+            )
+
+    except SQLAlchemyError as exc:
+        raise translate_db_error(exc) from None
+
+    recursos.enter_context(
+        admision.reservar_hilo(thread_id),
+    )
+
+    return recuperar_estado_operativo(
+        thread_id,
+        admision,
     )
 
 

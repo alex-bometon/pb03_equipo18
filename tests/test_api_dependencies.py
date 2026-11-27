@@ -3,8 +3,9 @@
 from collections.abc import Iterator
 from dataclasses import FrozenInstanceError
 from typing import Annotated
-from unittest.mock import MagicMock, Mock
+from unittest.mock import MagicMock, Mock, sentinel
 from uuid import UUID, uuid4
+from contextlib import ExitStack
 
 import pytest
 from fastapi import Depends, FastAPI
@@ -13,6 +14,7 @@ from httpx import Response
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import OperationalError, SQLAlchemyError
 from sqlmodel import Session
+from sqlalchemy.engine import Engine
 
 import api.dependencies as dependencies
 import api.security as security
@@ -26,6 +28,7 @@ from api.mappers import (
     to_message_out,
 )
 from api.request_context import AuthContext
+from api.service import ControlAdmision
 from api.schemas import (
     ApiKeyOut,
     ConversationOut,
@@ -2686,3 +2689,171 @@ def test_autenticacion_invalida_no_consume_rate_limit(
 
     tercera = client.get("/test/context", headers=headers)
     assert_error(tercera, ErrorCode.RATE_LIMIT_EXCEEDED)
+
+
+# =========================================================
+# RESERVA DE CONVERSACIONES AUTORIZADAS
+# =========================================================
+
+def test_reservar_hilo_autorizado(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Conserva el bloqueo durante toda la operación autorizada."""
+    engine = Mock(spec=Engine)
+    session = MagicMock(spec=Session)
+    session.__enter__.return_value = session
+
+    monkeypatch.setattr(
+        dependencies,
+        "Session",
+        Mock(return_value=session),
+    )
+
+    contexto = AuthContext(
+        user_id=uuid4(),
+        api_key_id=uuid4(),
+        role=ApiKeyRole.USER,
+    )
+
+    thread_id = uuid4()
+    admision = ControlAdmision(max_workers=1)
+
+    autorizar = Mock()
+
+    monkeypatch.setattr(
+        dependencies,
+        "require_thread_access",
+        autorizar,
+    )
+
+    def recuperar(*args: object) -> object:
+        """Comprueba que la sesión SQL ya se ha cerrado."""
+        session.__exit__.assert_called_once()
+
+        return sentinel.estado
+
+    lectura = Mock(side_effect=recuperar)
+
+    monkeypatch.setattr(
+        dependencies,
+        "recuperar_estado_operativo",
+        lectura,
+    )
+
+    with ExitStack() as recursos:
+        estado = dependencies.reservar_hilo_autorizado(
+            engine,
+            contexto,
+            thread_id,
+            admision,
+            recursos,
+        )
+
+        assert estado is sentinel.estado
+
+        autorizar.assert_called_once_with(
+            session,
+            contexto,
+            thread_id,
+        )
+
+        lectura.assert_called_once_with(
+            thread_id,
+            admision,
+        )
+
+        with pytest.raises(ApiError) as error:
+            with admision.reservar_hilo(thread_id):
+                pytest.fail("El hilo debe permanecer ocupado.")
+
+        assert error.value.code == ErrorCode.THREAD_BUSY
+
+    with admision.reservar_hilo(thread_id):
+        pass
+
+@pytest.mark.parametrize(
+    "caso, codigo",
+    [
+        ("ajeno", ErrorCode.THREAD_NOT_FOUND),
+        ("ocupado", ErrorCode.THREAD_BUSY),
+        ("invalidado", ErrorCode.THREAD_STATE_LOST),
+    ],
+)
+def test_reservar_hilo_autorizado_rechazado(
+    monkeypatch: pytest.MonkeyPatch,
+    caso: str,
+    codigo: ErrorCode,
+) -> None:
+    """Rechaza operaciones antes de consultar el checkpoint."""
+    engine = Mock(spec=Engine)
+    session = MagicMock(spec=Session)
+    session.__enter__.return_value = session
+
+    monkeypatch.setattr(
+        dependencies,
+        "Session",
+        Mock(return_value=session),
+    )
+
+    contexto = AuthContext(
+        user_id=uuid4(),
+        api_key_id=uuid4(),
+        role=ApiKeyRole.USER,
+    )
+
+    thread_id = uuid4()
+    admision = ControlAdmision(max_workers=1)
+
+    autorizar = Mock()
+    lectura = Mock()
+
+    monkeypatch.setattr(
+        dependencies,
+        "require_thread_access",
+        autorizar,
+    )
+
+    monkeypatch.setattr(
+        dependencies,
+        "recuperar_estado_operativo",
+        lectura,
+    )
+
+    with ExitStack() as ocupacion:
+        if caso == "ajeno":
+            ocupacion.enter_context(
+                admision.reservar_hilo(thread_id),
+            )
+
+            autorizar.side_effect = ApiError(
+                ErrorCode.THREAD_NOT_FOUND,
+            )
+
+        elif caso == "ocupado":
+            ocupacion.enter_context(
+                admision.reservar_hilo(thread_id),
+            )
+
+        elif caso == "invalidado":
+            admision.invalidar_hilo(thread_id)
+
+        with pytest.raises(ApiError) as error:
+            with ExitStack() as recursos:
+                dependencies.reservar_hilo_autorizado(
+                    engine,
+                    contexto,
+                    thread_id,
+                    admision,
+                    recursos,
+                )
+
+        assert error.value.code == codigo
+
+    autorizar.assert_called_once_with(
+        session,
+        contexto,
+        thread_id,
+    )
+
+    lectura.assert_not_called()
+    session.__exit__.assert_called_once()

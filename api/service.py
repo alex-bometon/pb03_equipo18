@@ -15,7 +15,13 @@ from api.schemas import AskOut, UbicacionIn
 from api.error_catalog import ErrorCode
 from api.errors import ApiError
 from api.images import imagen_temporal
-from src.state import ESTADOS_IDENTIFICACION_IMAGEN, IdentificacionImagen
+from config import MAX_TURNS_LIMIT
+from src.agent import obtener_estado_hilo
+from src.state import (
+    ESTADOS_IDENTIFICACION_IMAGEN,
+    EstadoProducto,
+    IdentificacionImagen,
+)
 from src.tools.describir_imagen import identificar_imagen
 from src.domain import es_consulta_programacion, evaluar_ambito
 from src.generation_validation import MENSAJE_ABSTENCION
@@ -30,6 +36,7 @@ from src.rag_intents import (
 )
 from src.observability import registrar_evento
 from api.config import ApiSettings
+from api.mappers import to_ask_out
 from api.rate_limit import (
     SlidingWindowLog,
     reservar_cuota_comercial,
@@ -522,3 +529,99 @@ def identificar_entrada_visual(
         )
 
     raise RuntimeError("Estado de identificación visual inválido.")
+
+def validar_resultado_agente(
+    estado: EstadoProducto,
+    *,
+    thread_id: UUID,
+    turnos_esperados: int,
+    aprobado_esperado: bool | None,
+) -> AskOut:
+    """Valida el resultado del agente y su coherencia operativa."""
+    try:
+        resultado = to_ask_out(estado)
+
+        if resultado.thread_id != str(thread_id):
+            raise ValueError("Identificador de conversación inesperado.")
+
+        if resultado.turnos_consumidos != turnos_esperados:
+            raise ValueError("Contador de turnos inesperado.")
+
+        if resultado.plan_aprobado is not aprobado_esperado:
+            raise ValueError("Decisión HITL inesperada.")
+
+    except (RuntimeError, ValueError, TypeError, KeyError):
+        registrar_evento(
+            "agent_result_invalid",
+            nivel=logging.ERROR,
+            thread_id=thread_id,
+            error_code=ErrorCode.INTERNAL_SERVER_ERROR.value,
+        )
+
+        raise ApiError(
+            ErrorCode.INTERNAL_SERVER_ERROR,
+        ) from None
+
+    return resultado
+
+
+def recuperar_estado_operativo(
+    thread_id: UUID,
+    admision: ControlAdmision,
+) -> EstadoProducto:
+    """Recupera el checkpoint de una conversación autorizada."""
+    try:
+        estado = obtener_estado_hilo(str(thread_id))
+
+        if estado is None:
+            raise RuntimeError("Checkpoint inexistente.")
+
+        resultado = to_ask_out(estado)
+
+        if resultado.thread_id != str(thread_id):
+            raise ValueError("Identificador de hilo inconsistente.")
+
+        max_turns = estado["max_turns"]
+
+        if (
+            type(max_turns) is not int
+            or not 1 <= max_turns <= MAX_TURNS_LIMIT
+            or resultado.turnos_consumidos > max_turns
+        ):
+            raise ValueError("Límites de conversación inconsistentes.")
+
+        if not isinstance(estado["contexto_revision"], str):
+            raise ValueError("Contexto de revisión inválido.")
+
+    except (RuntimeError, ValueError, TypeError, KeyError):
+        admision.invalidar_hilo(thread_id)
+
+        raise ApiError(
+            ErrorCode.THREAD_STATE_LOST,
+        ) from None
+
+    return estado
+
+
+def validar_nuevo_turno(estado: EstadoProducto) -> None:
+    """Comprueba si la conversación admite una nueva consulta."""
+    if estado["done"]:
+        raise ApiError(ErrorCode.THREAD_CLOSED)
+
+    if estado["pendiente_hitl"]:
+        raise ApiError(ErrorCode.PENDING_APPROVAL)
+
+    if estado["turnos_consumidos"] >= estado["max_turns"]:
+        raise ApiError(ErrorCode.TURN_LIMIT_REACHED)
+    
+
+def validar_decision_hitl(
+    estado: EstadoProducto,
+    approval_id: str,
+) -> None:
+    """Comprueba que la decisión corresponde a la propuesta vigente."""
+    if not estado["pendiente_hitl"]:
+        raise ApiError(ErrorCode.NO_PENDING_APPROVAL)
+
+    if estado["approval_id"] != approval_id:
+        raise ApiError(ErrorCode.STALE_APPROVAL)
