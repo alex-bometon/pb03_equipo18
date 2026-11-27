@@ -251,6 +251,8 @@ La integración definitiva con FastAPI se realizará en la fase 08.
 
 **Finalización:** entradas incompatibles controladas e imágenes admitidas reutilizables por el agente.
 
+**Integración:** PR #8 integrado en develop.
+
 **Referencias:** especificaciones 04, 05, 10 y 15.
 
 ### Fase 07 — Robustez y observabilidad
@@ -272,6 +274,8 @@ La integración definitiva con FastAPI se realizará en la fase 08.
 **Archivos:** api/rate_limit.py, api/service.py, api/config.py, api/main.py.
 
 **Finalización:** controles de admisión, consumo y ejecución validados.
+
+**Integración:** PR #9 integrado en develop.
 
 **Referencia:** especificación 15.
 
