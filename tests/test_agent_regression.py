@@ -25,7 +25,12 @@ from config import (
     MAX_TOOL_CALLS_PER_TURN,
     MAX_TURNS_DEFAULT,
 )
-from src.agent import aprobar_plan, nuevo_thread_id, procesar_turno
+from src.agent import (
+    aprobar_plan,
+    nuevo_thread_id,
+    obtener_estado_hilo,
+    procesar_turno,
+)
 from src.agent_routing import (
     requiere_llm_supervisor,
     resolver_enrutamiento,
@@ -981,3 +986,115 @@ def test_max_iter_bloquea_nuevas_decisiones():
 
     with pytest.raises(RuntimeError, match="MAX_ITER"):
         resolver_enrutamiento(estado)
+
+
+# =========================================================
+# LECTURA DEL CHECKPOINT
+# =========================================================
+
+def test_obtener_estado_hilo_inexistente(aislado):
+    """Un hilo sin checkpoint no genera un estado artificial."""
+    assert obtener_estado_hilo(nuevo_thread_id()) is None
+
+
+@pytest.mark.parametrize("aprobado", [True, False])
+def test_obtener_estado_hilo_resuelto(aislado, aprobado):
+    """Recupera el estado pendiente y la decisión posterior."""
+    aislado.setattr(
+        "src.agent_tool_loop.ejecutar_tool_estructurado",
+        _ejecutor_simulado,
+    )
+
+    estado, hilo = _crear_conversacion()
+
+    resultado = procesar_turno(
+        estado,
+        "¿Dónde tiro una botella de plástico?",
+        hilo,
+    )
+
+    pendiente = obtener_estado_hilo(hilo)
+
+    assert pendiente == resultado
+    assert pendiente["pendiente_hitl"] is True
+
+    resuelto = aprobar_plan(
+        hilo,
+        aprobado,
+        approval_id=pendiente["approval_id"],
+    )
+
+    assert obtener_estado_hilo(hilo) == resuelto
+
+
+def test_obtener_estado_hilo_copia_independiente(aislado):
+    """Modificar el estado devuelto no altera el checkpoint."""
+    aislado.setattr(
+        "src.agent_tool_loop.ejecutar_tool_estructurado",
+        _ejecutor_simulado,
+    )
+
+    estado, hilo = _crear_conversacion()
+
+    resultado = procesar_turno(
+        estado,
+        "¿Dónde tiro una botella de plástico?",
+        hilo,
+    )
+
+    recuperado = obtener_estado_hilo(hilo)
+    recuperado["plan"].clear()
+    recuperado["fuentes"].clear()
+
+    assert obtener_estado_hilo(hilo) == resultado
+
+
+@pytest.mark.parametrize(
+    "caso, mensaje",
+    [
+        ("vacio", "Checkpoint incompleto"),
+        ("incompleto", "Checkpoint incompleto"),
+        ("invalido", "Checkpoint inválido"),
+        ("interrumpido", "ejecución anterior está incompleta"),
+        ("hitl_invalido", "Propuesta HITL inválida"),
+        ("inconsistente", "Checkpoint inconsistente"),
+    ],
+)
+def test_obtener_estado_hilo_invalido(aislado, caso, mensaje):
+    """Rechaza checkpoints incompletos o inconsistentes."""
+    datos = crear_estado_grafo()
+    siguientes = ()
+
+    if caso == "vacio":
+        datos = {}
+
+    elif caso == "incompleto":
+        del datos["turnos_consumidos"]
+
+    elif caso == "invalido":
+        datos = None
+
+    elif caso == "interrumpido":
+        siguientes = ("supervisor",)
+
+    elif caso == "hitl_invalido":
+        siguientes = ("aplicar",)
+
+    elif caso == "inconsistente":
+        datos["pendiente_hitl"] = True
+
+    app = Mock()
+    app.get_state.return_value = Mock(
+        values=datos,
+        next=siguientes,
+        created_at="2026-11-27T10:00:00+00:00",
+    )
+
+    aislado.setattr("src.agent.get_app", lambda: app)
+
+    with pytest.raises(RuntimeError, match=mensaje):
+        obtener_estado_hilo(nuevo_thread_id())
+
+    app.get_state.assert_called_once()
+    app.invoke.assert_not_called()
+    app.update_state.assert_not_called()

@@ -12,14 +12,11 @@ from datetime import datetime, time, timedelta
 from typing import Any, Mapping
 from zoneinfo import ZoneInfo
 
+from config import FUENTES_OFICIALES
 from src.text_utils import normalizar_texto
 
 
-FUENTE_HORARIO_VIDRIO = (
-    "https://www.madrid.es/portales/munimadrid/es/Recogida-de-vidrio/"
-    "?vgnextchannel=f81379ed268fe410VgnVCM1000000b205a0aRCRD"
-    "&vgnextoid=e3ab6c9c78eb2910VgnVCM2000001f4a900aRCRD"
-)
+FUENTE_HORARIO_VIDRIO = FUENTES_OFICIALES["fraccion_vidrio.html"]
 
 # Ordenanza de Madrid: envases de vidrio en la vía pública, 08:00-22:30.
 VIDRIO_INICIO = time(8, 0)

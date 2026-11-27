@@ -29,6 +29,99 @@ EMBEDDINGS_JSON = OUTPUT_DIR / "embeddings.json"
 
 
 # =========================================================
+# FUENTES DOCUMENTALES OFICIALES
+# =========================================================
+
+FUENTES_OFICIALES: dict[str, str] = {
+    "puntos_limpios_fijos.csv": (
+        "https://datos.madrid.es/dataset/200284-0-puntos-limpios-fijos"
+    ),
+    "puntos_limpios_moviles.csv": (
+        "https://datos.madrid.es/dataset/300101-0-puntos-limpios-moviles"
+    ),
+    "puntos_limpios_moviles_24h.csv": (
+        "https://datos.madrid.es/dataset/900026-0-puntos-limpios-residuos"
+    ),
+    "puntos_limpios_proximidad.csv": (
+        "https://datos.madrid.es/dataset/300198-0-puntos-proximidad"
+    ),
+    "tipos_residuos.csv": (
+        "https://datos.madrid.es/dataset/300199-0-tipo-residuo"
+    ),
+    "fraccion_organica.html": (
+        "https://www.madrid.es/portales/munimadrid/es/"
+        "Recogida-de-residuos-organicos/"
+        "?vgnextchannel=f81379ed268fe410VgnVCM1000000b205a0aRCRD"
+        "&vgnextoid=12bc51e3f7bee510VgnVCM1000001d4a900aRCRD"
+    ),
+    "fraccion_papel.html": (
+        "https://www.madrid.es/portales/munimadrid/es/Inicio/"
+        "El-Ayuntamiento/Moratalaz/Recogida-de-la-fraccion-papel-y-carton/"
+        "?vgnextchannel=7cb0ca5d5fb96010VgnVCM100000dc0ca8c0RCRD"
+        "&vgnextfmt=default"
+        "&vgnextoid=d9eb6c9c78eb2910VgnVCM2000001f4a900aRCRD"
+    ),
+    "fraccion_plasticos_metales_briks.html": (
+        "https://www.madrid.es/portales/munimadrid/es/"
+        "Recogida-de-plasticos-metales-y-briks-Horarios-y-frecuencias-"
+        "de-recogida-/"
+        "?vgnextchannel=3dfcbb21278fe410VgnVCM1000000b205a0aRCRD"
+        "&vgnextfmt=default"
+        "&vgnextoid=54c4ebd9be6e8610VgnVCM1000001d4a900aRCRD"
+    ),
+    "fraccion_resto.html": (
+        "https://www.madrid.es/portales/munimadrid/es/"
+        "Recogida-fraccion-resto-no-reciclable-y-horario/"
+        "?vgnextchannel=f81379ed268fe410VgnVCM1000000b205a0aRCRD"
+        "&vgnextoid=61c4ebd9be6e8610VgnVCM1000001d4a900aRCRD"
+    ),
+    "fraccion_vidrio.html": (
+        "https://www.madrid.es/portales/munimadrid/es/Recogida-de-vidrio/"
+        "?vgnextchannel=f81379ed268fe410VgnVCM1000000b205a0aRCRD"
+        "&vgnextoid=e3ab6c9c78eb2910VgnVCM2000001f4a900aRCRD"
+    ),
+    "recogida_aceite_vegetal.html": (
+        "https://www.madrid.es/portales/munimadrid/es/Inicio/"
+        "Medio-ambiente/Recogida-de-residuos/"
+        "Recogida-de-aceite-vegetal-usado/"
+        "?vgnextchannel=f81379ed268fe410VgnVCM1000000b205a0aRCRD"
+        "&vgnextfmt=default"
+        "&vgnextoid=803fab39d9462510VgnVCM1000000b205a0aRCRD"
+    ),
+    "recogida_muebles_enseres.html": (
+        "https://www.madrid.es/portales/munimadrid/es/Inicio/"
+        "MedioAmbiente/ResiduosYLimpiezaUrbana/Tramites/"
+        "Recogida-de-muebles-electrodomesticos-y-enseres/"
+        "?vgnextchannel=e5bcbb21278fe410VgnVCM1000000b205a0aRCRD"
+        "&vgnextfmt=default"
+        "&vgnextoid=168e3381d0030910VgnVCM1000001d4a900aRCRD"
+    ),
+    "residuos_punto_limpio_fijo.html": (
+        "https://www.madrid.es/portales/munimadrid/es/UnidadWeb/"
+        "Puntos-Limpios-Fijos-del-Ayuntamiento-de-Madrid-Descripcion-y-"
+        "cantidades-admisibles-para-particulares/"
+        "?vgnextchannel=e278e8124824b010VgnVCM1000000b205a0aRCRD"
+        "&vgnextoid=cc9a2984ca480510VgnVCM2000000c205a0aRCRD"
+    ),
+    "residuos_punto_limpio_movil.html": (
+        "https://sede.madrid.es/portal/site/tramites/"
+        "menuitem.1f3361415fda829be152e15284f1a5a0/"
+        "?vgnextchannel=518aa38813180210VgnVCM100000c90da8c0RCRD"
+        "&vgnextfmt=pda"
+        "&vgnextoid=3cbc6163c4480510VgnVCM2000000c205a0aRCRD"
+    ),
+    "residuos_punto_limpio_proximidad.html": (
+        "https://www.madrid.es/portales/munimadrid/es/Inicio/"
+        "Medio-ambiente/Gestiones-y-tramites/"
+        "Puntos-Limpios-de-Proximidad-Descripcion-y-cantidades-admisibles-/"
+        "?vgnextchannel=658f79ed268fe410VgnVCM1000000b205a0aRCRD"
+        "&vgnextfmt=default"
+        "&vgnextoid=2682a2dcf3189610VgnVCM1000001d4a900aRCRD"
+    ),
+}
+
+
+# =========================================================
 # FRAGMENTACIÓN DEL CORPUS
 # =========================================================
 

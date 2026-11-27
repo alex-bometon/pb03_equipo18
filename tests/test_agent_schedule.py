@@ -1,6 +1,7 @@
 """Pruebas de las decisiones temporales y geográficas, sin red ni Gemini."""
 
 from src.agent_schedule import (
+    FUENTE_HORARIO_VIDRIO,
     _dias_permitidos,
     _situacion_punto,
     anexos_temporales,
@@ -10,6 +11,8 @@ from src.agent_schedule import (
     tipo_punto_documentado,
 )
 from datetime import datetime
+
+from config import FUENTES_OFICIALES
 
 
 def _base(pedido="¿Dónde tiro una botella de vidrio?", ubicacion=None):
@@ -42,6 +45,12 @@ def test_vidrio_hora_permitida_y_fuente_oficial():
     texto, fuentes = anexos_temporales(estado)
     assert "dentro del horario permitido" in texto
     assert "NORMA-VIDRIO" in [f["chunk_id"] for f in fuentes]
+    referencia = next(
+        fuente for fuente in fuentes
+        if fuente["chunk_id"] == "NORMA-VIDRIO"
+    )
+
+    assert referencia["path"] == FUENTE_HORARIO_VIDRIO
 
 
 def test_vidrio_noche_fuera_de_horario():
@@ -193,3 +202,7 @@ def test_modalidad_compatible_documentada():
         "o en el punto limpio móvil [C1]."
     )
     assert tipo_punto_documentado(estado) == "todos"
+
+def test_fuente_horario_vidrio_centralizada():
+    """Comprueba la procedencia de la referencia normativa."""
+    assert (FUENTE_HORARIO_VIDRIO == FUENTES_OFICIALES["fraccion_vidrio.html"])

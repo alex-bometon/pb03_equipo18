@@ -131,6 +131,42 @@ def _propuesta_valida(datos: Mapping[str, Any]) -> bool:
 
     return True
 
+
+def obtener_estado_hilo(thread_id: str) -> EstadoProducto | None:
+    """Recupera una copia del checkpoint operativo de una conversación."""
+    configuracion = config_hilo(thread_id)
+    snapshot = get_app().get_state(configuracion)
+
+    if snapshot is None:
+        return None
+
+    datos = snapshot.values
+    siguientes = tuple(snapshot.next)
+
+    if not isinstance(datos, Mapping):
+        raise RuntimeError("Checkpoint inválido.")
+
+    if not datos and not siguientes and snapshot.created_at is None:
+        return None
+
+    if EstadoGrafo.__annotations__.keys() - datos.keys():
+        raise RuntimeError("Checkpoint incompleto.")
+
+    if siguientes == ("aplicar",):
+        if not _propuesta_valida(datos):
+            raise RuntimeError("Propuesta HITL inválida.")
+
+    elif siguientes:
+        raise RuntimeError("La ejecución anterior está incompleta.")
+
+    elif (
+        datos["pendiente_hitl"] is not False
+        or datos["approval_id"] is not None
+    ):
+        raise RuntimeError("Checkpoint inconsistente.")
+
+    return estado_desde_grafo(datos, thread_id=thread_id)
+
 # =========================================================
 # PROCESAMIENTO DE TURNOS
 # =========================================================
