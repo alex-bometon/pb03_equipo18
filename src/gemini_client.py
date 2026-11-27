@@ -1,25 +1,20 @@
-# Se encarga únicamente de la conexión con la API de gemini
+"""Configuración del cliente nativo de Gemini."""
 
 import os
 
 from dotenv import load_dotenv
 from google import genai
+from google.genai import types
 
-from config import BASE_DIR
+from config import (
+    BASE_DIR,
+    GEMINI_MAX_ATTEMPTS,
+    GEMINI_TIMEOUT_SECONDS,
+)
 
 
 def crear_cliente_gemini() -> genai.Client:
-    """
-    Crea y devuelve un cliente de Gemini API.
-
-    La clave se obtiene del archivo .env situado
-    en la raíz del proyecto.
-
-    Raises:
-        ValueError:
-            Si GEMINI_API_KEY no está configurada.
-    """
-
+    """Crea un cliente Gemini con límites de espera y reintentos."""
     ruta_env = BASE_DIR / ".env"
 
     load_dotenv(dotenv_path=ruta_env)
@@ -32,4 +27,12 @@ def crear_cliente_gemini() -> genai.Client:
             "Configúrala en el archivo .env."
         )
 
-    return genai.Client(api_key=api_key)
+    return genai.Client(
+        api_key=api_key,
+        http_options=types.HttpOptions(
+            timeout=GEMINI_TIMEOUT_SECONDS * 1000,
+            retry_options=types.HttpRetryOptions(
+                attempts=GEMINI_MAX_ATTEMPTS,
+            ),
+        ),
+    )

@@ -28,6 +28,7 @@ from src.text_utils import (
     normalizar_distrito as _normalizar_distrito,
     normalizar_texto as _normalizar_texto,
 )
+from src.observability import observar_llamada
 
 
 FUENTE_CATALOGO = _structured.FUENTE_CATALOGO
@@ -73,17 +74,22 @@ def _generar_embedding_pregunta(pregunta: str) -> list[float]:
 
     try:
         try:
-            respuesta = cliente.models.embed_content(
+            respuesta = observar_llamada(
+                "gemini",
+                "embedding_consulta",
+                cliente.models.embed_content,
                 model=EMBEDDING_MODEL,
                 contents=pregunta,
                 config=types.EmbedContentConfig(
                     output_dimensionality=EMBEDDING_DIMENSIONS,
                 ),
             )
+
         except Exception as exc:
             raise RuntimeError(
                 "No se pudo generar el embedding con Gemini."
             ) from exc
+
     finally:
         cliente.close()
 

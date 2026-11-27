@@ -13,7 +13,9 @@ import api.main as api_main
 from api.config import ApiSettings
 from api.error_catalog import ERROR_CATALOG, ErrorCode
 from api.errors import ApiError
+from api.rate_limit import SlidingWindowLog
 from api.request_context import REQUEST_ID_HEADER
+from api.service import ControlAdmision, EjecutorAsistente
 from api.security import SessionStore, generate_secret
 
 
@@ -400,9 +402,7 @@ def test_admin_bootstrap_failure_prevents_startup(
         with TestClient(api_main.app):
             pass
 
-    assert str(exc_info.value) == (
-        "No se ha podido aprovisionar la administración."
-    )
+    assert str(exc_info.value) == "No se ha podido aprovisionar la administración."
 
     mock_db["dummy_hash_creator"].assert_not_called()
     mock_db["engine"].dispose.assert_called_once()
@@ -417,3 +417,56 @@ def test_admin_bootstrap_on_restart(mock_db) -> None:
         pass
 
     assert mock_db["admin_bootstrap"].call_count == 2
+
+
+def test_rate_limiter_initialized(client):
+    """Inicializa el limitador durante el arranque."""
+    assert isinstance(client.app.state.rate_limiter, SlidingWindowLog)
+
+
+def test_rate_limiter_restart(mock_db):
+    """Reinicia los contadores junto con el backend."""
+    with TestClient(api_main.app) as client:
+        primero = client.app.state.rate_limiter
+
+    with TestClient(api_main.app) as client:
+        segundo = client.app.state.rate_limiter
+
+    assert primero is not segundo
+
+def test_admision_initialized(client):
+    """Inicializa los controles compartidos de admisión."""
+    assert isinstance(client.app.state.admision, ControlAdmision)
+
+
+def test_executor_initialized(client):
+    """Inicializa el executor compartido durante el arranque."""
+    assert isinstance(
+        client.app.state.ejecutor,
+        EjecutorAsistente,
+    )
+
+
+def test_executor_shutdown(mock_db, monkeypatch):
+    """Cierra el executor antes de disponer el engine."""
+    sequence = Mock()
+
+    sequence.attach_mock(
+        mock_db["engine"].dispose,
+        "dispose_engine",
+    )
+
+    cierre = Mock()
+    sequence.attach_mock(cierre, "cerrar_executor")
+
+    with TestClient(api_main.app) as client:
+        monkeypatch.setattr(
+            client.app.state.ejecutor,
+            "cerrar",
+            cierre,
+        )
+
+    assert [call[0] for call in sequence.mock_calls] == [
+        "cerrar_executor",
+        "dispose_engine",
+    ]

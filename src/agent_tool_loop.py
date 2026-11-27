@@ -35,6 +35,7 @@ from src.agent_schedule import (
     tipo_punto_documentado,
 )
 from src.llm import get_llm
+from src.observability import observar_llamada
 from src.rag_intents import consulta_proximidad
 from src.state import EstadoGrafo, agregar_evento
 from src.text_utils import normalizar_texto
@@ -659,7 +660,12 @@ def _ejecutar_con_modelo(
             registro.limitaciones.append("Presupuesto de herramientas agotado.")
             break
 
-        mensaje = modelo.invoke(mensajes)
+        mensaje = observar_llamada(
+            "gemini",
+            f"especialista_{registro.rol}",
+            modelo.invoke,
+            mensajes,
+        )
         if not isinstance(mensaje, AIMessage):
             raise RuntimeError("El modelo devolvió un mensaje incompatible.")
 

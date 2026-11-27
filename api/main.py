@@ -4,6 +4,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.concurrency import run_in_threadpool
 
 from api.auth_service import bootstrap_admin_api_key
 from api.config import load_settings
@@ -16,11 +17,14 @@ from api.security import (
     SessionStore,
     create_dummy_password_hash,
 )
+from api.rate_limit import crear_limitador
+from api.service import ControlAdmision, EjecutorAsistente
 from src.db import (
     check_database,
     create_db_engine,
     ensure_schema,
 )
+from src.observability import configurar_logs_externos
 
 
 @asynccontextmanager
@@ -30,20 +34,20 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.settings = settings
 
     if settings.DATABASE_URL is None:
-        raise RuntimeError(
-            "DATABASE_URL no está configurada."
-        )
+        raise RuntimeError("DATABASE_URL no está configurada.")
 
     missing_admin = settings.missing_admin_settings()
 
     if missing_admin:
         fields = ", ".join(missing_admin)
 
-        raise RuntimeError(
-            f"Configuración administrativa incompleta: {fields}"
-        )
+        raise RuntimeError(f"Configuración administrativa incompleta: {fields}")
+    
+    configure_http_logging(settings.LOG_LEVEL)
+    configurar_logs_externos()
 
     engine = None
+    ejecutor = None
 
     try:
         try:
@@ -61,17 +65,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             ensure_schema(engine)
 
         except Exception:
-            raise RuntimeError(
-                "No se ha podido inicializar PostgreSQL."
-            ) from None
+            raise RuntimeError("No se ha podido inicializar PostgreSQL.") from None
 
         app.state.engine = engine
 
         try:
-            bootstrap_admin_api_key(
-                engine,
-                settings,
-            )
+            bootstrap_admin_api_key(engine, settings)
 
         except Exception:
             raise RuntimeError(
@@ -80,27 +79,40 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
         try:
             app.state.dummy_password_hash = (
-                create_dummy_password_hash(
-                    settings.BCRYPT_ROUNDS,
-                )
+                create_dummy_password_hash(settings.BCRYPT_ROUNDS)
             )
 
             app.state.session_store = SessionStore(
                 ttl_seconds=settings.SESSION_TTL_SECONDS,
             )
 
+            app.state.rate_limiter = crear_limitador(settings)
+
         except Exception:
             raise RuntimeError(
                 "No se ha podido inicializar la seguridad."
             ) from None
+        
+        app.state.admision = ControlAdmision(settings.AGENT_MAX_WORKERS)
 
-        configure_http_logging(settings.LOG_LEVEL)
+        ejecutor = EjecutorAsistente(
+            settings,
+            app.state.admision,
+            app.state.rate_limiter,
+        )
+
+        app.state.ejecutor = ejecutor
 
         yield
 
     finally:
-        if engine is not None:
-            engine.dispose()
+        try:
+            if ejecutor is not None:
+                await run_in_threadpool(ejecutor.cerrar)
+
+        finally:
+            if engine is not None:
+                engine.dispose()
 
 
 app = FastAPI(

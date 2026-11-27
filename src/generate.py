@@ -26,7 +26,9 @@ from src.generation_validation import (
     _abstenerse,
     _interpretar_respuesta,
 )
+from src.observability import observar_llamada
 
+import httpx
 
 ESQUEMA_RESPUESTA = {
     "type": "OBJECT",
@@ -139,13 +141,21 @@ def _preparar_contexto(chunks: list[dict]) -> tuple[str, dict]:
 
 
 def _es_error_transitorio(error: Exception) -> bool:
-    """Distingue errores temporales de errores no recuperables."""
-    if isinstance(error, (TimeoutError, ConnectionError)):
+    """Identifica los errores que permiten repetir una generación."""
+    if isinstance(
+        error,
+        (
+            TimeoutError,
+            ConnectionError,
+            httpx.TimeoutException,
+            httpx.NetworkError,
+        ),
+    ):
         return True
 
     if isinstance(error, (errors.ClientError, errors.ServerError)):
         return getattr(error, "code", None) in {
-            429, 500, 502, 503, 504,
+            500, 502, 503, 504,
         }
 
     return False
@@ -163,7 +173,10 @@ def _solicitar_generacion(cliente: Any, pregunta: str, contexto: str):
     max_intentos = max(1, GENERATION_MAX_RETRIES)
     for intento in range(max_intentos):
         try:
-            return cliente.models.generate_content(
+            return observar_llamada(
+                "gemini",
+                "generacion_rag",
+                cliente.models.generate_content,
                 model=GENERATION_MODEL,
                 contents=(
                     f"PREGUNTA DEL USUARIO:\n{pregunta}\n\n"

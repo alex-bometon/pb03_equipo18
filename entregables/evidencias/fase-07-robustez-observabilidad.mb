@@ -1,0 +1,81 @@
+# Evidencias de validación — Fase 07
+
+## 1. Identificación
+
+| Parámetro | Valor |
+|---|---|
+| Proyecto | ReciclaTÍA PB03 |
+| Fase | 07 — Robustez y observabilidad |
+| Rama | feature/robustness |
+| Fecha | 27/11/2026 |
+| Framework de pruebas | pytest |
+
+## 2. Componentes implementados
+
+- Sliding Window Log con comprobaciones atómicas.
+- Límites HTTP, comerciales y de seguridad independientes.
+- Limpieza de registros de consumo caducados.
+- Cálculo de Retry-After.
+- Exclusión concurrente por conversación.
+- Control de capacidad global sin acumulación de tareas.
+- ThreadPoolExecutor compartido.
+- Presupuesto temporal común por ejecución.
+- Control de vigencia entre fases.
+- Invalidación conservadora de checkpoints.
+- Descarte de resultados tardíos y liberación segura de recursos.
+- Registros técnicos estructurados en JSON.
+- Correlación mediante request_id.
+- Observabilidad de proveedores y herramientas.
+- Registro de consumo de tokens cuando está disponible.
+- Protección frente a registros externos sin sanitizar.
+- Configuración explícita de timeouts y reintentos de Gemini.
+
+## 3. Regresión completa
+
+Comando ejecutado:
+
+```bash
+python -m pytest tests/ -q --tb=short -ra --durations=10
+```
+
+| Métrica | Resultado |
+|---|---:|
+| Pruebas superadas en fase 07.8.A | 1858 |
+| Pruebas superadas al finalizar la fase 07 | 1882 |
+| Duración final | 14.27s |
+| Fallos | 0 |
+
+## 4. Garantías verificadas
+
+- Independencia de los contadores de consumo.
+- Rechazo de operaciones que superan los límites establecidos.
+- Ausencia de consumo parcial ante rechazos del limitador.
+- Reversión de cuota cuando falla la admisión al executor.
+- Exclusión mutua sobre una misma conversación.
+- Retención de recursos mientras una ejecución permanece activa.
+- Rechazo de resultados finalizados fuera del presupuesto.
+- Invalidación de checkpoints potencialmente comprometidos.
+- Propagación del contexto de observabilidad al worker.
+- Correlación de eventos posteriores al timeout HTTP.
+- Ausencia de credenciales y contenidos sensibles en los registros propios.
+- Configuración de un único intento automático del SDK.
+- Reintentos explícitos de generación RAG conforme a las decisiones aprobadas.
+- Ausencia de reintentos de generación RAG ante errores 429.
+
+## 5. Limitaciones
+
+Las pruebas de Gemini y ArcGIS utilizan dependencias simuladas. La calibración de tiempos de respuesta y consumo real se realizará durante la integración.
+
+El timeout HTTP no interrumpe forzosamente una llamada externa activa.
+
+La integración efectiva de autenticación, admisión, ejecución, aprobación y persistencia se completará en la fase 08.
+
+El estado de cuotas, sesiones, bloqueos y checkpoints continúa almacenándose en memoria.
+
+## 6. Conclusión
+
+Los componentes de robustez y observabilidad han superado la regresión completa sin introducir nuevas dependencias.
+
+Se conserva la independencia del núcleo y se mantienen los contratos de ejecución establecidos en las especificaciones.
+
+La integración mediante pull request hacia develop completará formalmente la fase 07.

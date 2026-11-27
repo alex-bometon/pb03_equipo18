@@ -128,6 +128,7 @@ Se utilizará Sliding Window Log mediante estructuras Python protegidas frente a
 | Ventana | Segundos |
 |---|---:|
 | Minuto | 60 |
+| 30 minutos | 1800 |
 | Hora | 3600 |
 | Día | 86400 |
 
@@ -175,8 +176,8 @@ No constituirán un registro durable de facturación ni un límite económico gl
 
 | Operación | Identificador | Límite inicial |
 |---|---|---|
-| Login | Email normalizado | 5 intentos / 15 minutos |
-| Login | Origen fiable | 20 intentos / 15 minutos |
+| Login | Email normalizado | 5 intentos / hora |
+| Login | Origen fiable | 20 intentos / 30 minutos |
 | Registro | Origen fiable | 5 intentos / hora |
 | Emisión Free anónima | Origen fiable | 3 / hora y 5 / 24 horas |
 | Emisión registrada | Usuario destinatario | 3 / hora y 5 / 24 horas |
@@ -399,6 +400,18 @@ Mientras continúe la ejecución podrá devolverse THREAD_BUSY. Después de fina
 Las reglas de persistencia y tratamiento de commits inciertos se establecen en la especificación 13.
 
 ### 8.7. Dependencias externas
+
+Gemini utilizará un timeout de transporte de 45 segundos por intento.
+
+Los clientes de Gemini desactivarán los reintentos automáticos del SDK.
+
+La generación RAG podrá realizar un máximo de dos intentos, incluyendo el inicial, conforme a la especificación 03.
+
+Las demás operaciones de Gemini durante las consultas realizarán un único intento por invocación.
+
+El timeout individual no sustituye al presupuesto compartido ni garantiza la interrupción inmediata de una ejecución activa.
+
+La construcción del índice conservará su política independiente de reintentos.
 
 Gemini, ArcGIS y PostgreSQL dispondrán de límites de espera adecuados.
 

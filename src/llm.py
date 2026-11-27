@@ -12,7 +12,8 @@ from config import (
     AGENT_MODEL,
     AGENT_TEMPERATURE,
     SUPERVISOR_TEMPERATURE,
-    GENERATION_MAX_RETRIES,
+    GEMINI_MAX_ATTEMPTS,
+    GEMINI_TIMEOUT_SECONDS,
 )
 
 
@@ -20,21 +21,7 @@ def get_llm(
     *,
     supervisor: bool = False,
 ) -> ChatGoogleGenerativeAI:
-    """
-    Crea el modelo Gemini utilizado por el sistema multiagente.
-
-    Args:
-        supervisor: Si es True, utiliza la temperatura
-            configurada para el supervisor. En caso contrario,
-            utiliza la temperatura de los especialistas.
-
-    Returns:
-        Instancia de ChatGoogleGenerativeAI.
-
-    La clave GEMINI_API_KEY se carga desde .env y la
-    biblioteca LangChain la utiliza automáticamente.
-    """
-
+    """Crea el modelo Gemini con los límites de ejecución definidos."""
     load_dotenv(dotenv_path=BASE_DIR / ".env")
 
     temperatura = (
@@ -46,5 +33,6 @@ def get_llm(
     return ChatGoogleGenerativeAI(
         model=AGENT_MODEL,
         temperature=temperatura,
-        max_retries=GENERATION_MAX_RETRIES,
+        timeout=GEMINI_TIMEOUT_SECONDS,
+        max_retries=GEMINI_MAX_ATTEMPTS,
     )

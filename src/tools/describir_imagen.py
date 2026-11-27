@@ -16,6 +16,7 @@ from config import (
 )
 from src.gemini_client import crear_cliente_gemini
 from src.input_validation import abrir_imagen_validada
+from src.observability import observar_llamada
 from src.state import (
     ESTADOS_IDENTIFICACION_IMAGEN,
     IdentificacionImagen,
@@ -106,7 +107,10 @@ def identificar_imagen(ruta_imagen: str) -> IdentificacionImagen:
     cliente = crear_cliente_gemini()
 
     try:
-        resultado = cliente.models.generate_content(
+        resultado = observar_llamada(
+            "gemini",
+            "identificacion_visual",
+            cliente.models.generate_content,
             model=IMAGE_MODEL,
             contents=[
                 types.Part.from_bytes(data=datos, mime_type=mime_type),
@@ -114,6 +118,7 @@ def identificar_imagen(ruta_imagen: str) -> IdentificacionImagen:
             ],
             config=configuracion,
         )
+
     finally:
         cliente.close()
 

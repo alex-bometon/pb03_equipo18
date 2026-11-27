@@ -6,6 +6,8 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 from tempfile import NamedTemporaryFile
+import logging
+from time import perf_counter
 
 from PIL import Image, ImageOps
 from fastapi import UploadFile
@@ -19,6 +21,7 @@ from src.input_validation import (
     ImagenInvalidaError,
     abrir_imagen_validada,
 )
+from src.observability import registrar_evento
 
 
 def _redimensionar(imagen: Image.Image, factor: float) -> None:
@@ -108,9 +111,42 @@ async def recibir_imagen(
     settings: ApiSettings,
 ) -> tuple[bytes, str]:
     """Lee de forma limitada y adapta un archivo recibido por HTTP."""
-    datos = await imagen.read(settings.IMAGE_UPLOAD_MAX_BYTES + 1)
+    inicio = perf_counter()
 
-    return await run_in_threadpool(adaptar_imagen, datos, settings=settings)
+    try:
+        datos = await imagen.read(settings.IMAGE_UPLOAD_MAX_BYTES + 1)
+
+        resultado = await run_in_threadpool(
+            adaptar_imagen,
+            datos,
+            settings=settings,
+        )
+
+    except ApiError as exc:
+        registrar_evento(
+            "image_rejected",
+            nivel=logging.WARNING,
+            error_code=exc.code.value,
+            duration_ms=(perf_counter() - inicio) * 1000,
+        )
+
+        raise
+
+    except Exception:
+        registrar_evento(
+            "image_processing_failed",
+            nivel=logging.ERROR,
+            duration_ms=(perf_counter() - inicio) * 1000,
+        )
+
+        raise
+
+    registrar_evento(
+        "image_adapted",
+        duration_ms=(perf_counter() - inicio) * 1000,
+    )
+
+    return resultado
 
 
 @contextmanager
