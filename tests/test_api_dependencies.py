@@ -11,11 +11,12 @@ import pytest
 from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
 from httpx import Response
-from sqlalchemy.engine import Engine
 from sqlalchemy.exc import OperationalError, SQLAlchemyError
 from sqlmodel import Session
 from sqlalchemy.engine import Engine
 
+from config import MAX_PREGUNTA_CARACTERES
+from src.state import crear_estado_producto
 import api.dependencies as dependencies
 import api.security as security
 from api.config import ApiSettings
@@ -31,6 +32,8 @@ from api.request_context import AuthContext
 from api.service import ControlAdmision
 from api.schemas import (
     ApiKeyOut,
+    AskIn,
+    AskOut,
     ConversationOut,
     MessageOut,
 )
@@ -2857,3 +2860,353 @@ def test_reservar_hilo_autorizado_rechazado(
 
     lectura.assert_not_called()
     session.__exit__.assert_called_once()
+
+# =========================================================
+# PREPARACIÓN Y FILTRADO DE CONSULTAS
+# =========================================================
+
+@pytest.mark.parametrize(
+    "pregunta, hay_imagen, motivo",
+    [
+        (
+            "¿Cómo programo una API?",
+            False,
+            "fuera_de_dominio",
+        ),
+        (
+            "¿Qué horario tiene el punto limpio móvil?",
+            False,
+            "ambiguedad",
+        ),
+        (
+            "¿Qué horario tiene el punto limpio móvil?",
+            True,
+            None,
+        ),
+        (
+            "¿Dónde reciclo una botella de plástico?",
+            False,
+            None,
+        ),
+    ],
+)
+def test_preparar_consulta_nueva(
+    monkeypatch: pytest.MonkeyPatch,
+    pregunta: str,
+    hay_imagen: bool,
+    motivo: str | None,
+) -> None:
+    """Prepara consultas nuevas sin crear una conversación."""
+    reserva = Mock()
+
+    monkeypatch.setattr(
+        dependencies,
+        "reservar_hilo_autorizado",
+        reserva,
+    )
+
+    contexto = AuthContext(
+        user_id=uuid4(),
+        api_key_id=uuid4(),
+        role=ApiKeyRole.USER,
+    )
+
+    solicitud = AskIn(pregunta=f"  {pregunta}  ")
+
+    with ExitStack() as recursos:
+        texto, estado, respuesta = dependencies.preparar_consulta(
+            Mock(spec=Engine),
+            contexto,
+            solicitud,
+            ControlAdmision(max_workers=1),
+            recursos,
+            hay_imagen=hay_imagen,
+        )
+
+    assert texto == pregunta
+    assert estado is None
+
+    reserva.assert_not_called()
+
+    if motivo is None:
+        assert respuesta is None
+    else:
+        assert isinstance(respuesta, AskOut)
+        assert respuesta.motivo == motivo
+        assert respuesta.thread_id is None
+        assert respuesta.turnos_consumidos == 0
+        assert respuesta.pendiente_hitl is False
+
+
+@pytest.mark.parametrize(
+    "pregunta, motivo",
+    [
+        (
+            "¿Qué horario tiene el punto limpio móvil?",
+            None,
+        ),
+        (
+            "¿Cómo programo una API?",
+            "fuera_de_dominio",
+        ),
+    ],
+)
+def test_preparar_consulta_existente(
+    monkeypatch: pytest.MonkeyPatch,
+    pregunta: str,
+    motivo: str | None,
+) -> None:
+    """Utiliza el contexto autorizado sin incrementar los turnos."""
+    thread_id = uuid4()
+
+    estado = crear_estado_producto(
+        thread_id=str(thread_id),
+        max_turns=2,
+    )
+
+    estado.update({
+        "contexto_revision": "Consulta anterior sobre Centro.",
+        "turnos_consumidos": 1,
+        "plan_aprobado": False,
+    })
+
+    reserva = Mock(return_value=estado)
+
+    monkeypatch.setattr(
+        dependencies,
+        "reservar_hilo_autorizado",
+        reserva,
+    )
+
+    contexto = AuthContext(
+        user_id=uuid4(),
+        api_key_id=uuid4(),
+        role=ApiKeyRole.USER,
+    )
+
+    solicitud = AskIn(
+        pregunta=pregunta,
+        thread_id=str(thread_id),
+    )
+
+    engine = Mock(spec=Engine)
+    admision = ControlAdmision(max_workers=1)
+
+    with ExitStack() as recursos:
+        texto, recuperado, respuesta = dependencies.preparar_consulta(
+            engine,
+            contexto,
+            solicitud,
+            admision,
+            recursos,
+        )
+
+        reserva.assert_called_once_with(
+            engine,
+            contexto,
+            thread_id,
+            admision,
+            recursos,
+        )
+
+    assert texto == pregunta
+    assert recuperado is estado
+    assert estado["turnos_consumidos"] == 1
+
+    if motivo is None:
+        assert respuesta is None
+    else:
+        assert isinstance(respuesta, AskOut)
+        assert respuesta.motivo == motivo
+        assert respuesta.thread_id == str(thread_id)
+        assert respuesta.turnos_consumidos == 1
+
+
+@pytest.mark.parametrize(
+    "caso, codigo",
+    [
+        ("cerrado", ErrorCode.THREAD_CLOSED),
+        ("pendiente", ErrorCode.PENDING_APPROVAL),
+        ("agotado", ErrorCode.TURN_LIMIT_REACHED),
+    ],
+)
+def test_preparar_consulta_estado_no_admisible(
+    monkeypatch: pytest.MonkeyPatch,
+    caso: str,
+    codigo: ErrorCode,
+) -> None:
+    """Impide que el filtrado eluda las restricciones del hilo."""
+    thread_id = uuid4()
+
+    estado = crear_estado_producto(
+        thread_id=str(thread_id),
+        max_turns=2,
+    )
+
+    estado["turnos_consumidos"] = 1
+
+    if caso == "cerrado":
+        estado["done"] = True
+
+    elif caso == "pendiente":
+        estado["pendiente_hitl"] = True
+
+    elif caso == "agotado":
+        estado["turnos_consumidos"] = estado["max_turns"]
+
+    monkeypatch.setattr(
+        dependencies,
+        "reservar_hilo_autorizado",
+        Mock(return_value=estado),
+    )
+
+    filtro = Mock()
+
+    monkeypatch.setattr(
+        dependencies,
+        "filtrar_entrada",
+        filtro,
+    )
+
+    contexto = AuthContext(
+        user_id=uuid4(),
+        api_key_id=uuid4(),
+        role=ApiKeyRole.USER,
+    )
+
+    solicitud = AskIn(
+        pregunta="¿Cómo programo una API?",
+        thread_id=str(thread_id),
+    )
+
+    with pytest.raises(ApiError) as error:
+        with ExitStack() as recursos:
+            dependencies.preparar_consulta(
+                Mock(spec=Engine),
+                contexto,
+                solicitud,
+                ControlAdmision(max_workers=1),
+                recursos,
+            )
+
+    assert error.value.code == codigo
+
+    filtro.assert_not_called()
+
+
+def test_preparar_consulta_sin_acceso(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Impide filtrar una consulta sobre una conversación ajena."""
+    monkeypatch.setattr(
+        dependencies,
+        "reservar_hilo_autorizado",
+        Mock(side_effect=ApiError(ErrorCode.THREAD_NOT_FOUND)),
+    )
+
+    filtro = Mock()
+
+    monkeypatch.setattr(
+        dependencies,
+        "filtrar_entrada",
+        filtro,
+    )
+
+    contexto = AuthContext(
+        user_id=uuid4(),
+        api_key_id=uuid4(),
+        role=ApiKeyRole.USER,
+    )
+
+    solicitud = AskIn(
+        pregunta="¿Cómo programo una API?",
+        thread_id=str(uuid4()),
+    )
+
+    with pytest.raises(ApiError) as error:
+        with ExitStack() as recursos:
+            dependencies.preparar_consulta(
+                Mock(spec=Engine),
+                contexto,
+                solicitud,
+                ControlAdmision(max_workers=1),
+                recursos,
+            )
+
+    assert error.value.code == ErrorCode.THREAD_NOT_FOUND
+
+    filtro.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "pregunta, rol, hay_imagen, codigo",
+    [
+        (
+            "   ",
+            ApiKeyRole.USER,
+            False,
+            ErrorCode.EMPTY_QUESTION,
+        ),
+        (
+            "a" * (MAX_PREGUNTA_CARACTERES + 1),
+            ApiKeyRole.USER,
+            False,
+            ErrorCode.QUESTION_TOO_LONG,
+        ),
+        (
+            "¿Dónde reciclo este residuo?",
+            ApiKeyRole.FREE,
+            True,
+            ErrorCode.INSUFFICIENT_PERMISSIONS,
+        ),
+    ],
+)
+def test_preparar_consulta_validacion_previa(
+    monkeypatch: pytest.MonkeyPatch,
+    pregunta: str,
+    rol: ApiKeyRole,
+    hay_imagen: bool,
+    codigo: ErrorCode,
+) -> None:
+    """Rechaza permisos y preguntas antes de consultar el hilo."""
+    reserva = Mock()
+    filtro = Mock()
+
+    monkeypatch.setattr(
+        dependencies,
+        "reservar_hilo_autorizado",
+        reserva,
+    )
+
+    monkeypatch.setattr(
+        dependencies,
+        "filtrar_entrada",
+        filtro,
+    )
+
+    contexto = AuthContext(
+        user_id=uuid4(),
+        api_key_id=uuid4(),
+        role=rol,
+    )
+
+    solicitud = AskIn(
+        pregunta=pregunta,
+        thread_id=str(uuid4()),
+    )
+
+    with pytest.raises(ApiError) as error:
+        with ExitStack() as recursos:
+            dependencies.preparar_consulta(
+                Mock(spec=Engine),
+                contexto,
+                solicitud,
+                ControlAdmision(max_workers=1),
+                recursos,
+                hay_imagen=hay_imagen,
+            )
+
+    assert error.value.code == codigo
+
+    reserva.assert_not_called()
+    filtro.assert_not_called()

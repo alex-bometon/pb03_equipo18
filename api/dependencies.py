@@ -17,6 +17,9 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import Session
 
+from api.exception_handlers import resolve_question_error_code
+from api.schemas import AskIn, AskOut
+from src.input_validation import PreguntaInvalidaError
 from api.auth_service import (
     require_active_user,
     translate_db_error,
@@ -34,7 +37,9 @@ from api.security import SessionStore, hash_secret
 from api.service import (
     ControlAdmision,
     EjecutorAsistente,
+    filtrar_entrada,
     recuperar_estado_operativo,
+    validar_nuevo_turno,
 )
 from api.rate_limit import SlidingWindowLog, limitar_http
 from src import db
@@ -183,15 +188,9 @@ def _read_credentials(
     """Comprueba la compatibilidad de las modalidades HTTP."""
     api_key = _read_header(request, API_KEY_HEADER)
 
-    authorization = _read_header(
-        request,
-        AUTHORIZATION_HEADER,
-    )
+    authorization = _read_header(request, AUTHORIZATION_HEADER)
 
-    api_key_id = _read_header(
-        request,
-        API_KEY_ID_HEADER,
-    )
+    api_key_id = _read_header(request, API_KEY_ID_HEADER)
 
     if api_key is not None and (
         authorization is not None
@@ -239,10 +238,7 @@ def _authenticate_original_key(
 
     try:
         with Session(engine) as session:
-            api_key = db.get_api_key_by_hash(
-                session,
-                key_hash,
-            )
+            api_key = db.get_api_key_by_hash(session, key_hash)
 
             if api_key is None:
                 raise ApiError(ErrorCode.INVALID_API_KEY)
@@ -254,22 +250,15 @@ def _authenticate_original_key(
                 raise ApiError(ErrorCode.API_KEY_INACTIVE)
 
             if api_key.user_id is not None:
-                user = db.get_user_by_id(
-                    session,
-                    api_key.user_id,
-                )
+                user = db.get_user_by_id(session, api_key.user_id)
 
                 if user is None:
-                    raise ApiError(
-                        ErrorCode.INTERNAL_SERVER_ERROR,
-                    )
+                    raise ApiError(ErrorCode.INTERNAL_SERVER_ERROR)
 
                 require_active_user(user)
 
             elif api_key.role != ApiKeyRole.FREE:
-                raise ApiError(
-                    ErrorCode.INTERNAL_SERVER_ERROR,
-                )
+                raise ApiError(ErrorCode.INTERNAL_SERVER_ERROR)
 
             return AuthContext(
                 user_id=api_key.user_id,
@@ -297,10 +286,7 @@ def _authenticate_user_session(
 
     try:
         with Session(engine) as session:
-            user = db.get_user_by_id(
-                session,
-                record.user_id,
-            )
+            user = db.get_user_by_id(session, record.user_id)
 
             if user is None:
                 raise ApiError(ErrorCode.INVALID_SESSION)
@@ -337,10 +323,7 @@ def _is_owned_ordinary_key(
     """Comprueba si una clave pertenece al ámbito del usuario."""
     return (
         api_key.user_id == user_id
-        and api_key.role in (
-            ApiKeyRole.FREE,
-            ApiKeyRole.USER,
-        )
+        and api_key.role in (ApiKeyRole.FREE, ApiKeyRole.USER)
         and api_key.deleted_at is None
     )
 
@@ -353,15 +336,9 @@ def require_owned_api_key(
     require_active: bool = True,
 ) -> ApiKey:
     """Recupera una clave ordinaria autorizada para su dueño."""
-    api_key = db.get_api_key_by_id(
-        session,
-        api_key_id,
-    )
+    api_key = db.get_api_key_by_id(session, api_key_id)
 
-    if api_key is None or not _is_owned_ordinary_key(
-        api_key,
-        user_id,
-    ):
+    if api_key is None or not _is_owned_ordinary_key(api_key, user_id):
         raise ApiError(ErrorCode.API_KEY_NOT_FOUND)
 
     if require_active and not api_key.is_active:
@@ -382,11 +359,7 @@ def _authenticate_selected_key(
     except ValueError:
         raise ApiError(ErrorCode.VALIDATION_ERROR) from None
 
-    api_key = require_owned_api_key(
-        session,
-        user_id,
-        api_key_id,
-    )
+    api_key = require_owned_api_key(session, user_id, api_key_id)
 
     return AuthContext(
         user_id=user_id,
@@ -545,31 +518,19 @@ def require_roles(
     """Construye una dependencia de autorización por roles."""
 
     def dependency(
-        context: Annotated[
-            AuthContext,
-            Depends(require_api_key_context),
-        ],
+        context: Annotated[AuthContext, Depends(require_api_key_context)],
     ) -> AuthContext:
         """Comprueba los permisos de la identidad autenticada."""
-        return _check_roles(
-            context,
-            *allowed_roles,
-        )
+        return _check_roles(context, *allowed_roles)
 
     return dependency
 
 
 def require_admin(
-    context: Annotated[
-        AuthContext,
-        Depends(get_current_api_key),
-    ],
+    context: Annotated[AuthContext, Depends(get_current_api_key)],
 ) -> AuthContext:
     """Exige una API key administrativa original y activa."""
-    return _check_roles(
-        context,
-        ApiKeyRole.ADMIN,
-    )
+    return _check_roles(context, ApiKeyRole.ADMIN)
 
 
 # =========================================================
@@ -601,18 +562,10 @@ def require_thread_access(
     thread_id: UUID,
 ) -> Conversation:
     """Comprueba el acceso operativo a una conversación."""
-    _check_roles(
-        context,
-        ApiKeyRole.FREE,
-        ApiKeyRole.USER,
-        ApiKeyRole.ADMIN,
-    )
+    _check_roles(context, ApiKeyRole.FREE, ApiKeyRole.USER, ApiKeyRole.ADMIN)
 
     if context.role == ApiKeyRole.ADMIN:
-        conversation = db.get_conversation_by_id(
-            session,
-            thread_id,
-        )
+        conversation = db.get_conversation_by_id(session, thread_id)
 
         if conversation is None:
             raise ApiError(ErrorCode.THREAD_NOT_FOUND)
@@ -624,11 +577,7 @@ def require_thread_access(
     if api_key_id is None:
         raise ApiError(ErrorCode.API_KEY_REQUIRED)
 
-    return _require_owned_thread(
-        session,
-        api_key_id,
-        thread_id,
-    )
+    return _require_owned_thread(session, api_key_id, thread_id)
 
 
 def reservar_hilo_autorizado(
@@ -641,23 +590,64 @@ def reservar_hilo_autorizado(
     """Reserva y recupera una conversación previamente autorizada."""
     try:
         with Session(engine) as session:
-            require_thread_access(
-                session,
-                context,
-                thread_id,
-            )
+            require_thread_access(session, context, thread_id)
 
     except SQLAlchemyError as exc:
         raise translate_db_error(exc) from None
 
-    recursos.enter_context(
-        admision.reservar_hilo(thread_id),
+    recursos.enter_context(admision.reservar_hilo(thread_id))
+
+    return recuperar_estado_operativo(thread_id, admision)
+
+
+def preparar_consulta(
+    engine: Engine,
+    context: AuthContext,
+    solicitud: AskIn,
+    admision: ControlAdmision,
+    recursos: ExitStack,
+    *,
+    hay_imagen: bool = False,
+) -> tuple[str, EstadoProducto | None, AskOut | None]:
+    """Valida y filtra una consulta antes de admitir su ejecución."""
+    if hay_imagen:
+        _check_roles(context, ApiKeyRole.USER, ApiKeyRole.ADMIN)
+    else:
+        _check_roles(context, ApiKeyRole.FREE, ApiKeyRole.USER, ApiKeyRole.ADMIN)
+
+    try:
+        pregunta = solicitud.pregunta_validada()
+
+    except PreguntaInvalidaError as exc:
+        raise ApiError(resolve_question_error_code(exc)) from None
+
+    estado = None
+
+    if solicitud.thread_id is not None:
+        estado = reservar_hilo_autorizado(
+            engine,
+            context,
+            UUID(solicitud.thread_id),
+            admision,
+            recursos,
+        )
+
+        validar_nuevo_turno(estado)
+
+    respuesta = filtrar_entrada(
+        pregunta,
+        contexto_revision=(
+            estado["contexto_revision"] if estado is not None else ""
+        ),
+        ubicacion=solicitud.ubicacion,
+        hay_imagen=hay_imagen,
+        thread_id=solicitud.thread_id,
+        turnos_consumidos=(
+            estado["turnos_consumidos"] if estado is not None else 0
+        ),
     )
 
-    return recuperar_estado_operativo(
-        thread_id,
-        admision,
-    )
+    return pregunta, estado, respuesta
 
 
 def list_authorized_threads(
@@ -665,11 +655,7 @@ def list_authorized_threads(
     context: AuthContext,
 ) -> list[Conversation]:
     """Recupera las conversaciones visibles mediante API key."""
-    _check_roles(
-        context,
-        ApiKeyRole.USER,
-        ApiKeyRole.ADMIN,
-    )
+    _check_roles(context, ApiKeyRole.USER, ApiKeyRole.ADMIN)
 
     if context.role == ApiKeyRole.ADMIN:
         return db.list_conversations(session)
@@ -679,10 +665,7 @@ def list_authorized_threads(
     if api_key_id is None:
         raise ApiError(ErrorCode.API_KEY_REQUIRED)
 
-    return db.list_api_key_conversations(
-        session,
-        api_key_id,
-    )
+    return db.list_api_key_conversations(session, api_key_id)
 
 
 # =========================================================
@@ -690,9 +673,7 @@ def list_authorized_threads(
 # =========================================================
 
 
-def _require_session_user_id(
-    context: AuthContext,
-) -> UUID:
+def _require_session_user_id(context: AuthContext) -> UUID:
     """Exige una identidad de sesión sin selección de clave."""
     if (
         context.user_id is None
@@ -727,18 +708,12 @@ def list_owned_api_keys(
     """Lista las claves ordinarias no eliminadas del usuario."""
     user_id = _require_session_user_id(context)
 
-    api_keys = db.list_user_api_keys(
-        session,
-        user_id,
-    )
+    api_keys = db.list_user_api_keys(session, user_id)
 
     return [
         api_key
         for api_key in api_keys
-        if _is_owned_ordinary_key(
-            api_key,
-            user_id,
-        )
+        if _is_owned_ordinary_key(api_key, user_id)
     ]
 
 
@@ -748,16 +723,9 @@ def list_session_threads(
     api_key_id: UUID,
 ) -> list[Conversation]:
     """Lista el historial de una clave propia no eliminada."""
-    api_key = require_session_api_key(
-        session,
-        context,
-        api_key_id,
-    )
+    api_key = require_session_api_key(session, context, api_key_id)
 
-    return db.list_api_key_conversations(
-        session,
-        api_key.id,
-    )
+    return db.list_api_key_conversations(session, api_key.id)
 
 
 def require_session_thread_access(
@@ -767,14 +735,6 @@ def require_session_thread_access(
     thread_id: UUID,
 ) -> Conversation:
     """Comprueba el acceso al historial mediante una sesión."""
-    api_key = require_session_api_key(
-        session,
-        context,
-        api_key_id,
-    )
+    api_key = require_session_api_key(session, context, api_key_id)
 
-    return _require_owned_thread(
-        session,
-        api_key.id,
-        thread_id,
-    )
+    return _require_owned_thread(session, api_key.id, thread_id)
